@@ -1,4 +1,26 @@
+import os
+from uuid import uuid4
+
+import nats
 import pytest
+
+from laxcode.runtime.events import EventStore
+
+
+@pytest.fixture
+def anyio_backend():
+    return "asyncio"
+
+
+@pytest.fixture
+async def run_store():
+    async with EventStore.connect(os.getenv("NATS_URL", "nats://127.0.0.1:4222")) as store:
+        run_id = uuid4().int % (2**63 - 1) + 1
+        yield store, run_id
+        try:
+            await store.js.delete_stream(store.stream_name(run_id))
+        except nats.js.errors.NotFoundError:
+            pass
 
 
 @pytest.fixture

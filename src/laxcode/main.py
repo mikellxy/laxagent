@@ -5,14 +5,12 @@ from contextlib import nullcontext
 from pathlib import Path
 
 import uvicorn
-from fastapi import FastAPI
 
-from laxcode.api.runs import router as runs_router
+from laxcode.api.app import create_app
 from laxcode.config import AppConfig, load_config
 from laxcode.llm_router.app import create_router_app
 
-app = FastAPI(title="LaxCode")
-app.include_router(runs_router, prefix="/api/v1")
+app = create_app()
 
 
 class ManagedServer(uvicorn.Server):
@@ -36,7 +34,7 @@ async def run_servers(config: AppConfig) -> None:
             timeout_graceful_shutdown=10,
         )),
         ManagedServer(uvicorn.Config(
-            app, host="127.0.0.1", port=config.api_server.port,
+            create_app(config), host="127.0.0.1", port=config.api_server.port,
             timeout_graceful_shutdown=10,
         )),
     ]

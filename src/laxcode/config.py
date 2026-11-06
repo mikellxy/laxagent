@@ -11,10 +11,15 @@ class ServerConfig(ConfigModel):
     port: Annotated[int, Field(ge=1, le=65535)]
 
 
+class NatsConfig(ConfigModel):
+    url: str = Field(default="nats://127.0.0.1:4222", pattern=r"^nats://[^\s/@?#]+:[0-9]+$")
+
+
 class AppConfig(ConfigModel):
     llm: LLMConfig
     api_server: ServerConfig
     llm_router: ServerConfig
+    nats: NatsConfig = Field(default_factory=NatsConfig)
 
     @model_validator(mode="after")
     def check_ports(self) -> Self:

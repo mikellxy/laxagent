@@ -12,6 +12,7 @@ def test_load_config(config_data, tmp_path):
     assert config.api_server.port == 8000
     assert config.llm_router.port == 8001
     assert config.llm.default_model == "example:model-name"
+    assert config.nats.url == "nats://127.0.0.1:4222"
     assert config.llm.provider_list[0].api_key.get_secret_value() == "sk-private-test"
     assert "sk-private-test" not in repr(config)
 
@@ -33,6 +34,8 @@ def test_load_config(config_data, tmp_path):
     lambda c: c["llm"]["provider_list"][0]["model_list"][0]["limit"].update(output=True),
     lambda c: c["llm"]["provider_list"][0]["model_list"][0]["limit"].update(output=128001),
     lambda c: c.update(unknown="sk-private-test"),
+    lambda c: c.update(nats={"url": "http://localhost:4222"}),
+    lambda c: c.update(nats={"url": "nats://localhost:4222?key=sk-private-test"}),
 ])
 def test_rejects_invalid_config_without_exposing_secrets(config_data, tmp_path, change):
     change(config_data)

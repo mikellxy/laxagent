@@ -1,14 +1,19 @@
+from collections.abc import AsyncIterator
+from dataclasses import dataclass
+from typing import Literal
+
 import httpx2
 from openai import APIError, AsyncOpenAI
 
-from laxcode.agent.state import AgentState, Message
-from laxcode.runtime.events import EventStore, make_event
+from laxcode.models.errors import ModelError
 
 
-class ModelError(Exception):
-    def __init__(self, message: str, *, incomplete=False):
-        super().__init__(message)
-        self.incomplete = incomplete
+@dataclass(frozen=True)
+class ModelEvent:
+    type: Literal["started", "text_delta", "reasoning_delta", "refusal_delta", "completed"]
+    text: str = ""
+    channel: Literal["text", "summary"] | None = None
+    usage: dict | None = None
 
 
 def completed_content(response: dict) -> str:
@@ -34,18 +39,13 @@ def completed_content(response: dict) -> str:
     return "".join(parts)
 
 
-async def generate_message(state: AgentState, client: AsyncOpenAI, events: EventStore) -> Message:
-    async def emit(kind, content, **extra):
-        if kind.endswith("_chunk") and not isinstance(content, str):
-            raise ModelError("Invalid model stream")
-        await events.publish(make_event(
-            state["run_id"], kind, content, msg_id=state["next_msg_id"], **extra,
-        ))
-
+async def stream_response(
+    client: AsyncOpenAI, *, model: str, messages: list[dict],
+) -> AsyncIterator[ModelEvent]:
     started = False
     try:
         stream = await client.responses.create(
-            model=state["model"], input=state["messages"], stream=True,
+            model=model, input=messages, stream=True,
         )
         async with stream:
             async for chunk in stream:
@@ -53,23 +53,23 @@ async def generate_message(state: AgentState, client: AsyncOpenAI, events: Event
                 kind = event["type"]
                 if kind == "response.created":
                     if not started:
-                        await emit("message_start", {})
+                        yield ModelEvent("started")
                         started = True
                 elif kind in ("response.output_item.added", "response.output_item.done"):
                     if event["item"]["type"] not in ("message", "reasoning"):
                         raise ModelError("Unsupported model output; tool execution is not enabled")
                 elif kind == "response.output_text.delta":
-                    await emit("message_chunk", event["delta"])
+                    yield ModelEvent("text_delta", text=delta_text(event))
                 elif kind in ("response.reasoning_text.delta", "response.reasoning_summary_text.delta"):
                     channel = "summary" if kind == "response.reasoning_summary_text.delta" else "text"
-                    await emit("reasoning_chunk", event["delta"], channel=channel)
+                    yield ModelEvent("reasoning_delta", text=delta_text(event), channel=channel)
                 elif kind == "response.refusal.delta":
-                    await emit("refusal_chunk", event["delta"])
+                    yield ModelEvent("refusal_delta", text=delta_text(event))
                 elif kind == "response.completed":
                     response = event["response"]
                     text = completed_content(response)
-                    await emit("message_end", {"text": text, "usage": response.get("usage")})
-                    return {"role": "assistant", "content": text}
+                    yield ModelEvent("completed", text=text, usage=response.get("usage"))
+                    return
                 elif kind == "response.incomplete":
                     details = event["response"].get("incomplete_details") or {}
                     reason = details.get("reason")
@@ -83,3 +83,10 @@ async def generate_message(state: AgentState, client: AsyncOpenAI, events: Event
         raise ModelError("Model request failed") from None
     except (KeyError, TypeError, ValueError, AttributeError):
         raise ModelError("Invalid model stream") from None
+
+
+def delta_text(event: dict) -> str:
+    text = event["delta"]
+    if not isinstance(text, str):
+        raise ModelError("Invalid model stream")
+    return text

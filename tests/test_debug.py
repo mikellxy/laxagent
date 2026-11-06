@@ -5,7 +5,7 @@ from laxcode.agent.context import AgentContext
 from laxcode.agent.graph import build_graph
 from laxcode.api.app import create_app
 from laxcode.runtime.events import EventStoreError
-from test_agent import ModelStream, client_for, completed
+from model_helpers import ModelStream, client_for, completed
 
 
 def body(run_id):

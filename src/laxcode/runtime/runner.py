@@ -4,7 +4,7 @@ import anyio
 
 from laxcode.agent.context import AgentContext
 from laxcode.agent.state import AgentState
-from laxcode.models.responses import ModelError
+from laxcode.models.errors import ModelError
 from laxcode.runtime.events import EventStoreError, make_event
 
 

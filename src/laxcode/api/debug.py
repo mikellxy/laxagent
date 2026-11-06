@@ -4,7 +4,7 @@ from fastapi import APIRouter, Depends, HTTPException, Path, Request
 from fastapi.responses import StreamingResponse
 
 from laxcode.api.schemas import DebugInvokeRequest
-from laxcode.models.responses import ModelError
+from laxcode.models.errors import ModelError
 from laxcode.runtime.events import EventStoreError, stream_events
 from laxcode.runtime.runner import run_agent
 

@@ -5,7 +5,7 @@ from langgraph.runtime import Runtime
 from laxcode.agent.context import AgentContext
 from laxcode.agent.state import AgentState
 from laxcode.models.errors import ModelError
-from laxcode.models.responses import stream_response
+from laxcode.models.responses import append_model_response, append_tool_message, stream_response
 from laxcode.runtime.events import make_event
 from laxcode.tools.executor import execute_tool
 from laxcode.tools.registry import tool_definitions
@@ -43,14 +43,14 @@ async def call_model(state: AgentState, runtime: Runtime[AgentContext]):
                 message = {"role": "assistant", "content": event.text, **metadata}
                 return {"messages": [*state["messages"], message], "next_msg_seq": next_seq,
                         "pending_tool_calls": calls,
-                        "model_input": [*state["model_input"], *event.output]}
+                        "model_input": append_model_response(state["model_input"], event)}
     raise ModelError("Model stream ended without response.completed")
 
 
 async def tool_node(state: AgentState, runtime: Runtime[AgentContext]):
     next_seq = state["next_msg_seq"]
     messages = list(state["messages"])
-    model_input = list(state["model_input"])
+    model_input = state["model_input"]
     for call in state["pending_tool_calls"]:
         msg_seq = next_seq
         details = {"tool_call_id": call["call_id"], "tool_name": call["name"]}
@@ -69,7 +69,8 @@ async def tool_node(state: AgentState, runtime: Runtime[AgentContext]):
             state["run_id"], "tool_end", {**details, **result}, role="tool", msg_seq=msg_seq,
             error=result["error_code"],
         ))
-        messages.append({"role": "tool", "content": content, **metadata})
-        model_input.append({"type": "function_call_output", "call_id": call["call_id"], "output": content})
+        message = {"role": "tool", "content": content, **metadata}
+        messages.append(message)
+        model_input = append_tool_message(model_input, message)
     return {"messages": messages, "next_msg_seq": next_seq,
             "model_input": model_input, "pending_tool_calls": []}

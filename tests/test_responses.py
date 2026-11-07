@@ -1,10 +1,64 @@
 from contextlib import aclosing
+from copy import deepcopy
 
 import pytest
 
 from laxcode.models.errors import ModelError
-from laxcode.models.responses import ModelEvent, stream_response
+from laxcode.models.responses import (
+    ModelEvent, append_model_response, append_tool_message, messages_to_input, stream_response,
+)
 from model_helpers import ModelStream, client_for, completed
+
+
+def test_append_model_response_preserves_output_and_inputs():
+    model_input = [{"role": "user", "content": "read a file"}]
+    output = [
+        {"type": "reasoning", "id": "rs_1", "summary": [], "encrypted_content": "opaque"},
+        *completed("准备读取")["response"]["output"],
+        {"type": "function_call", "id": "fc_1", "call_id": "c1", "name": "read_file", "arguments": "{}"},
+    ]
+    event = ModelEvent("completed", output=output)
+    before_input, before_event = deepcopy(model_input), deepcopy(event)
+
+    result = append_model_response(model_input, event)
+
+    assert result == before_input + before_event.output
+    assert result is not model_input and result is not output
+    assert model_input == before_input and event == before_event
+
+
+@pytest.mark.parametrize("event", [
+    ModelEvent("started", output=[]),
+    ModelEvent("completed"),
+])
+def test_append_model_response_rejects_invalid_events(event):
+    with pytest.raises(ModelError, match="Expected completed model event with output"):
+        append_model_response([], event)
+
+
+def test_append_model_response_with_empty_output_returns_new_list():
+    model_input = [{"role": "user", "content": "hi"}]
+    result = append_model_response(model_input, ModelEvent("completed", output=[]))
+    assert result == model_input and result is not model_input
+
+
+@pytest.mark.parametrize("content", [
+    '{"error_code": null, "result": "你好"}',
+    '文件不存在\n{"error_code": "FILE_NOT_FOUND", "result": null}',
+])
+def test_append_tool_message_matches_history_conversion_without_mutation(content):
+    call = {"call_id": "c1", "name": "read_file", "arguments": "{}"}
+    model_input = [{"type": "function_call", **call}]
+    message = {"role": "tool", "content": content, "tool_call_id": "c1",
+               "tool_name": "read_file", "tool_call": call}
+    before_input, before_message = deepcopy(model_input), deepcopy(message)
+
+    result = append_tool_message(model_input, message)
+
+    assert result == before_input + [{"type": "function_call_output", "call_id": "c1", "output": content}]
+    assert result == before_input + messages_to_input([message])
+    assert result is not model_input
+    assert model_input == before_input and message == before_message
 
 
 @pytest.mark.anyio

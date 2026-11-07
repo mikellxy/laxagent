@@ -73,6 +73,16 @@ def messages_to_input(messages: list[dict]) -> list[dict]:
     return result
 
 
+def append_model_response(model_input: list[dict], event: ModelEvent) -> list[dict]:
+    if event.type != "completed" or event.output is None:
+        raise ModelError("Expected completed model event with output")
+    return [*model_input, *event.output]
+
+
+def append_tool_message(model_input: list[dict], message: dict) -> list[dict]:
+    return [*model_input, *messages_to_input([message])]
+
+
 async def stream_response(
     client: AsyncOpenAI, *, model: str, messages: list[dict],
     tools: list[dict] | None = None,

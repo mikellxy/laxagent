@@ -14,7 +14,7 @@ from nats.js.errors import NotFoundError
 
 class Event(TypedDict):
     run_id: int
-    msg_id: int | None
+    msg_seq: int | None
     role: Literal["assistant", "system", "tool"]
     type: str
     error: str | None
@@ -22,9 +22,9 @@ class Event(TypedDict):
 
 
 def make_event(run_id: int, kind: str, content: str | dict, *,
-               msg_id: int | None = None, error: str | None = None, **extra) -> Event:
-    return {"run_id": run_id, "msg_id": msg_id,
-            "role": "assistant" if msg_id is not None else "system",
+               msg_seq: int | None = None, error: str | None = None, **extra) -> Event:
+    return {"run_id": run_id, "msg_seq": msg_seq,
+            "role": "assistant" if msg_seq is not None else "system",
             "type": kind, "error": error, "content": content, **extra}
 
 

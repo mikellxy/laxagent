@@ -6,14 +6,16 @@ from laxcode.agent.context import AgentContext
 from laxcode.agent.state import AgentState
 from laxcode.models.errors import ModelError
 from laxcode.runtime.events import EventStoreError, make_event
+from laxcode.storage.database import DatabaseError
 
 
 async def run_agent(graph, state: AgentState, context: AgentContext) -> AgentState:
     await context.events.create_run(state["run_id"])
 
-    async def finish_failure(error: ModelError):
-        status = "incomplete" if error.incomplete else "failed"
-        kind = "response_incomplete" if error.incomplete else "error"
+    async def finish_failure(error: ModelError | DatabaseError):
+        incomplete = isinstance(error, ModelError) and error.incomplete
+        status = "incomplete" if incomplete else "failed"
+        kind = "response_incomplete" if incomplete else "error"
         await context.events.publish(make_event(state["run_id"], kind, {}, error=str(error)))
         await context.events.publish(make_event(
             state["run_id"], "sse_end", {"status": status}, error=str(error),
@@ -34,7 +36,7 @@ async def run_agent(graph, state: AgentState, context: AgentContext) -> AgentSta
         raise
     except EventStoreError:
         raise
-    except ModelError as exc:
+    except (ModelError, DatabaseError) as exc:
         await finish_failure(exc)
         raise
     except Exception:

@@ -1,10 +1,19 @@
 import os
+import json
+from types import SimpleNamespace
+from pathlib import Path
 from uuid import uuid4
 
 import nats
 import pytest
+from alembic import command
+from alembic.config import Config
+from sqlalchemy import text
 
 from laxcode.runtime.events import EventStore
+from laxcode.config import DatabaseConfig
+from laxcode.storage.database import Database
+from laxcode.storage.repositories import Repository
 
 
 @pytest.fixture
@@ -23,8 +32,16 @@ async def run_store():
             pass
 
 
+@pytest.fixture(scope="session")
+def database_config():
+    return {
+        "host": "127.0.0.1", "port": 5432, "name": "laxcode_test",
+        "user": "laxcode_test", "password": "test-only-password",
+    }
+
+
 @pytest.fixture
-def config_data():
+def config_data(database_config):
     return {
         "llm": {
             "default_model": "example:model-name",
@@ -40,4 +57,37 @@ def config_data():
         },
         "api_server": {"port": 8000},
         "llm_router": {"port": 8001},
+        "database": dict(database_config),
     }
+
+
+@pytest.fixture(scope="session")
+def migrated_database(tmp_path_factory, database_config):
+    path = tmp_path_factory.mktemp("database") / "config.json"
+    config_data = json.loads(Path("config/config.example.json").read_text())
+    config_data["database"] = database_config
+    path.write_text(json.dumps(config_data))
+    config = Config("alembic.ini")
+    config.cmd_opts = SimpleNamespace(x=[f"config={path}"])
+    command.upgrade(config, "head")
+    return DatabaseConfig.model_validate(config_data["database"])
+
+
+@pytest.fixture
+async def repository(migrated_database):
+    assert migrated_database.name == "laxcode_test"
+    async with Database.open(migrated_database) as db:
+        try:
+            yield Repository(db)
+        finally:
+            async with db.transaction() as transaction:
+                await transaction.execute(text("TRUNCATE session_messages, messages, sessions, projects, users RESTART IDENTITY"))
+
+
+@pytest.fixture
+async def conversation(repository):
+    user_id = str(uuid4())
+    await repository.create_user(user_id)
+    project = await repository.create_project(user_id, "test-project")
+    session = await repository.create_session(user_id, project.id, "test-session")
+    return {"user_id": user_id, "project_id": project.id, "session_id": session.id}

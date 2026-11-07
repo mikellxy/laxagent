@@ -13,6 +13,8 @@ def test_load_config(config_data, tmp_path):
     assert config.llm_router.port == 8001
     assert config.llm.default_model == "example:model-name"
     assert config.nats.url == "nats://127.0.0.1:4222"
+    assert config.database.name == "laxcode_test"
+    assert "test-only-password" not in repr(config)
     assert config.llm.provider_list[0].api_key.get_secret_value() == "sk-private-test"
     assert "sk-private-test" not in repr(config)
 
@@ -36,6 +38,9 @@ def test_load_config(config_data, tmp_path):
     lambda c: c.update(unknown="sk-private-test"),
     lambda c: c.update(nats={"url": "http://localhost:4222"}),
     lambda c: c.update(nats={"url": "nats://localhost:4222?key=sk-private-test"}),
+    lambda c: c.pop("database"),
+    lambda c: c["database"].update(port=0),
+    lambda c: c["database"].update(password=""),
 ])
 def test_rejects_invalid_config_without_exposing_secrets(config_data, tmp_path, change):
     change(config_data)

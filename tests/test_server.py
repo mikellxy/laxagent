@@ -13,9 +13,15 @@ from pathlib import Path
 from uuid import uuid4
 
 import httpx2
+import pytest
 from openai import DefaultHttpx2Client, OpenAI
 
 from laxcode.runtime.events import EventStore
+
+
+@pytest.fixture(autouse=True)
+def database_ready(migrated_database):
+    pass
 
 
 def available_port():
@@ -198,7 +204,7 @@ def test_debug_agent_streams_before_invoke_returns(config_data, tmp_path):
                 with httpx2.Client(trust_env=False, timeout=10) as api, ThreadPoolExecutor() as pool:
                     future = pool.submit(api.post, f"{base}/api/v1/debug/agent/invoke", json={
                         "model": "example:model-name", "user_query": "hi", "run_id": run_id,
-                        "user_id": "debug", "project_id": 1, "session_id": 1,
+                        "user_id": str(uuid4()),
                     })
                     url = f"{base}/api/v1/debug/runs/{run_id}/events"
                     deadline = time.monotonic() + 5

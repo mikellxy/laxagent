@@ -11,7 +11,7 @@ from laxcode.runtime.events import EventStoreError, make_event, stream_events
 async def test_independent_consumers_replay_live_events_and_cleanup(run_store):
     store, run_id = run_store
     await store.create_run(run_id)
-    await store.publish(make_event(run_id, "message_start", {}, msg_id=0))
+    await store.publish(make_event(run_id, "message_start", {}, msg_seq=0))
     async with store.subscribe(run_id) as first, store.subscribe(run_id) as second:
         assert (await store.js.stream_info(store.stream_name(run_id))).state.consumer_count == 2
         assert (await first.fetch())[0].metadata.sequence.stream == 1
@@ -19,7 +19,7 @@ async def test_independent_consumers_replay_live_events_and_cleanup(run_store):
         pending = asyncio.create_task(first.fetch(timeout=2))
         await asyncio.sleep(0.02)
         assert not pending.done()
-        await store.publish(make_event(run_id, "message_chunk", "你好", msg_id=0))
+        await store.publish(make_event(run_id, "message_chunk", "你好", msg_seq=0))
         assert json.loads((await pending)[0].data)["content"] == "你好"
         assert json.loads((await second.fetch())[0].data)["content"] == "你好"
     assert (await store.js.stream_info(store.stream_name(run_id))).state.consumer_count == 0

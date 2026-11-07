@@ -26,5 +26,12 @@
   },
   "nats": {
     "url": "nats://127.0.0.1:4222"
+  },
+  "database": {
+    "host": "127.0.0.1",
+    "port": 5432,
+    "name": "laxcode",
+    "user": "laxcode",
+    "password": "replace-with-local-password"
   }
 }

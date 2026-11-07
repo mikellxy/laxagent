@@ -4,20 +4,26 @@ import json
 
 import httpx2
 import pytest
+from sqlalchemy import event
+from sqlalchemy.exc import IntegrityError
 
 from laxcode.agent.context import AgentContext
 from laxcode.agent.graph import build_graph
+from laxcode.agent.nodes.preparation import SYSTEM_PROMPT
 from laxcode.models.errors import ModelError
 from laxcode.runtime.events import EventStoreError
 from laxcode.runtime.runner import run_agent
+from laxcode.storage.database import DatabaseError
+from laxcode.storage.models import Message
 from model_helpers import ModelStream, client_for, completed
+from storage_helpers import message_snapshot
 
 
-def state():
+def state(conversation):
     return {
-        "messages": [{"role": "system", "content": "Be helpful."}, {"role": "user", "content": "Hi"}],
-        "model": "chosen:model", "run_id": 1, "next_msg_id": 0,
-        "user_id": "debug", "project_id": 1, "session_id": 1,
+        "messages": [], "user_query": "Hi",
+        "model": "chosen:model", "run_id": 1, "next_msg_seq": 1,
+        **conversation,
     }
 
 
@@ -38,7 +44,16 @@ class MemoryEvents:
 
 
 @pytest.mark.anyio
-async def test_graph_aggregates_final_output_and_keeps_state_immutable():
+async def test_graph_aggregates_final_output_and_keeps_state_immutable(repository, conversation):
+    class CommitCheckingEvents(MemoryEvents):
+        async def publish(self, item):
+            if item["type"] == "message_end":
+                next_seq, rows = await message_snapshot(repository, conversation["session_id"])
+                assert next_seq == 3
+                assert len(rows[0]) == 2 and rows[0] == rows[1]
+                assert rows[0][-1].content == item["content"]["text"]
+            await super().publish(item)
+
     final = completed("actual final ")
     final["response"]["output"].append({"type": "message", "role": "assistant", "content": [
         {"type": "refusal", "refusal": "refusal"},
@@ -52,15 +67,16 @@ async def test_graph_aggregates_final_output_and_keeps_state_immutable():
         {"type": "response.output_text.done", "text": "partial"},
         {"type": "response.refusal.delta", "delta": "refusal"}, final,
     ])
-    captured, events = [], MemoryEvents()
-    original = state()
+    captured, events = [], CommitCheckingEvents()
+    original = state(conversation)
     snapshot = copy.deepcopy(original)
     async with client_for(stream, captured) as client:
-        result = await run_agent(build_graph(), original, AgentContext(client, events))
+        result = await run_agent(build_graph(), original, AgentContext(client, events, repository))
     assert original == snapshot
-    assert result["messages"] == [*snapshot["messages"], {"role": "assistant", "content": "actual final refusal"}]
-    assert result["next_msg_id"] == 0
-    assert captured == [{"input": original["messages"], "model": "chosen:model", "stream": True}]
+    expected_input = [{"role": "system", "content": SYSTEM_PROMPT}, {"role": "user", "content": "Hi"}]
+    assert result["messages"] == [*expected_input, {"role": "assistant", "content": "actual final refusal"}]
+    assert result["next_msg_seq"] == 3
+    assert captured == [{"input": expected_input, "model": "chosen:model", "stream": True}]
     assert [e["type"] for e in events.items] == [
         "message_start", "reasoning_chunk", "reasoning_chunk", "message_chunk",
         "refusal_chunk", "message_end", "sse_end",
@@ -68,8 +84,8 @@ async def test_graph_aggregates_final_output_and_keeps_state_immutable():
     assert [e["channel"] for e in events.items if e["type"] == "reasoning_chunk"] == ["text", "summary"]
     assert events.items[-2]["content"]["usage"]["total_tokens"] == 3
     assert events.items[-1]["content"] == {"status": "completed"}
-    assert events.items[-1]["msg_id"] is None
-    assert all(e["msg_id"] == 0 for e in events.items[:-1])
+    assert events.items[-1]["msg_seq"] is None
+    assert all(e["msg_seq"] == 2 for e in events.items[:-1])
     assert stream.closed
 
 
@@ -85,25 +101,28 @@ async def test_graph_aggregates_final_output_and_keeps_state_immutable():
     ([httpx2.ReadError("secret-key")], "failed"),
     ([{"type": "response.output_text.delta", "delta": None}], "failed"),
 ])
-async def test_model_failure_never_commits_partial_message(tail, status):
+async def test_model_failure_never_commits_partial_message(tail, status, repository, conversation):
     stream = ModelStream([{"type": "response.output_text.delta", "delta": "partial"}, *tail])
-    events, original = MemoryEvents(), state()
+    events, original = MemoryEvents(), state(conversation)
     async with client_for(stream, []) as client:
         with pytest.raises(ModelError) as exc:
-            await run_agent(build_graph(), original, AgentContext(client, events))
-    assert len(original["messages"]) == 2
+            await run_agent(build_graph(), original, AgentContext(client, events, repository))
+    assert original["messages"] == []
     assert not any(e["type"] == "message_end" for e in events.items)
     assert events.items[-1]["content"] == {"status": status}
     assert "secret-key" not in str(exc.value) + json.dumps(events.items)
     assert stream.closed
+    next_seq, rows = await message_snapshot(repository, conversation["session_id"])
+    assert next_seq == 2 and len(rows[0]) == 1 and rows[0] == rows[1]
+    assert rows[0][0].role == "user" and rows[0][0].content == "Hi"
 
 
 @pytest.mark.anyio
-async def test_request_error_is_sanitized_and_not_retried():
+async def test_request_error_is_sanitized_and_not_retried(repository, conversation):
     captured, events = [], MemoryEvents()
     async with client_for(None, captured, status=401) as client:
         with pytest.raises(ModelError, match="Model request failed"):
-            await run_agent(build_graph(), state(), AgentContext(client, events))
+            await run_agent(build_graph(), state(conversation), AgentContext(client, events, repository))
     assert len(captured) == 1
     assert events.items[-1]["content"] == {"status": "failed"}
     assert "secret-key" not in json.dumps(events.items)
@@ -111,23 +130,26 @@ async def test_request_error_is_sanitized_and_not_retried():
 
 @pytest.mark.anyio
 @pytest.mark.parametrize("fail_at", ["message_chunk", "message_end"])
-async def test_publish_failure_closes_model_stream_without_success(fail_at):
+async def test_publish_failure_closes_model_stream_without_success(fail_at, repository, conversation):
     stream = ModelStream([{"type": "response.output_text.delta", "delta": "partial"}, completed()])
     events = MemoryEvents(fail_at=fail_at)
     async with client_for(stream, []) as client:
         with pytest.raises(EventStoreError):
-            await run_agent(build_graph(), state(), AgentContext(client, events))
+            await run_agent(build_graph(), state(conversation), AgentContext(client, events, repository))
     assert stream.closed
     assert not any(e["type"] in ("message_end", "sse_end") for e in events.items)
+    next_seq, rows = await message_snapshot(repository, conversation["session_id"])
+    assert next_seq == (3 if fail_at == "message_end" else 2)
+    assert len(rows[0]) == next_seq - 1 and rows[0] == rows[1]
 
 
 @pytest.mark.anyio
-async def test_cancellation_closes_stream_and_emits_cancelled():
+async def test_cancellation_closes_stream_and_emits_cancelled(repository, conversation):
     waiting = asyncio.Event()
     stream = ModelStream([], wait=waiting)
     events = MemoryEvents()
     async with client_for(stream, []) as client:
-        task = asyncio.create_task(run_agent(build_graph(), state(), AgentContext(client, events)))
+        task = asyncio.create_task(run_agent(build_graph(), state(conversation), AgentContext(client, events, repository)))
         await asyncio.wait_for(waiting.wait(), 2)
         task.cancel()
         with pytest.raises(asyncio.CancelledError):
@@ -137,7 +159,29 @@ async def test_cancellation_closes_stream_and_emits_cancelled():
 
 
 @pytest.mark.anyio
-async def test_cancellation_during_publish_closes_suspended_generator():
+async def test_assistant_database_failure_never_publishes_message_end(repository, conversation):
+    def fail_assistant(mapper, connection, message):
+        if message.role == "assistant":
+            raise IntegrityError("forced failure", {}, RuntimeError("test"))
+
+    event.listen(Message, "before_insert", fail_assistant)
+    stream = ModelStream([completed()])
+    events = MemoryEvents()
+    try:
+        async with client_for(stream, []) as client:
+            with pytest.raises(DatabaseError):
+                await run_agent(build_graph(), state(conversation), AgentContext(client, events, repository))
+    finally:
+        event.remove(Message, "before_insert", fail_assistant)
+    next_seq, rows = await message_snapshot(repository, conversation["session_id"])
+    assert next_seq == 2 and len(rows[0]) == 1 and rows[0] == rows[1]
+    assert not any(item["type"] == "message_end" for item in events.items)
+    assert events.items[-1]["content"] == {"status": "failed"}
+    assert stream.closed
+
+
+@pytest.mark.anyio
+async def test_cancellation_during_publish_closes_suspended_generator(repository, conversation):
     publishing = asyncio.Event()
 
     class BlockingEvents(MemoryEvents):
@@ -150,7 +194,7 @@ async def test_cancellation_during_publish_closes_suspended_generator():
     stream = ModelStream([{"type": "response.output_text.delta", "delta": "partial"}, completed()])
     events = BlockingEvents()
     async with client_for(stream, []) as client:
-        task = asyncio.create_task(run_agent(build_graph(), state(), AgentContext(client, events)))
+        task = asyncio.create_task(run_agent(build_graph(), state(conversation), AgentContext(client, events, repository)))
         await asyncio.wait_for(publishing.wait(), 2)
         task.cancel()
         with pytest.raises(asyncio.CancelledError):

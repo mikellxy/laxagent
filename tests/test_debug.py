@@ -1,3 +1,5 @@
+from uuid import uuid4
+
 import httpx2
 import pytest
 
@@ -6,15 +8,16 @@ from laxcode.agent.graph import build_graph
 from laxcode.api.app import create_app
 from laxcode.runtime.events import EventStoreError
 from model_helpers import ModelStream, client_for, completed
+from storage_helpers import message_snapshot
 
 
 def body(run_id):
     return {"user_query": "hello", "model": "chosen:model", "run_id": run_id,
-            "user_id": "debug", "project_id": 1, "session_id": 1}
+            "user_id": str(uuid4())}
 
 
 @pytest.mark.anyio
-async def test_debug_invoke_replay_and_duplicate(run_store):
+async def test_debug_invoke_replay_and_duplicate(run_store, repository):
     store, run_id = run_store
     captured = []
     stream = ModelStream([
@@ -23,22 +26,29 @@ async def test_debug_invoke_replay_and_duplicate(run_store):
     ])
     app = create_app()
     async with client_for(stream, captured) as model_client:
-        app.state.agent_context = AgentContext(model_client, store)
+        app.state.agent_context = AgentContext(model_client, store, repository)
         app.state.graph = build_graph()
         async with httpx2.AsyncClient(transport=httpx2.ASGITransport(app), base_url="http://test", trust_env=False) as api:
             response = await api.post("/api/v1/debug/agent/invoke", json=body(run_id))
             assert response.status_code == 200, response.text
             result = response.json()
             assert result["model"] == "chosen:model"
-            assert result["next_msg_id"] == 0
+            assert result["next_msg_seq"] == 3
             assert [m["role"] for m in result["messages"]] == ["system", "user", "assistant"]
             assert result["messages"][-1]["content"] == "hello"
             assert captured[0]["model"] == "chosen:model"
+            next_seq, rows = await message_snapshot(repository, result["session_id"])
+            assert next_seq == 3 and rows[0] == rows[1]
+            assert [(row.seq, row.role, row.content) for row in rows[0]] == [
+                (1, "user", "hello"), (2, "assistant", "hello"),
+            ]
+            assert all(row.tool_call_id is None and row.tool_call is None for row in rows[0])
             first = await api.get(f"/api/v1/debug/runs/{run_id}/events")
             second = await api.get(f"/api/v1/debug/runs/{run_id}/events")
             assert first.content == second.content
             assert first.headers["content-type"].startswith("text/event-stream")
             assert first.text.count("event:") == 4
+            assert '"msg_seq": 2' in first.text
             duplicate = await api.post("/api/v1/debug/agent/invoke", json=body(run_id))
             assert duplicate.status_code == 409
             assert len(captured) == 1
@@ -74,11 +84,11 @@ async def test_uninitialized_runtime_returns_run_id():
 
 
 @pytest.mark.anyio
-async def test_debug_model_error_returns_502_and_error_stream(run_store):
+async def test_debug_model_error_returns_502_and_error_stream(run_store, repository):
     store, run_id = run_store
     app = create_app()
     async with client_for(None, [], status=400) as model_client:
-        app.state.agent_context = AgentContext(model_client, store)
+        app.state.agent_context = AgentContext(model_client, store, repository)
         app.state.graph = build_graph()
         async with httpx2.AsyncClient(transport=httpx2.ASGITransport(app), base_url="http://test", trust_env=False) as api:
             result = await api.post("/api/v1/debug/agent/invoke", json=body(run_id))
@@ -90,7 +100,7 @@ async def test_debug_model_error_returns_502_and_error_stream(run_store):
 
 
 @pytest.mark.anyio
-async def test_debug_storage_error_returns_503(monkeypatch, run_store):
+async def test_debug_storage_error_returns_503(monkeypatch, run_store, repository):
     store, run_id = run_store
 
     async def fail(run_id):
@@ -98,7 +108,7 @@ async def test_debug_storage_error_returns_503(monkeypatch, run_store):
 
     monkeypatch.setattr(store, "create_run", fail)
     app = create_app()
-    app.state.agent_context = AgentContext(None, store)
+    app.state.agent_context = AgentContext(None, store, repository)
     app.state.graph = build_graph()
     async with httpx2.AsyncClient(transport=httpx2.ASGITransport(app), base_url="http://test", trust_env=False) as api:
         result = await api.post("/api/v1/debug/agent/invoke", json=body(run_id))

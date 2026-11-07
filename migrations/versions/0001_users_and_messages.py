@@ -38,6 +38,7 @@ def upgrade():
             sa.Column("content", sa.Text(), nullable=False),
             sa.Column("role", sa.Text(), nullable=False),
             sa.Column("tool_call_id", sa.Text(), nullable=True),
+            sa.Column("tool_name", sa.Text(), nullable=True),
             sa.Column("tool_call", postgresql.JSONB(none_as_null=True), nullable=True),
             sa.UniqueConstraint("session_id", "seq", name=f"uq_{table}_session_seq"),
             sa.CheckConstraint("seq > 0", name=f"ck_{table}_seq"),

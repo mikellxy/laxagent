@@ -44,7 +44,8 @@ class MessageColumns:
     content: Mapped[str] = mapped_column(Text)
     role: Mapped[str] = mapped_column(Text)
     tool_call_id: Mapped[str | None] = mapped_column(Text, nullable=True)
-    tool_call: Mapped[dict | None] = mapped_column(JSONB(none_as_null=True), nullable=True)
+    tool_name: Mapped[str | None] = mapped_column(Text, nullable=True)
+    tool_call: Mapped[dict | list[dict] | None] = mapped_column(JSONB(none_as_null=True), nullable=True)
 
 
 class Message(MessageColumns, Base):

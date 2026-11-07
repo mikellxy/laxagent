@@ -68,3 +68,37 @@ async def test_early_consumer_exit_closes_sdk_stream():
                 assert event.type == "started"
                 break
         assert source.closed
+
+
+@pytest.mark.anyio
+async def test_completed_calls_are_authoritative_and_keep_text_and_reasoning():
+    final = completed("准备读取")
+    calls = [{"type": "function_call", "call_id": f"c{i}", "name": "read_file", "arguments": "{}"}
+             for i in range(2)]
+    final["response"]["output"] += [{"type": "reasoning", "summary": [], "encrypted_content": "opaque"}, *calls]
+    source = ModelStream([
+        {"type": "response.output_item.added", "item": {"type": "function_call", "call_id": "c0", "arguments": ""}},
+        {"type": "response.function_call_arguments.delta", "delta": "partial"}, final,
+    ])
+    async with client_for(source, []) as client:
+        events = [event async for event in stream_response(client, model="chosen:model", messages=[])]
+    assert events[-1].text == "准备读取"
+    assert events[-1].tool_calls == [{k: call[k] for k in ("call_id", "name", "arguments")} for call in calls]
+    assert events[-1].output == final["response"]["output"]
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize("change", [
+    lambda calls: calls.append(dict(calls[0])),
+    lambda calls: calls[0].pop("call_id"),
+    lambda calls: calls[0].update(arguments={}),
+])
+async def test_invalid_completed_calls_are_rejected(change):
+    final = completed()
+    calls = [{"type": "function_call", "call_id": "c1", "name": "read_file", "arguments": "{}"}]
+    change(calls)
+    final["response"]["output"] = calls
+    async with client_for(ModelStream([final]), []) as client:
+        with pytest.raises(ModelError):
+            async for _ in stream_response(client, model="chosen:model", messages=[]):
+                pass

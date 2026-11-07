@@ -14,6 +14,8 @@ class ModelEvent:
     text: str = ""
     channel: Literal["text", "summary"] | None = None
     usage: dict | None = None
+    tool_calls: list[dict] | None = None
+    output: list[dict] | None = None
 
 
 def completed_content(response: dict) -> str:
@@ -24,8 +26,11 @@ def completed_content(response: dict) -> str:
     for item in response["output"]:
         if item["type"] == "reasoning":
             continue
+        if item["type"] == "function_call":
+            found_message = True
+            continue
         if item["type"] != "message" or item["role"] != "assistant":
-            raise ModelError("Unsupported model output; tool execution is not enabled")
+            raise ModelError("Unsupported model output")
         found_message = True
         for part in item["content"]:
             if part["type"] == "output_text":
@@ -39,25 +44,56 @@ def completed_content(response: dict) -> str:
     return "".join(parts)
 
 
+def completed_tool_calls(response: dict) -> list[dict]:
+    calls = []
+    ids = set()
+    for item in response["output"]:
+        if item["type"] != "function_call":
+            continue
+        call = {key: item[key] for key in ("call_id", "name", "arguments")}
+        if (not all(isinstance(value, str) for value in call.values())
+                or not call["call_id"] or not call["name"] or call["call_id"] in ids):
+            raise ModelError("Invalid tool call")
+        ids.add(call["call_id"])
+        calls.append(call)
+    return calls
+
+
+def messages_to_input(messages: list[dict]) -> list[dict]:
+    result = []
+    for message in messages:
+        if message["role"] == "tool":
+            result.append({"type": "function_call_output", "call_id": message["tool_call"]["call_id"],
+                           "output": message["content"]})
+        else:
+            if message["content"] or not message.get("tool_call"):
+                result.append({"role": message["role"], "content": message["content"]})
+            if message.get("tool_call"):
+                result.extend({"type": "function_call", **call} for call in message["tool_call"])
+    return result
+
+
 async def stream_response(
     client: AsyncOpenAI, *, model: str, messages: list[dict],
+    tools: list[dict] | None = None,
 ) -> AsyncIterator[ModelEvent]:
     started = False
     try:
         stream = await client.responses.create(
-            model=model, input=messages, stream=True,
+            model=model, input=messages, stream=True, **({"tools": tools} if tools is not None else {}),
         )
         async with stream:
             async for chunk in stream:
-                event = chunk.model_dump(mode="json")
+                # SDK serialization warnings can echo untrusted upstream values into logs.
+                event = chunk.model_dump(mode="json", exclude_none=True, warnings=False)
                 kind = event["type"]
                 if kind == "response.created":
                     if not started:
                         yield ModelEvent("started")
                         started = True
                 elif kind in ("response.output_item.added", "response.output_item.done"):
-                    if event["item"]["type"] not in ("message", "reasoning"):
-                        raise ModelError("Unsupported model output; tool execution is not enabled")
+                    if event["item"]["type"] not in ("message", "reasoning", "function_call"):
+                        raise ModelError("Unsupported model output")
                 elif kind == "response.output_text.delta":
                     yield ModelEvent("text_delta", text=delta_text(event))
                 elif kind in ("response.reasoning_text.delta", "response.reasoning_summary_text.delta"):
@@ -68,7 +104,9 @@ async def stream_response(
                 elif kind == "response.completed":
                     response = event["response"]
                     text = completed_content(response)
-                    yield ModelEvent("completed", text=text, usage=response.get("usage"))
+                    calls = completed_tool_calls(response)
+                    yield ModelEvent("completed", text=text, usage=response.get("usage"),
+                                     tool_calls=calls, output=response["output"])
                     return
                 elif kind == "response.incomplete":
                     details = event["response"].get("incomplete_details") or {}

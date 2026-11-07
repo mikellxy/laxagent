@@ -1,6 +1,7 @@
 import asyncio
 
 import anyio
+from langgraph.errors import GraphRecursionError
 
 from laxcode.agent.context import AgentContext
 from laxcode.agent.state import AgentState
@@ -22,7 +23,7 @@ async def run_agent(graph, state: AgentState, context: AgentContext) -> AgentSta
         ))
 
     try:
-        result = await graph.ainvoke(state, context=context)
+        result = await graph.ainvoke(state, config={"recursion_limit": 25}, context=context)
         await context.events.publish(make_event(state["run_id"], "sse_end", {"status": "completed"}))
         return result
     except asyncio.CancelledError:
@@ -36,6 +37,10 @@ async def run_agent(graph, state: AgentState, context: AgentContext) -> AgentSta
         raise
     except EventStoreError:
         raise
+    except GraphRecursionError:
+        error = ModelError("Agent graph step limit reached")
+        await finish_failure(error)
+        raise error from None
     except (ModelError, DatabaseError) as exc:
         await finish_failure(exc)
         raise

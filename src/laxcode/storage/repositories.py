@@ -39,6 +39,8 @@ class Repository:
     async def append_message(
         self, *, user_id: str, project_id: int, session_id: int,
         role: str, content: str, expected_seq: int | None = None, load_context=False,
+        tool_call_id: str | None = None, tool_name: str | None = None,
+        tool_call: dict | list[dict] | None = None,
     ) -> tuple[int, list[dict]]:
         async with self.db.transaction() as transaction:
             session = await transaction.scalar(select(Session).where(
@@ -56,14 +58,15 @@ class Repository:
             if expected_seq is not None and expected_seq != seq:
                 raise DatabaseError("Session message sequence changed", 409)
             values = dict(seq=seq, session_id=session_id, role=role, content=content,
-                          tool_call_id=None, tool_call=None)
+                          tool_call_id=tool_call_id, tool_name=tool_name, tool_call=tool_call)
             transaction.add_all([Message(**values), SessionMessage(**values)])
             session.next_msg_seq = seq + 1
             await transaction.flush()
             messages = []
             if load_context:
                 rows = (await transaction.execute(select(
-                    SessionMessage.role, SessionMessage.content,
+                    SessionMessage.role, SessionMessage.content, SessionMessage.tool_call_id,
+                    SessionMessage.tool_name, SessionMessage.tool_call,
                 ).where(SessionMessage.session_id == session_id).order_by(SessionMessage.seq))).mappings()
-                messages = [dict(row) for row in rows]
+                messages = [{key: value for key, value in row.items() if value is not None} for row in rows]
         return seq + 1, messages

@@ -17,6 +17,7 @@ from laxcode.storage.database import DatabaseError
 from laxcode.storage.models import Message
 from model_helpers import ModelStream, client_for, completed
 from storage_helpers import message_snapshot
+from laxcode.tools.registry import tool_definitions
 
 
 def state(conversation):
@@ -76,7 +77,7 @@ async def test_graph_aggregates_final_output_and_keeps_state_immutable(repositor
     expected_input = [{"role": "system", "content": SYSTEM_PROMPT}, {"role": "user", "content": "Hi"}]
     assert result["messages"] == [*expected_input, {"role": "assistant", "content": "actual final refusal"}]
     assert result["next_msg_seq"] == 3
-    assert captured == [{"input": expected_input, "model": "chosen:model", "stream": True}]
+    assert captured == [{"input": expected_input, "model": "chosen:model", "stream": True, "tools": tool_definitions()}]
     assert [e["type"] for e in events.items] == [
         "message_start", "reasoning_chunk", "reasoning_chunk", "message_chunk",
         "refusal_chunk", "message_end", "sse_end",

@@ -10,7 +10,7 @@ from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.exc import IntegrityError
 
 from laxcode.agent.context import AgentContext
-from laxcode.agent.nodes.preparation import SYSTEM_PROMPT, prepare_context
+from laxcode.agent.nodes.preparation import SYSTEM_PROMPT, WORKSPACE, prepare_context
 from laxcode.api.app import create_app
 from laxcode.storage.database import Database, DatabaseError
 from laxcode.storage.models import Message, Session, SessionMessage, User
@@ -30,6 +30,8 @@ async def test_migration_has_no_foreign_keys_and_nullable_tool_columns(repositor
             columns = {c["name"]: c for c in schema.get_columns(table)}
             assert columns["tool_call_id"]["nullable"]
             assert str(columns["tool_call_id"]["type"]) == "TEXT"
+            assert columns["tool_name"]["nullable"]
+            assert str(columns["tool_name"]["type"]) == "TEXT"
             assert columns["tool_call"]["nullable"]
             assert isinstance(columns["tool_call"]["type"], JSONB)
             assert columns["id"]["identity"]["always"]
@@ -118,11 +120,15 @@ async def test_preparation_orders_context_and_hides_database_fields(repository, 
         {**conversation, "user_query": "third", "next_msg_seq": 1, "messages": []},
         Runtime(context=AgentContext(None, None, repository)),
     )
-    assert result == {"next_msg_seq": 4, "messages": [
+    assert result["workspace"] == WORKSPACE
+    assert result["model_input"] == result["messages"]
+    assert result["pending_tool_calls"] == []
+    assert result["next_msg_seq"] == 4
+    assert result["messages"] == [
         {"role": "system", "content": SYSTEM_PROMPT},
         {"role": "user", "content": "first"}, {"role": "assistant", "content": "second"},
         {"role": "user", "content": "third"},
-    ]}
+    ]
 
 
 @pytest.mark.anyio

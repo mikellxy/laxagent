@@ -39,7 +39,7 @@ def client_for(stream, captured, status=200):
         assert request.headers["Authorization"] == "Bearer placeholder"
         if status != 200:
             return httpx2.Response(status, json={"error": {"message": "secret-key"}})
-        return httpx2.Response(200, headers={"content-type": "text/event-stream"}, stream=stream)
+        return httpx2.Response(200, headers={"content-type": "text/event-stream"}, stream=stream.pop(0) if isinstance(stream, list) else stream)
 
     return AsyncOpenAI(
         api_key="placeholder", base_url="http://router.test/v1", max_retries=0,

@@ -1,6 +1,7 @@
 from laxcode.tools.builtin.read_file import ReadFileArgs, read_file
+from laxcode.tools.builtin.write_file import WriteFileArgs, write_file
 
-TOOLS = {"read_file": (ReadFileArgs, read_file)}
+TOOLS = {"read_file": (ReadFileArgs, read_file), "write_file": (WriteFileArgs, write_file)}
 
 
 def tool_definitions() -> list[dict]:
@@ -13,4 +14,12 @@ def tool_definitions() -> list[dict]:
             "otherwise continue at last_line_no, last_byte_no+1. Empty files return line/byte 0."
         ),
         "parameters": ReadFileArgs.model_json_schema(),
+    }, {
+        "type": "function", "name": "write_file", "strict": True,
+        "description": (
+            "Create or completely overwrite a UTF-8 text file in workspace, creating missing parent directories. "
+            "Use a relative file path without '..' or symlinks. Read existing files before overwriting them. "
+            "Content is written exactly as supplied; empty content creates or empties a file."
+        ),
+        "parameters": WriteFileArgs.model_json_schema(),
     }]

@@ -103,6 +103,75 @@ async def test_multiple_calls_one_assistant_and_sequential_tool_commits(reposito
 
 
 @pytest.mark.anyio
+async def test_write_then_read_round_trip(repository, conversation):
+    text = "中文🙂\r\n第二行"
+    response = tool_response(("generated/nested/text.txt", "generated/nested/text.txt"))
+    write_call = response["response"]["output"][1]
+    write_call["name"] = "write_file"
+    write_call["arguments"] = json.dumps({"path": "generated/nested/text.txt", "content": text})
+    read_call = response["response"]["output"][2]
+    read_call["arguments"] = json.dumps({
+        "path": "generated/nested/text.txt", "start_line_no": 1, "start_byte_no": 1, "total_lines": 10,
+    })
+    events, captured = MemoryEvents(), []
+    streams = [ModelStream([response]), ModelStream([completed("写入并读取成功")])]
+    async with client_for(streams, captured) as client:
+        result = await run_agent(build_graph(), state(conversation), AgentContext(client, events, repository))
+    workspace = get_project_workdir(conversation["user_id"], conversation["project_id"])
+    assert (workspace / "generated/nested/text.txt").read_bytes() == text.encode()
+    assert {tool["name"] for tool in captured[0]["tools"]} == {"read_file", "write_file"}
+    _, tables = await message_snapshot(repository, conversation["session_id"])
+    assert tables[0] == tables[1]
+    writes, reads = tables[0][2:4]
+    assert (writes.tool_name, reads.tool_name) == ("write_file", "read_file")
+    assert json.loads(writes.content) == {
+        "error_code": None, "result": {"path": "generated/nested/text.txt", "bytes_written": len(text.encode())},
+    }
+    assert json.loads(reads.content)["result"]["text"] == text
+    assert [item["output"] for item in captured[1]["input"] if item.get("type") == "function_call_output"] == [
+        writes.content, reads.content,
+    ]
+    tool_events = [item for item in events.items if item["role"] == "tool"]
+    assert [(item["type"], item["content"]["tool_name"]) for item in tool_events] == [
+        ("tool_start", "write_file"), ("tool_end", "write_file"),
+        ("tool_start", "read_file"), ("tool_end", "read_file"),
+    ]
+    assert all(item["error"] is None for item in tool_events)
+    assert result["pending_tool_calls"] == []
+    assert events.items[-1]["content"] == {"status": "completed"}
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize("failure", ["database", "event"])
+async def test_written_file_survives_result_persistence_or_event_failure(repository, conversation, failure):
+    response = tool_response(("written.txt", "never.txt"))
+    for call in response["response"]["output"][1:]:
+        path = json.loads(call["arguments"])["path"]
+        call["name"] = "write_file"
+        call["arguments"] = json.dumps({"path": path, "content": "written"})
+
+    def fail(mapper, connection, message):
+        if message.role == "tool":
+            raise IntegrityError("forced failure", {}, RuntimeError("test"))
+
+    events = MemoryEvents("tool_end" if failure == "event" else None)
+    if failure == "database":
+        event.listen(SessionMessage, "before_insert", fail)
+    try:
+        async with client_for(ModelStream([response]), []) as client:
+            with pytest.raises(DatabaseError if failure == "database" else EventStoreError):
+                await run_agent(build_graph(), state(conversation), AgentContext(client, events, repository))
+    finally:
+        if failure == "database":
+            event.remove(SessionMessage, "before_insert", fail)
+    workspace = get_project_workdir(conversation["user_id"], conversation["project_id"])
+    assert (workspace / "written.txt").read_bytes() == b"written"
+    assert not (workspace / "never.txt").exists()
+    assert sum(item["type"] == "tool_start" for item in events.items) == 1
+    assert events.items[-1]["content"] == {"status": "failed"}
+
+
+@pytest.mark.anyio
 async def test_tool_error_is_persisted_and_other_calls_continue(repository, conversation):
     streams = [ModelStream([tool_response(("missing.txt", "hello.txt"))]), ModelStream([completed("ok")])]
     events, captured = MemoryEvents(), []

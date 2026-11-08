@@ -7,6 +7,8 @@ from pathlib import Path
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from laxcode.tools.errors import ToolError
+
 MAX_LINES = 2000
 MAX_BYTES = 50 * 1024
 
@@ -20,7 +22,7 @@ class ReadFileArgs(BaseModel):
     total_lines: int = Field(ge=1, description="Lines to read; capped at 2000 lines and 50 KiB.")
 
 
-class ReadFileError(Exception):
+class ReadFileError(ToolError):
     pass
 
 

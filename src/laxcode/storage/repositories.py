@@ -1,12 +1,68 @@
-from sqlalchemy import select
+from uuid import uuid4
+
+from sqlalchemy import func, select, update
 
 from laxcode.storage.database import Database, DatabaseError
-from laxcode.storage.models import Message, Project, Session, SessionMessage, User
+from laxcode.storage.models import Message, Project, Run, Session, SessionMessage, User
 
 
 class Repository:
     def __init__(self, db: Database):
         self.db = db
+
+    async def user_exists(self, user_id: str) -> bool:
+        async with self.db.transaction() as transaction:
+            return await transaction.scalar(select(User.id).where(User.user_id == user_id)) is not None
+
+    @staticmethod
+    def owned_session(user_id: str, session_id: int):
+        return select(Session).join(Project, Project.id == Session.project_id).join(
+            User, User.user_id == Session.user_id,
+        ).where(Session.id == session_id, Session.user_id == user_id, Project.user_id == user_id)
+
+    async def create_run(self, *, user_id: str, session_id: int, user_query: str,
+                         model: str, context_limit: int, output_limit: int) -> Run:
+        async with self.db.transaction() as transaction:
+            session = await transaction.scalar(self.owned_session(user_id, session_id).with_for_update(of=Session))
+            if session is None:
+                raise DatabaseError("Session not found", 404)
+            run = Run(user_id=user_id, session_id=session.id, project_id=session.project_id,
+                      user_query=user_query, model=model, context_limit=context_limit,
+                      output_limit=output_limit, thread_id=str(uuid4()))
+            transaction.add(run)
+            await transaction.flush()
+        return run
+
+    async def get_run(self, run_id: int, user_id: str) -> Run:
+        async with self.db.transaction() as transaction:
+            run = await transaction.get(Run, run_id)
+            if run is None or run.user_id != user_id:
+                raise DatabaseError("Run not found", 404)
+            session = await transaction.scalar(self.owned_session(user_id, run.session_id))
+            if session is None or session.project_id != run.project_id:
+                raise DatabaseError("Run not found", 404)
+        return run
+
+    async def claim_run(self, run_id: int) -> Run | None:
+        async with self.db.transaction() as transaction:
+            run = await transaction.scalar(update(Run).where(
+                Run.id == run_id, Run.status == "waiting",
+            ).values(status="running", started_at=func.now()).returning(Run))
+        return run
+
+    async def finish_run(self, run_id: int, *, error: str | None = None) -> bool:
+        async with self.db.transaction() as transaction:
+            result = await transaction.execute(update(Run).where(
+                Run.id == run_id, Run.status.in_(["waiting", "running"]),
+            ).values(status="failed" if error is not None else "success",
+                     finished_at=func.now(), error=error))
+        return result.rowcount == 1
+
+    async def fail_interrupted_runs(self):
+        async with self.db.transaction() as transaction:
+            await transaction.execute(update(Run).where(Run.status.in_(["waiting", "running"])).values(
+                status="failed", finished_at=func.now(), error="Service execution interrupted",
+            ))
 
     async def create_user(self, user_id: str) -> User:
         async with self.db.transaction() as transaction:

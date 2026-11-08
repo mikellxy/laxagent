@@ -22,7 +22,7 @@ async def test_migration_has_no_foreign_keys_and_nullable_tool_columns(repositor
     def check(connection):
         schema = inspect(connection)
         assert set(schema.get_table_names()) == {
-            "users", "projects", "sessions", "messages", "session_messages", "alembic_version",
+            "users", "projects", "sessions", "messages", "session_messages", "runs", "alembic_version",
         }
         for table in schema.get_table_names():
             assert schema.get_foreign_keys(table) == []

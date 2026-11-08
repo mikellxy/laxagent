@@ -12,7 +12,7 @@ from laxcode.agent.graph import build_graph
 from laxcode.agent.nodes.preparation import SYSTEM_PROMPT
 from laxcode.models.errors import ModelError
 from laxcode.runtime.events import EventStoreError
-from laxcode.runtime.runner import run_agent
+from storage_helpers import run_agent
 from laxcode.storage.database import DatabaseError
 from laxcode.storage.models import Message
 from model_helpers import ModelStream, client_for, completed
@@ -138,7 +138,8 @@ async def test_publish_failure_closes_model_stream_without_success(fail_at, repo
         with pytest.raises(EventStoreError):
             await run_agent(build_graph(), state(conversation), AgentContext(client, events, repository))
     assert stream.closed
-    assert not any(e["type"] in ("message_end", "sse_end") for e in events.items)
+    assert not any(e["type"] == "message_end" for e in events.items)
+    assert events.items[-1]["content"] == {"status": "failed"}
     next_seq, rows = await message_snapshot(repository, conversation["session_id"])
     assert next_seq == (3 if fail_at == "message_end" else 2)
     assert len(rows[0]) == next_seq - 1 and rows[0] == rows[1]

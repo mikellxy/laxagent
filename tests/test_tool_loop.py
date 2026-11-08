@@ -11,7 +11,7 @@ from laxcode.agent.graph import build_graph
 from laxcode.models.responses import messages_to_input
 from laxcode.models.errors import ModelError
 from laxcode.runtime.events import EventStoreError
-from laxcode.runtime.runner import run_agent
+from storage_helpers import run_agent
 from laxcode.storage.database import DatabaseError
 from laxcode.storage.models import SessionMessage
 from model_helpers import ModelStream, client_for, completed
@@ -118,7 +118,7 @@ async def test_tool_publish_failure_stops_without_second_call(repository, conver
     next_seq, tables = await message_snapshot(repository, conversation["session_id"])
     assert tables[0] == tables[1] and len(tables[0]) == expected_count
     assert next_seq == expected_count + 1 and len(captured) == 1
-    assert not any(e["type"] == "sse_end" for e in events.items)
+    assert events.items[-1]["content"] == {"status": "failed"}
 
 
 @pytest.mark.anyio

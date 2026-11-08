@@ -39,6 +39,8 @@ def test_load_config(config_data, tmp_path):
     lambda c: c.update(nats={"url": "http://localhost:4222"}),
     lambda c: c.update(nats={"url": "nats://localhost:4222?key=sk-private-test"}),
     lambda c: c.pop("database"),
+    lambda c: c.pop("auth"),
+    lambda c: c["auth"].update(jwt_secret="short-secret"),
     lambda c: c["database"].update(port=0),
     lambda c: c["database"].update(password=""),
 ])

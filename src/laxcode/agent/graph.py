@@ -6,7 +6,7 @@ from laxcode.agent.nodes.preparation import prepare_context
 from laxcode.agent.state import AgentState
 
 
-def build_graph():
+def build_graph(checkpointer=None):
     graph = StateGraph(AgentState, context_schema=AgentContext)
     graph.add_node("prepare_context", prepare_context)
     graph.add_node("call_model", call_model)
@@ -15,4 +15,4 @@ def build_graph():
     graph.add_edge("prepare_context", "call_model")
     graph.add_conditional_edges("call_model", lambda state: "tool_node" if state["pending_tool_calls"] else END)
     graph.add_edge("tool_node", "call_model")
-    return graph.compile()
+    return graph.compile(checkpointer=checkpointer)

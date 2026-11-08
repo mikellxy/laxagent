@@ -33,5 +33,8 @@
     "name": "laxcode",
     "user": "laxcode",
     "password": "replace-with-local-password"
+  },
+  "auth": {
+    "jwt_secret": "replace-with-random-secret-at-least-32-bytes"
   }
 }

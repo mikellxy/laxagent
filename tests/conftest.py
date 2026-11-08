@@ -58,6 +58,7 @@ def config_data(database_config):
         "api_server": {"port": 8000},
         "llm_router": {"port": 8001},
         "database": dict(database_config),
+        "auth": {"jwt_secret": "test-only-jwt-secret-at-least-32-bytes-for-test-coverage"},
     }
 
 
@@ -77,11 +78,15 @@ def migrated_database(tmp_path_factory, database_config):
 async def repository(migrated_database):
     assert migrated_database.name == "laxcode_test"
     async with Database.open(migrated_database) as db:
+        # Isolate JetStream names from the developer database, whose run IDs also start at 1.
+        async with db.transaction() as transaction:
+            await transaction.execute(text("SELECT setval(pg_get_serial_sequence('runs', 'id'), :start, false)"),
+                                      {"start": 1_000_000_000 + uuid4().int % 900_000_000})
         try:
             yield Repository(db)
         finally:
             async with db.transaction() as transaction:
-                await transaction.execute(text("TRUNCATE session_messages, messages, sessions, projects, users RESTART IDENTITY"))
+                await transaction.execute(text("TRUNCATE runs, session_messages, messages, sessions, projects, users RESTART IDENTITY"))
 
 
 @pytest.fixture

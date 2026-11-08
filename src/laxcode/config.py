@@ -23,12 +23,23 @@ class DatabaseConfig(ConfigModel):
     password: SecretStr = Field(min_length=1)
 
 
+class AuthConfig(ConfigModel):
+    jwt_secret: SecretStr
+
+    @model_validator(mode="after")
+    def check_secret(self) -> Self:
+        if len(self.jwt_secret.get_secret_value().encode("utf-8")) < 32:
+            raise ValueError("jwt_secret must contain at least 32 bytes")
+        return self
+
+
 class AppConfig(ConfigModel):
     llm: LLMConfig
     api_server: ServerConfig
     llm_router: ServerConfig
     nats: NatsConfig = Field(default_factory=NatsConfig)
     database: DatabaseConfig
+    auth: AuthConfig
 
     @model_validator(mode="after")
     def check_ports(self) -> Self:

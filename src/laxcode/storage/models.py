@@ -1,4 +1,6 @@
-from sqlalchemy import CheckConstraint, Identity, Index, Integer, String, Text, UniqueConstraint, text
+from datetime import datetime
+
+from sqlalchemy import CheckConstraint, DateTime, Identity, Index, Integer, String, Text, UniqueConstraint, text
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
@@ -35,6 +37,33 @@ class Session(Base):
     project_id: Mapped[int] = mapped_column(Integer)
     user_id: Mapped[str] = mapped_column(String(36))
     next_msg_seq: Mapped[int] = mapped_column(Integer, server_default=text("1"))
+
+
+class Run(Base):
+    __tablename__ = "runs"
+    __table_args__ = (
+        CheckConstraint("status IN ('waiting', 'running', 'success', 'failed')", name="ck_runs_status"),
+        CheckConstraint("context_limit > 0 AND output_limit > 0 AND output_limit <= context_limit",
+                        name="ck_runs_limits"),
+        Index("ix_runs_session_id_id", "session_id", "id"),
+        Index("uq_runs_active_session", "session_id", unique=True,
+              postgresql_where=text("status IN ('waiting', 'running')")),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, Identity(always=True), primary_key=True)
+    session_id: Mapped[int] = mapped_column(Integer)
+    project_id: Mapped[int] = mapped_column(Integer)
+    user_id: Mapped[str] = mapped_column(String(36))
+    status: Mapped[str] = mapped_column(String(16), server_default=text("'waiting'"))
+    user_query: Mapped[str] = mapped_column(Text)
+    model: Mapped[str] = mapped_column(Text)
+    context_limit: Mapped[int] = mapped_column(Integer)
+    output_limit: Mapped[int] = mapped_column(Integer)
+    thread_id: Mapped[str] = mapped_column(String(36), unique=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=text("now()"))
+    started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    error: Mapped[str | None] = mapped_column(Text)
 
 
 class MessageColumns:

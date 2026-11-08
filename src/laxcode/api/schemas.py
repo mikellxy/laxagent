@@ -1,11 +1,38 @@
-from typing import Annotated
+from datetime import datetime
+from typing import Literal
 from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 
 class ChatRequest(BaseModel):
-    query: str = Field(min_length=1)
+    model_config = ConfigDict(extra="forbid", strict=True)
+    user_query: str = Field(min_length=1, pattern=r"\S")
+    model: str = Field(pattern=r"^[^:\s]+:\S+$")
+
+
+class TokenResponse(BaseModel):
+    access_token: str
+    token_type: Literal["bearer"]
+    expires_in: int
+
+
+class SubmittedRunResponse(BaseModel):
+    run_id: int
+    session_id: int
+    status: Literal["waiting"]
+
+
+class RunResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    run_id: int = Field(validation_alias="id")
+    session_id: int
+    status: Literal["waiting", "running", "success", "failed"]
+    model: str
+    created_at: datetime
+    started_at: datetime | None
+    finished_at: datetime | None
+    error: str | None
 
 
 class CreateUserRequest(BaseModel):
@@ -25,12 +52,6 @@ class CreateProjectRequest(CreateUserRequest):
 
 class CreateSessionRequest(CreateProjectRequest):
     pass
-
-
-class DebugInvokeRequest(CreateUserRequest):
-    user_query: str = Field(min_length=1, pattern=r"\S")
-    model: str = Field(pattern=r"^[^:\s]+:\S+$")
-    run_id: Annotated[int, Field(gt=0)]
 
 
 class UserResponse(BaseModel):

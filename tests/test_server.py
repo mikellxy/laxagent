@@ -7,7 +7,6 @@ import sys
 import threading
 import time
 from contextlib import contextmanager
-from concurrent.futures import ThreadPoolExecutor
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from uuid import uuid4
@@ -58,7 +57,7 @@ def wait_for_api(process, url, log_path):
         while time.monotonic() < deadline:
             assert process.poll() is None, log_path.read_text()
             try:
-                response = client.post(url, json={"query": "hello"})
+                response = client.get(url)
                 if response.status_code == 200:
                     return response
             except httpx2.HTTPError:
@@ -99,8 +98,8 @@ def test_two_servers_stream_to_openai_sdk_and_shutdown(config_data, tmp_path):
             config_data["llm_router"]["port"] = router_port = available_port()
             config_data["llm"]["provider_list"][0]["base_url"] = f"http://127.0.0.1:{upstream.server_port}/v1"
             with launch(config_data, tmp_path) as (process, log_path):
-                response = wait_for_api(process, f"http://127.0.0.1:{api_port}/api/v1/sessions/test/chat", log_path)
-                assert response.json() == {"session_id": "test", "query": "hello"}
+                response = wait_for_api(process, f"http://127.0.0.1:{api_port}/openapi.json", log_path)
+                assert "/api/v1/login" in response.json()["paths"]
                 with OpenAI(
                     api_key="placeholder", base_url=f"http://127.0.0.1:{router_port}/v1",
                     max_retries=0, timeout=2,
@@ -160,9 +159,13 @@ def test_nats_unavailable_stops_both_listeners(config_data, tmp_path):
     assert_port_closed(router_port)
 
 
-def test_debug_agent_streams_before_invoke_returns(config_data, tmp_path):
+def test_chat_returns_before_model_finishes_and_sse_disconnect_does_not_cancel(config_data, tmp_path):
+    from laxcode.config import DatabaseConfig
+    from laxcode.storage.database import Database
+    from laxcode.storage.repositories import Repository
+
     release = threading.Event()
-    run_id = uuid4().int % (2**63 - 1) + 1
+    run_id = None
     captured = []
 
     class Upstream(BaseHTTPRequestHandler):
@@ -187,6 +190,19 @@ def test_debug_agent_streams_before_invoke_returns(config_data, tmp_path):
         def log_message(self, *args):
             pass
 
+    async def seed():
+        from sqlalchemy import text
+        async with Database.open(DatabaseConfig.model_validate(config_data["database"])) as db:
+            async with db.transaction() as tx:
+                await tx.execute(text("SELECT setval(pg_get_serial_sequence('runs', 'id'), :start, false)"),
+                                 {"start": 1_000_000_000 + uuid4().int % 900_000_000})
+            repository = Repository(db)
+            user_id = str(uuid4())
+            await repository.create_user(user_id)
+            project = await repository.create_project(user_id, "http-test")
+            session = await repository.create_session(user_id, project.id, "http-test")
+            return user_id, session.id
+
     async def cleanup():
         async with EventStore.connect("nats://127.0.0.1:4222") as store:
             await store.js.delete_stream(store.stream_name(run_id))
@@ -199,44 +215,36 @@ def test_debug_agent_streams_before_invoke_returns(config_data, tmp_path):
             config_data["llm_router"]["port"] = available_port()
             config_data["llm"]["provider_list"][0]["base_url"] = f"http://127.0.0.1:{upstream.server_port}/v1"
             base = f"http://127.0.0.1:{api_port}"
+            user_id, session_id = asyncio.run(seed())
             with launch(config_data, tmp_path) as (process, log_path):
-                wait_for_api(process, f"{base}/api/v1/sessions/test/chat", log_path)
-                with httpx2.Client(trust_env=False, timeout=10) as api, ThreadPoolExecutor() as pool:
-                    future = pool.submit(api.post, f"{base}/api/v1/debug/agent/invoke", json={
-                        "model": "example:model-name", "user_query": "hi", "run_id": run_id,
-                        "user_id": str(uuid4()),
+                wait_for_api(process, f"{base}/openapi.json", log_path)
+                with httpx2.Client(trust_env=False, timeout=10) as api:
+                    login = api.post(f"{base}/api/v1/login", json={"user_id": user_id})
+                    api.headers["Authorization"] = f"Bearer {login.json()['access_token']}"
+                    response = api.post(f"{base}/api/v1/sessions/{session_id}/chat", json={
+                        "model": "example:model-name", "user_query": "hi",
                     })
-                    url = f"{base}/api/v1/debug/runs/{run_id}/events"
-                    deadline = time.monotonic() + 5
-                    seen = []
-                    while True:
-                        with api.stream("GET", url) as response:
-                            if response.status_code == 404:
-                                assert time.monotonic() < deadline
-                                time.sleep(0.01)
-                                continue
-                            assert response.status_code == 200
-                            for line in response.iter_lines():
-                                if not line.startswith("data: "):
-                                    continue
-                                event = json.loads(line[6:])
-                                seen.append(event)
-                                if event["type"] == "message_chunk":
-                                    assert not future.done()
-                                    assert not release.is_set()
-                                    release.set()
-                            break
-                    result = future.result(timeout=5)
-                    assert result.status_code == 200, result.text
-                    assert result.json()["messages"][-1] == {"role": "assistant", "content": "hello"}
-                    assert seen[-1]["content"] == {"status": "completed"}
+                    assert response.status_code == 202, response.text
+                    run_id = response.json()["run_id"]
+                    assert not release.is_set()
+                    url = f"{base}/api/v1/runs/{run_id}/events"
+                    with api.stream("GET", url) as response:
+                        assert response.status_code == 200
+                        for line in response.iter_lines():
+                            if line.startswith("data: ") and json.loads(line[6:])["type"] == "message_chunk":
+                                break
+                    # Disconnecting the SSE HTTP request leaves the model execution running.
+                    assert api.get(f"{base}/api/v1/runs/{run_id}").json()["status"] == "running"
+                    release.set()
                     replay = api.get(url)
-                    assert [json.loads(line[6:]) for line in replay.text.splitlines() if line.startswith("data: ")] == seen
+                    seen = [json.loads(line[6:]) for line in replay.text.splitlines() if line.startswith("data: ")]
+                    assert seen[-1]["content"] == {"status": "completed"}
+                    assert api.get(f"{base}/api/v1/runs/{run_id}").json()["status"] == "success"
                     assert captured[0]["max_output_tokens"] == 16000
                     assert captured[0]["model"] == "model-name"
         finally:
             release.set()
             upstream.shutdown()
             thread.join(timeout=2)
-            if captured:
+            if run_id is not None:
                 asyncio.run(cleanup())

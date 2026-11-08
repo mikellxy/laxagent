@@ -1,0 +1,16 @@
+:root { font-family: -apple-system, BlinkMacSystemFont, "PingFang SC", "Segoe UI", sans-serif; color: #343730; background: #f3f3ef; --text: #343730; --muted: #898c83; --border: #ddded7; --sidebar: #eeefea; --accent: #2685e5; font-synthesis: none; text-rendering: optimizeLegibility; -webkit-font-smoothing: antialiased; font-weight: 400; }
+* { box-sizing: border-box; }
+body { margin: 0; font-size: 14px; }
+button, input, textarea, select { font: inherit; }
+button { border: 0; background: none; color: inherit; cursor: pointer; }
+button:disabled { cursor: default; opacity: .5; }
+button:focus-visible, select:focus-visible { outline: 2px solid #83afe2; outline-offset: 2px; }
+.shell { display: flex; height: 100dvh; overflow: hidden; min-width: 480px; }
+.blank { flex: 1; }
+.login { min-height: 100dvh; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 16px; }
+.guest { border: 1px solid #d1d3cb; background: #fdfdfb; border-radius: 9px; padding: 11px 26px; font-size: 14px; box-shadow: 0 2px 4px #00000005; }
+.guest:hover { background: #fff; border-color: #bfc4b8; }
+.error { color: #a04a42; font-size: 13px; padding: 8px; line-height: 1.5; overflow-wrap: anywhere; }
+.spin { animation: spin 1.2s linear infinite; }
+@keyframes spin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) { .spin { animation: none; } }

@@ -41,3 +41,9 @@ config/config.json
 
 # Local agent instructions
 AGENTS.md
+
+# Frontend dependencies and test artifacts
+node_modules/
+playwright-report/
+test-results/
+*.tsbuildinfo

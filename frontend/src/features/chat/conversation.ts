@@ -1,0 +1,210 @@
+import { api } from '../../api/resources'
+import { ApiError, messageOf } from '../../api/errors'
+import type { Message, Run, SessionDetail, StreamEvent } from '../../api/types'
+
+export type Transport = Pick<typeof api, 'detail' | 'messages' | 'chat' | 'stream'>
+export interface PendingMessage { content: string; afterSeq: number; runId: number | null; failed: boolean }
+export interface ConversationSnapshot {
+  messages: Message[]; pending: PendingMessage | null; detail: SessionDetail | null
+  busy: boolean; ready: boolean; syncing: boolean; loadingOlder: boolean; hasMore: boolean
+  error: string | null; missing: boolean
+}
+const active = (run: Run | null | undefined) => run?.status === 'waiting' || run?.status === 'running'
+
+/** One selected session owns one stream; durable rows and transient chunks never share storage. */
+export class Conversation {
+  private history = new Map<number, Message>()
+  private live = new Map<number, Message>()
+  private boundary = 0
+  private detail: SessionDetail | null = null
+  private pending: PendingMessage | null = null
+  private hasMore = false
+  private ready = false
+  private submitting = false
+  private syncFailed = false
+  private syncing = false
+  private loadingOlder = false
+  private error: string | null = null
+  private missing = false
+  private disposed = false
+  private lifetime = new AbortController()
+  private streamAbort: AbortController | null = null
+  private syncFlight: Promise<void> | null = null
+  private buffered: StreamEvent[] = []
+  private reconnectWanted = false
+  private checkedRun: number | null = null
+  private retry: ReturnType<typeof setTimeout> | null = null
+  private retryDelay = 500
+  private listeners = new Set<() => void>()
+  private snapshot: ConversationSnapshot = { messages: [], pending: null, detail: null, busy: false, ready: false,
+    syncing: false, loadingOlder: false, hasMore: false, error: null, missing: false }
+
+  constructor(readonly sessionId: number, private transport: Transport = api) {}
+  subscribe = (listener: () => void) => { this.listeners.add(listener); return () => { this.listeners.delete(listener) } }
+  getSnapshot = () => this.snapshot
+  private emit() {
+    if (this.disposed) return
+    const messages = new Map([...this.history, ...this.live])
+    this.snapshot = {
+      messages: [...messages.values()].sort((a, b) => a.seq - b.seq), pending: this.pending ? { ...this.pending } : null,
+      detail: this.detail, busy: this.submitting || active(this.detail?.latest_run), ready: this.ready,
+      syncing: this.syncing, loadingOlder: this.loadingOlder, hasMore: this.hasMore, error: this.error ?? (this.pending?.failed ? "消息提交失败" : null), missing: this.missing,
+    }
+    this.listeners.forEach(listener => listener())
+  }
+  private reconcilePending() {
+    if (this.pending && [...this.history.values()].some(m => m.role === 'user' && m.seq > this.pending!.afterSeq && m.content === this.pending!.content)) {
+      this.pending = null
+    }
+  }
+
+  refresh = (reconnect = true): Promise<void> => {
+    if (this.disposed) return Promise.resolve()
+    if (reconnect) {
+      this.reconnectWanted = true
+      this.streamAbort?.abort()
+      this.buffered = []
+    }
+    if (this.syncFlight) return this.syncFlight
+    this.syncing = true; this.emit()
+    const work = async () => {
+      try {
+        const detail = await this.transport.detail(this.sessionId, this.lifetime.signal)
+        const boundary = detail.next_msg_seq - 1
+        let page = await this.transport.messages(this.sessionId, boundary + 1, this.lifetime.signal)
+        const rows = [...page.items]
+        const previousOldest = this.history.size ? Math.min(...this.history.keys()) : null
+        // Fill a disconnect gap even if more than one page was committed while offline.
+        while (previousOldest !== null && page.has_more && page.next_before_seq !== null && page.next_before_seq > this.boundary + 1) {
+          page = await this.transport.messages(this.sessionId, page.next_before_seq, this.lifetime.signal)
+          rows.push(...page.items)
+        }
+        if (this.disposed) return false
+        for (const row of rows) this.history.set(row.seq, row)
+        if (previousOldest === null || (rows.length && Math.min(...rows.map(m => m.seq)) <= previousOldest)) this.hasMore = page.has_more
+        this.boundary = boundary // Only advance after ALL required page reads succeeded.
+        for (const seq of this.live.keys()) if (seq <= boundary || this.reconnectWanted || !active(detail.latest_run)) this.live.delete(seq)
+        this.syncFailed = false
+        this.detail = detail; this.ready = true; this.error = detail.latest_run?.error ?? null
+        this.reconcilePending()
+        if (this.pending && detail.latest_run?.status === 'failed') this.pending.failed = true
+        return true
+      } catch (error) {
+        if (!this.disposed) {
+          this.syncFailed = true
+          this.error = messageOf(error)
+          this.missing = error instanceof ApiError && error.status === 404
+        }
+        return false
+      }
+    }
+    this.syncFlight = work().then(ok => {
+      this.syncFlight = null; this.syncing = false
+      if (this.disposed) return
+      const queued = this.buffered.splice(0)
+      for (const event of queued) this.apply(event)
+      if (!this.syncFlight && this.reconnectWanted) {
+        if (ok) { this.reconnectWanted = false; this.connect() }
+        else if (!this.missing) this.scheduleReconnect()
+      }
+      this.emit()
+    })
+    return this.syncFlight
+  }
+
+  private connect() {
+    this.streamAbort?.abort()
+    if (this.retry) { clearTimeout(this.retry); this.retry = null }
+    const run = this.detail?.latest_run
+    if (this.disposed || !run || !active(run)) return
+    const abort = new AbortController()
+    this.streamAbort = abort
+    void this.transport.stream(run.run_id, event => {
+      if (this.disposed || abort.signal.aborted || event.run_id !== run.run_id) return
+      this.retryDelay = 500
+      // The first model/tool event proves preparation has progressed; read the user row once.
+      if (event.msg_seq !== null && this.checkedRun !== run.run_id) {
+        this.checkedRun = run.run_id
+        void this.refresh(false)
+      }
+      if (this.syncing) this.buffered.push(event)
+      else this.apply(event)
+    }, abort.signal).catch(error => {
+      if (this.disposed || abort.signal.aborted) return
+      this.error = messageOf(error); this.emit(); this.scheduleReconnect()
+    })
+  }
+  private scheduleReconnect() {
+    if (this.disposed || this.retry) return
+    this.retry = setTimeout(() => { this.retry = null; void this.refresh(true) }, this.retryDelay)
+    this.retryDelay = Math.min(this.retryDelay * 2, 5000)
+  }
+  private apply(event: StreamEvent) {
+    if (event.type === 'sse_end') { void this.refresh(true); return }
+    if (event.type === 'error' || event.type === 'response_incomplete') {
+      this.error = event.error ?? '运行失败'; this.emit(); return
+    }
+    const seq = event.msg_seq
+    if (seq === null || seq <= this.boundary) return
+    const content = typeof event.content === 'object' ? event.content : {}
+    if (event.type === 'message_chunk' || event.type === 'refusal_chunk') {
+      const old = this.live.get(seq)
+      const text = old?.role === 'assistant' ? old.content : ''
+      this.live.set(seq, { seq, role: 'assistant', content: text + (typeof event.content === 'string' ? event.content : '') })
+    } else if (event.type === 'message_end') {
+      this.live.set(seq, { seq, role: 'assistant', content: typeof content.text === 'string' ? content.text : '' })
+    } else if (event.type === 'tool_start') {
+      this.live.set(seq, { seq, role: 'tool', tool_name: String(content.tool_name ?? ''), arguments: String(content.arguments ?? '') })
+    }
+    // tool_end, reasoning, usage and tool outputs never create additional visible rows.
+    this.emit()
+  }
+
+  loadOlder = async () => {
+    if (this.disposed || this.loadingOlder || !this.hasMore || !this.history.size || this.syncing) return
+    this.loadingOlder = true; this.emit()
+    try {
+      const before = Math.min(...this.history.keys())
+      const page = await this.transport.messages(this.sessionId, before, this.lifetime.signal)
+      if (this.disposed) return
+      for (const row of page.items) this.history.set(row.seq, row)
+      this.hasMore = page.has_more
+    } catch (error) { if (!this.disposed) this.error = messageOf(error) }
+    finally { this.loadingOlder = false; this.emit() }
+  }
+
+  send = async (content: string, model: string): Promise<boolean> => {
+    if (this.disposed || !this.ready || this.submitting || active(this.detail?.latest_run) || !content.trim()) return false
+    this.submitting = true; this.error = null; this.emit()
+    try {
+      // Establish a fresh lower bound so repeated text cannot match old historical prompts.
+      await this.refresh(false)
+      if (this.disposed) return false
+      if (active(this.detail?.latest_run)) { this.connect(); return false }
+      if (this.syncFailed) throw new Error(this.error ?? "读取会话失败")
+      this.error = null
+      this.pending = { content, afterSeq: this.boundary, runId: null, failed: false }; this.emit()
+      const submitted = await this.transport.chat(this.sessionId, content, model, this.lifetime.signal)
+      if (this.disposed) return false
+      if (this.pending) this.pending.runId = submitted.run_id
+      this.detail = { ...this.detail!, latest_run: { run_id: submitted.run_id, session_id: this.sessionId, status: 'waiting', model, error: null } }
+      this.checkedRun = null
+      this.connect() // 202 guarantees the stream exists, not that the user message has committed.
+      return true
+    } catch (error) {
+      if (!this.disposed) {
+        this.error = messageOf(error)
+        if (this.pending) this.pending.failed = true
+        // Read-only reconciliation can recover an accepted POST whose response was lost.
+        void this.refresh(true)
+      }
+      return false
+    } finally { this.submitting = false; this.emit() }
+  }
+
+  dispose() {
+    this.disposed = true; this.lifetime.abort(); this.streamAbort?.abort()
+    if (this.retry) clearTimeout(this.retry)
+    this.listeners.clear()
+  }
+}

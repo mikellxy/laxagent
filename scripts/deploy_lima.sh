@@ -3,9 +3,9 @@
 #
 # - Source is mirrored with rsync --delete (excluding .git, .venv, caches).
 # - config/config.json is NOT copied verbatim: database.host and the NATS url
-#   are rewritten to the Lima slirp gateway (192.0.2.1) so the guest reaches
+#   are rewritten to the Lima host gateway so the guest reaches
 #   PostgreSQL/NATS running on the macOS host.
-# - Finally runs `uv sync` inside the VM so the service is startable.
+# - Builds the frontend on the host; finally runs `uv sync` inside the VM.
 #
 # Usage:  scripts/deploy_lima.sh          (from anywhere)
 # Env:    VM_NAME=laxcode  GATEWAY=192.0.2.1
@@ -28,12 +28,16 @@ fi
 SSH_OPTS=(-F "$SSH_CONFIG" -o ControlPath=none)
 ssh_with() { ssh "${SSH_OPTS[@]}" "$SSH_HOST" "$@"; }
 
+npm --prefix "$SRC/frontend" ci
+npm --prefix "$SRC/frontend" run build
+
 ssh_with "mkdir -p '$DEST' '$DEST/config'"
 
 rsync -az --delete \
   --exclude .git --exclude .venv --exclude __pycache__ \
   --exclude '*.pyc' --exclude '*.pyo' --exclude .pytest_cache \
   --exclude '*.swp' --exclude .DS_Store \
+  --exclude node_modules --exclude test-results --exclude playwright-report \
   --exclude config/config.json \
   -e "ssh -F $SSH_CONFIG -o ControlPath=none" \
   "$SRC/" "$SSH_HOST:$DEST/"

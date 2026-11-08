@@ -31,10 +31,10 @@ class Repository:
                 transaction.add(project)
                 await transaction.flush()
             session = await transaction.scalar(select(Session).where(
-                Session.user_id == user_id, Session.project_id == project.id, Session.name == "laxcode",
+                Session.user_id == user_id, Session.project_id == project.id, Session.name == "LaxCode",
             ).order_by(Session.id).limit(1))
             if session is None:
-                session = Session(user_id=user_id, project_id=project.id, name="laxcode")
+                session = Session(user_id=user_id, project_id=project.id, name="LaxCode")
                 transaction.add(session)
                 await transaction.flush()
             return session.id

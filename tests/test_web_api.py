@@ -38,7 +38,7 @@ async def test_guest_initialization_is_atomic_idempotent_and_concurrent(web_api,
     assert len(projects) == 1 and projects[0]["name"] == "LaxCode"
     project_id = projects[0]["id"]
     sessions = (await web_api.get(f"/api/v1/projects/{project_id}/sessions")).json()
-    assert len(sessions) == 1 and sessions[0]["name"] == "laxcode"
+    assert len(sessions) == 1 and sessions[0]["name"] == "LaxCode"
     detail = (await web_api.get(f"/api/v1/sessions/{session_id}")).json()
     assert detail["latest_run"] is None and detail["next_msg_seq"] == 1
     assert not get_user_data_dir(user_id).exists()

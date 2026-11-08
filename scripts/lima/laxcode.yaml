@@ -1,0 +1,63 @@
+# Lima VM for laxcode local self-testing.
+# Mirrors the production ECS: Ubuntu 24.04 LTS with the GA kernel line
+# (6.8.0-xx-generic), not the HWE kernel shipped by newer cloud images.
+
+vmType: "qemu"
+arch: "aarch64"
+
+images:
+  # Pinned noble release image, same source as lima's official ubuntu-24.04 template.
+  - location: "https://cloud-images.ubuntu.com/releases/noble/release-20261017/ubuntu-24.04-server-cloudimg-arm64.img"
+    arch: "aarch64"
+    digest: "sha256:50e24e1fb79e89116e939d90aa7738f7af48c442fa1bc2510131e0b39c50348e"
+    variant: "server"
+  - location: "https://cloud-images.ubuntu.com/releases/noble/release-20261017/ubuntu-24.04-server-cloudimg-amd64.img"
+    arch: "x86_64"
+    digest: "sha256:04e8f2461a16a44e78a370284471f29616cdd9baf1893df25807b71f985b6c94"
+    variant: "server"
+  - location: "https://cloud-images.ubuntu.com/releases/noble/release/ubuntu-24.04-server-cloudimg-arm64.img"
+    arch: "aarch64"
+    variant: "server"
+  - location: "https://cloud-images.ubuntu.com/releases/noble/release/ubuntu-24.04-server-cloudimg-amd64.img"
+    arch: "x86_64"
+    variant: "server"
+
+cpus: 4
+memory: "6GiB"
+disk: "40GiB"
+
+# Source reaches the VM through rsync (scripts/deploy_lima.sh); no host mounts.
+mounts: []
+
+ssh:
+  loadDotSSHPubKeys: false
+  forwardAgent: false
+  forwardX11: false
+  forwardX11Trusted: false
+
+# macOS 127.0.0.1:8000/8001 -> guest laxcode API / LLM Router.
+portForwards:
+  - guestPort: 8000
+    hostPort: 8000
+  - guestPort: 8001
+    hostPort: 8001
+
+provision:
+  - mode: system
+    script: |
+      #!/bin/bash
+      set -eux -o pipefail
+      export DEBIAN_FRONTEND=noninteractive
+      apt-get update
+      apt-get install -y python3 python3-venv python3-pip build-essential \
+        postgresql-client git curl jq rsync linux-image-generic
+      # The 24.04.2+ cloud images boot an HWE kernel; remove it so the GA
+      # kernel (6.8.0-xx-generic, same line as the ECS) is what boots.
+      apt-get purge -y 'linux-image-.*-generic-hwe.*' 'linux-headers-.*-generic-hwe.*' || true
+      apt-get autoremove -y
+      update-grub
+  - mode: user
+    script: |
+      #!/bin/bash
+      set -eux -o pipefail
+      curl -LsSf https://astral.sh/uv/install.sh | sh

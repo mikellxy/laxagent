@@ -7,9 +7,11 @@ button:disabled { cursor: default; opacity: .5; }
 button:focus-visible, select:focus-visible { outline: 2px solid #83afe2; outline-offset: 2px; }
 .shell { display: flex; height: 100dvh; overflow: hidden; min-width: 480px; }
 .blank { flex: 1; }
-.login { min-height: 100dvh; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 16px; }
-.guest { border: 1px solid #d1d3cb; background: #fdfdfb; border-radius: 9px; padding: 11px 26px; font-size: 14px; box-shadow: 0 2px 4px #00000005; }
-.guest:hover { background: #fff; border-color: #bfc4b8; }
+.login { min-height: 100dvh; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 16px; position: relative; }
+.loginWatermark { position: fixed; left: 0; right: 0; bottom: -0.18em; text-align: center; font-size: clamp(64px, 14vw, 160px); font-weight: 600; letter-spacing: .22em; text-indent: .22em; line-height: 1; color: rgba(52, 55, 48, .05); user-select: none; pointer-events: none; white-space: nowrap; overflow: hidden; }
+.guest { border: 1px solid #d1d3cb; border-bottom-color: #c2c4bb; background: linear-gradient(#ffffff, #f4f4f0); border-radius: 9px; padding: 11px 26px; font-size: 14px; box-shadow: inset 0 1px 0 rgba(255, 255, 255, .9), 0 1px 2px rgba(0, 0, 0, .1), 0 3px 8px rgba(0, 0, 0, .04); transition: background .12s ease, box-shadow .12s ease; }
+.guest:hover { background: linear-gradient(#ffffff, #f8f8f4); border-color: #bfc4b8; border-bottom-color: #b2b5ab; }
+.guest:active { background: linear-gradient(#f2f2ee, #eceee8); box-shadow: inset 0 1px 2px rgba(0, 0, 0, .06); transform: translateY(1px); }
 .error { color: #a04a42; font-size: 13px; padding: 8px; line-height: 1.5; overflow-wrap: anywhere; }
 .spin { animation: spin 1.2s linear infinite; }
 @keyframes spin { to { transform: rotate(360deg); } }

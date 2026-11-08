@@ -10,11 +10,12 @@ import styles from './Sidebar.module.css'
 
 function ProjectGroup({ project, owner, selected, onSelect }: { project: Project; owner: string; selected: number | null; onSelect: (id: number) => void }) {
   const client = useQueryClient()
+  const [expanded, setExpanded] = useState(true)
   const [creating, setCreating] = useState(false)
   const [error, setError] = useState<string | null>(null)
   async function create() {
     if (creating) return
-    setCreating(true); setError(null)
+    setExpanded(true); setCreating(true); setError(null)
     try {
       const session = await api.createSession(project.id)
       await client.cancelQueries({ queryKey: ['sessions', owner, project.id] })
@@ -28,9 +29,12 @@ function ProjectGroup({ project, owner, selected, onSelect }: { project: Project
     <div className={styles.projectRow}>
       <Folder size={16} strokeWidth={1.6} /><span className={styles.projectName}>{project.name}</span>
       <button className={styles.newSession} aria-label={`${project.name} 新会话`} onClick={() => void create()} disabled={creating}><Plus size={13} />新会话</button>
+      <button className={styles.toggle} aria-label={expanded ? `收起 ${project.name} 的会话列表` : `展开 ${project.name} 的会话列表`} aria-expanded={expanded} onClick={() => setExpanded(!expanded)}>
+        {expanded ? <ChevronDown size={15} /> : <ChevronRight size={15} />}
+      </button>
     </div>
     {error && <div role="alert" className="error">{error}</div>}
-    <SessionList projectId={project.id} owner={owner} selected={selected} onSelect={onSelect} creating={creating} onCreate={() => void create()} />
+    {expanded && <SessionList projectId={project.id} owner={owner} selected={selected} onSelect={onSelect} creating={creating} onCreate={() => void create()} />}
   </section>
 }
 export function Sidebar({ owner, selected, onSelect }: { owner: string; selected: number | null; onSelect: (id: number) => void }) {

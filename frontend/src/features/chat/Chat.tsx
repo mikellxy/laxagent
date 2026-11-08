@@ -1,25 +1,52 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react'
 import { useQuery } from '@tanstack/react-query'
-import { ArrowDown, ArrowUp, ChevronDown, LoaderCircle, Wrench } from 'lucide-react'
+import { ArrowDown, ArrowUp, Check, ChevronDown, Copy, LoaderCircle, Wrench } from 'lucide-react'
 import Markdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import { api } from '../../api/resources'
 import { chooseModel, sessionModel } from '../../lib/preferences'
 import { messageOf } from '../../api/errors'
 import { Conversation } from './conversation'
-import type { Message } from '../../api/types'
+import type { Message, ToolMessage } from '../../api/types'
 import styles from './Chat.module.css'
 
 function argumentsText(value: string) { try { return JSON.stringify(JSON.parse(value), null, 2) } catch { return value } }
+function ToolCall({ message }: { message: ToolMessage }) {
+  const [open, setOpen] = useState(false)
+  const text = argumentsText(message.arguments)
+  return <div>
+    <button type="button" className={styles.toolTitle} aria-expanded={open} onClick={() => setOpen(value => !value)}>
+      <Wrench size={14} />{message.tool_name}<ChevronDown size={13} className={`${styles.chevron} ${open ? styles.chevronOpen : ''}`} />
+    </button>
+    {open && text && <pre>{text}</pre>}
+  </div>
+}
 function MessageCard({ message }: { message: Message }) {
   if (message.role === 'assistant' && !message.content) return null
   return <article data-seq={message.seq} aria-label={message.role === 'user' ? '用户消息' : message.role === 'assistant' ? '助手消息' : '工具调用'}
     className={`${styles.message} ${styles[message.role]}`}>
-    {message.role === 'tool' ? <><div className={styles.toolTitle}><Wrench size={14} />{message.tool_name}</div><pre>{argumentsText(message.arguments)}</pre></>
+    {message.role === 'tool' ? <ToolCall message={message} />
       : message.role === 'assistant' ? <Markdown remarkPlugins={[remarkGfm]} skipHtml components={{
         a: ({ children, ...props }) => <a {...props} target="_blank" rel="noopener noreferrer">{children}</a>,
       }}>{message.content}</Markdown> : message.content}
   </article>
+}
+
+function UserIdBar({ owner, sessionId }: { owner: string; sessionId: number }) {
+  const [copied, setCopied] = useState<string | null>(null)
+  async function copy(key: string, value: string) {
+    try { await navigator.clipboard.writeText(value); setCopied(key); setTimeout(() => setCopied(old => old === key ? null : old), 1500) } catch { /* 剪贴板不可用时忽略 */ }
+  }
+  const item = (key: string, label: string, value: string) => <>
+    <span>{label}: {value}</span>
+    <button aria-label={`复制 ${label}`} onClick={() => void copy(key, value)}>
+      {copied === key ? <Check size={13} /> : <Copy size={13} />}
+    </button>
+  </>
+  return <div className={styles.userIdBar}>
+    {item('user', 'user_id', owner)}
+    {item('session', 'session_id', String(sessionId))}
+  </div>
 }
 
 export function Chat({ owner, sessionId, onMissing }: { owner: string; sessionId: number; onMissing: () => void }) {
@@ -80,6 +107,7 @@ export function Chat({ owner, sessionId, onMissing }: { owner: string; sessionId
     node: <article className={`${styles.message} ${styles.user} ${snapshot.pending.failed ? styles.failed : ''}`} aria-label="待确认用户消息">{snapshot.pending.content}</article> })
   rows.sort((a, b) => a.seq - b.seq)
   return <main className={styles.chat} aria-label="聊天">
+    <UserIdBar owner={owner} sessionId={sessionId} />
     <div className={styles.scrollArea} ref={scroller} aria-label="消息列表" tabIndex={0}
       onWheel={event => { if (event.deltaY < 0 && scroller.current && scroller.current.scrollHeight > scroller.current.clientHeight) setFollow(false) }}
       onScroll={() => {

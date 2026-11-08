@@ -6,11 +6,11 @@
 .toggle { display: grid; place-items: center; width: 24px; height: 24px; border-radius: 5px; }
 .project { margin-bottom: 20px; }
 .projectRow { display: flex; align-items: center; gap: 8px; padding: 0 8px; height: 34px; color: var(--muted); }
-.projectName { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 14px; }
+.projectName { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 13px; font-weight: 600; color: var(--text); }
 .newSession { font-size: 11px; opacity: .85; }
-.sessions { margin-top: 4px; }
+.sessions { margin-top: 6px; }
 .sessionRow { display: flex; align-items: center; border-radius: 7px; height: 36px; margin: 2px 0; padding-right: 4px; }
-.sessionName { display: flex; align-items: center; gap: 9px; min-width: 0; flex: 1; height: 100%; padding: 0 10px; text-align: left; font-size: 14px; }
+.sessionName { display: flex; align-items: center; gap: 9px; min-width: 0; flex: 1; height: 100%; padding: 0 10px 0 22px; text-align: left; font-size: 14px; }
 .sessionName > svg { flex-shrink: 0; color: #92948e; }
 .sessionName > span { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
 .selected { background: #dfdfda; }

@@ -37,6 +37,7 @@ export function App() {
         } catch (error) { setError(messageOf(error)) }
         finally { setBusy(false) }
       }}>{retryBootstrap ? '重试' : '以游客登录'}</button>}
+    <span aria-hidden className="loginWatermark">LAXCODE</span>
   </div>
   return <div className="shell"><Sidebar owner={owner} selected={selected} onSelect={select} />
     {selected !== null ? <Chat key={`${owner}:${selected}`} owner={owner} sessionId={selected} onMissing={missing} /> : <main className="blank" />}

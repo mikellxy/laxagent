@@ -24,6 +24,9 @@
   "llm_router": {
     "port": 8001
   },
+  "frontend": {
+    "dist_dir": "../frontend/dist"
+  },
   "nats": {
     "url": "nats://127.0.0.1:4222"
   },

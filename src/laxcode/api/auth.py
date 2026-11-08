@@ -7,7 +7,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
 from laxcode.api.dependencies import get_config, get_repository
-from laxcode.api.schemas import CreateUserRequest, TokenResponse
+from laxcode.api.schemas import LoginRequest, TokenResponse
 
 router = APIRouter()
 bearer = HTTPBearer(auto_error=False)
@@ -36,10 +36,10 @@ async def get_current_user(
 
 
 @router.post("/login", response_model=TokenResponse)
-async def login(body: CreateUserRequest, config=Depends(get_config), repository=Depends(get_repository)):
-    if not await repository.user_exists(body.user_id):
-        raise HTTPException(404, "User not found")
+async def login(body: LoginRequest, config=Depends(get_config), repository=Depends(get_repository)):
+    initial_session_id = await repository.ensure_user(body.user_id, guest=body.from_page == "guest_login")
     now = datetime.now(timezone.utc)
     token = jwt.encode({"sub": body.user_id, "iat": now, "exp": now + timedelta(seconds=TOKEN_SECONDS)},
                        config.auth.jwt_secret.get_secret_value(), algorithm="HS256")
-    return {"access_token": token, "token_type": "bearer", "expires_in": TOKEN_SECONDS}
+    return {"access_token": token, "token_type": "bearer", "expires_in": TOKEN_SECONDS,
+            "initial_session_id": initial_session_id}

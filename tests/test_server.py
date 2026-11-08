@@ -160,6 +160,11 @@ def test_nats_unavailable_stops_both_listeners(config_data, tmp_path):
 
 
 def test_chat_returns_before_model_finishes_and_sse_disconnect_does_not_cancel(config_data, tmp_path):
+    # The same listener serves static assets while retaining streaming API behavior.
+    dist = tmp_path / "web"
+    dist.mkdir()
+    (dist / "index.html").write_text("<html>chat frontend</html>")
+    config_data["frontend"] = {"dist_dir": str(dist)}
     from laxcode.config import DatabaseConfig
     from laxcode.storage.database import Database
     from laxcode.storage.repositories import Repository
@@ -219,6 +224,7 @@ def test_chat_returns_before_model_finishes_and_sse_disconnect_does_not_cancel(c
             with launch(config_data, tmp_path) as (process, log_path):
                 wait_for_api(process, f"{base}/openapi.json", log_path)
                 with httpx2.Client(trust_env=False, timeout=10) as api:
+                    assert api.get(base + "/").text == "<html>chat frontend</html>"
                     login = api.post(f"{base}/api/v1/login", json={"user_id": user_id})
                     api.headers["Authorization"] = f"Bearer {login.json()['access_token']}"
                     response = api.post(f"{base}/api/v1/sessions/{session_id}/chat", json={

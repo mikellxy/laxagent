@@ -33,6 +33,10 @@ class AuthConfig(ConfigModel):
         return self
 
 
+class FrontendConfig(ConfigModel):
+    dist_dir: str = Field(min_length=1)
+
+
 class AppConfig(ConfigModel):
     llm: LLMConfig
     api_server: ServerConfig
@@ -40,6 +44,7 @@ class AppConfig(ConfigModel):
     nats: NatsConfig = Field(default_factory=NatsConfig)
     database: DatabaseConfig
     auth: AuthConfig
+    frontend: FrontendConfig | None = None
 
     @model_validator(mode="after")
     def check_ports(self) -> Self:
@@ -54,7 +59,10 @@ def load_config(path: Path) -> AppConfig:
     except (OSError, UnicodeError, json.JSONDecodeError):
         raise ValueError("Cannot read configuration as UTF-8 JSON") from None
     try:
-        return AppConfig.model_validate(data)
+        config = AppConfig.model_validate(data)
+        if config.frontend is not None:
+            config.frontend.dist_dir = str((path.resolve().parent / config.frontend.dist_dir).resolve())
+        return config
     except ValidationError as exc:
         # Never include input values: a validation failure can contain API keys.
         details = "; ".join(

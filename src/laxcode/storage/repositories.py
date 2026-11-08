@@ -1,6 +1,7 @@
 from uuid import uuid4
 
 from sqlalchemy import func, select, update
+from sqlalchemy.dialects.postgresql import insert
 
 from laxcode.storage.database import Database, DatabaseError
 from laxcode.storage.models import Message, Project, Run, Session, SessionMessage, User
@@ -13,6 +14,30 @@ class Repository:
     async def user_exists(self, user_id: str) -> bool:
         async with self.db.transaction() as transaction:
             return await transaction.scalar(select(User.id).where(User.user_id == user_id)) is not None
+
+    async def ensure_user(self, user_id: str, *, guest: bool = False) -> int | None:
+        async with self.db.transaction() as transaction:
+            await transaction.execute(insert(User).values(user_id=user_id).on_conflict_do_nothing(
+                index_elements=[User.user_id],
+            ))
+            if not guest:
+                return None
+            await transaction.scalar(select(User.id).where(User.user_id == user_id).with_for_update())
+            project = await transaction.scalar(select(Project).where(
+                Project.user_id == user_id, Project.name == "LaxCode",
+            ).order_by(Project.id).limit(1).with_for_update())
+            if project is None:
+                project = Project(user_id=user_id, name="LaxCode")
+                transaction.add(project)
+                await transaction.flush()
+            session = await transaction.scalar(select(Session).where(
+                Session.user_id == user_id, Session.project_id == project.id, Session.name == "laxcode",
+            ).order_by(Session.id).limit(1))
+            if session is None:
+                session = Session(user_id=user_id, project_id=project.id, name="laxcode")
+                transaction.add(session)
+                await transaction.flush()
+            return session.id
 
     @staticmethod
     def owned_session(user_id: str, session_id: int):
@@ -73,24 +98,90 @@ class Repository:
 
     async def create_project(self, user_id: str, name: str) -> Project:
         async with self.db.transaction() as transaction:
-            if await transaction.scalar(select(User.id).where(User.user_id == user_id)) is None:
+            if await transaction.scalar(select(User.id).where(User.user_id == user_id).with_for_update()) is None:
                 raise DatabaseError("User not found", 404)
             project = Project(user_id=user_id, name=name)
             transaction.add(project)
             await transaction.flush()
         return project
 
-    async def create_session(self, user_id: str, project_id: int, name: str) -> Session:
+    async def create_session(self, user_id: str, project_id: int, name: str | None = None) -> Session:
         async with self.db.transaction() as transaction:
             project = await transaction.scalar(select(Project).join(
                 User, User.user_id == Project.user_id,
-            ).where(Project.id == project_id, Project.user_id == user_id))
+            ).where(Project.id == project_id, Project.user_id == user_id).with_for_update(of=Project))
             if project is None:
                 raise DatabaseError("Project not found", 404)
+            if name is None:
+                count = await transaction.scalar(select(func.count()).select_from(Session).where(
+                    Session.project_id == project_id, Session.user_id == user_id,
+                ))
+                name = f"会话 {count + 1}"
             session = Session(user_id=user_id, project_id=project_id, name=name)
             transaction.add(session)
             await transaction.flush()
         return session
+
+    async def list_projects(self, user_id: str) -> list[Project]:
+        async with self.db.transaction() as transaction:
+            return list(await transaction.scalars(select(Project).where(
+                Project.user_id == user_id,
+            ).order_by(Project.id)))
+
+    async def list_sessions(self, user_id: str, project_id: int) -> list[Session]:
+        async with self.db.transaction() as transaction:
+            if await transaction.scalar(select(Project.id).where(
+                Project.id == project_id, Project.user_id == user_id,
+            )) is None:
+                raise DatabaseError("Project not found", 404)
+            return list(await transaction.scalars(select(Session).where(
+                Session.project_id == project_id, Session.user_id == user_id,
+            ).order_by(Session.id)))
+
+    async def rename_session(self, user_id: str, session_id: int, name: str) -> Session:
+        async with self.db.transaction() as transaction:
+            session = await transaction.scalar(self.owned_session(user_id, session_id).with_for_update(of=Session))
+            if session is None:
+                raise DatabaseError("Session not found", 404)
+            session.name = name
+        return session
+
+    async def session_detail(self, user_id: str, session_id: int) -> tuple[Session, Run | None]:
+        # A single statement keeps the sequence watermark and latest run in one PG snapshot.
+        latest = select(Run.id).where(
+            Run.session_id == Session.id, Run.user_id == Session.user_id, Run.project_id == Session.project_id,
+        ).order_by(Run.id.desc()).limit(1).correlate(Session).scalar_subquery()
+        async with self.db.transaction() as transaction:
+            row = (await transaction.execute(self.owned_session(user_id, session_id).add_columns(Run).outerjoin(
+                Run, Run.id == latest,
+            ))).first()
+            if row is None:
+                raise DatabaseError("Session not found", 404)
+            return row[0], row[1]
+
+    async def list_messages(self, user_id: str, session_id: int, *, before_seq: int | None, limit: int) -> dict:
+        async with self.db.transaction() as transaction:
+            if await transaction.scalar(self.owned_session(user_id, session_id)) is None:
+                raise DatabaseError("Session not found", 404)
+            query = select(Message).where(
+                Message.session_id == session_id, Message.role.in_(("user", "assistant", "tool")),
+            )
+            if before_seq is not None:
+                query = query.where(Message.seq < before_seq)
+            rows = list(await transaction.scalars(query.order_by(Message.seq.desc()).limit(limit + 1)))
+            has_more = len(rows) > limit
+            rows = list(reversed(rows[:limit]))
+            items = []
+            for row in rows:
+                item = {"seq": row.seq, "role": row.role}
+                if row.role == "tool":
+                    call = row.tool_call if isinstance(row.tool_call, dict) else {}
+                    item.update(tool_name=row.tool_name or "", arguments=call.get("arguments", ""))
+                else:
+                    item["content"] = row.content
+                items.append(item)
+            return {"items": items, "has_more": has_more,
+                    "next_before_seq": rows[0].seq if has_more else None}
 
     async def append_message(
         self, *, user_id: str, project_id: int, session_id: int,

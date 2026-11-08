@@ -149,7 +149,6 @@ async def test_invalid_chat_never_creates_run(chat_api, body):
 async def test_login_and_jwt_validation(chat_api):
     h = chat_api
     api = h.api
-    assert (await api.post("/api/v1/login", json={"user_id": str(uuid4())})).status_code == 404
     assert (await api.post("/api/v1/login", json={"user_id": "invalid"})).status_code == 422
     response = await api.post("/api/v1/login", json={"user_id": h.conversation["user_id"].upper()})
     assert response.status_code == 200 and response.json()["expires_in"] == 86400

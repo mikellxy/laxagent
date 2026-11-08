@@ -43,26 +43,28 @@ async def test_migration_has_no_foreign_keys_and_nullable_tool_columns(repositor
 
 
 @pytest.mark.anyio
-async def test_creation_apis_and_ownership(repository):
-    app = create_app()
+async def test_creation_apis_and_ownership(repository, config_data):
+    from laxcode.config import AppConfig
+    app = create_app(AppConfig.model_validate(config_data))
     app.state.agent_context = AgentContext(None, None, repository)
     user_id = str(uuid4())
     async with httpx2.AsyncClient(transport=httpx2.ASGITransport(app), base_url="http://test", trust_env=False) as api:
-        assert (await api.post("/api/v1/users", json={"user_id": "invalid"})).status_code == 422
-        user = await api.post("/api/v1/users", json={"user_id": user_id.upper()})
-        assert user.status_code == 201
-        assert user.json()["user_id"] == user_id
-        assert (await api.post("/api/v1/users", json={"user_id": user_id})).status_code == 409
-        assert (await api.post("/api/v1/projects", json={"user_id": str(uuid4()), "name": "test"})).status_code == 404
-        assert (await api.post("/api/v1/projects", json={"user_id": user_id, "name": "  "})).status_code == 422
-        project = await api.post("/api/v1/projects", json={"user_id": user_id, "name": "test"})
-        assert project.status_code == 201
+        assert (await api.post("/api/v1/projects", json={"name": "test"})).status_code == 401
+        token = (await api.post("/api/v1/login", json={"user_id": user_id})).json()["access_token"]
+        api.headers["Authorization"] = f"Bearer {token}"
+        assert (await api.post("/api/v1/projects", json={"user_id": user_id, "name": "test"})).status_code == 422
+        assert (await api.post("/api/v1/projects", json={"name": "  "})).status_code == 422
+        project = await api.post("/api/v1/projects", json={"name": " test "})
+        assert project.status_code == 201 and project.json()["name"] == "test"
         path = f"/api/v1/projects/{project.json()['id']}/sessions"
         other = str(uuid4())
-        await api.post("/api/v1/users", json={"user_id": other})
-        assert (await api.post(path, json={"user_id": other, "name": "test"})).status_code == 404
-        session = await api.post(path, json={"user_id": user_id, "name": "test"})
+        await repository.create_user(other)
+        other_project = await repository.create_project(other, "other")
+        assert (await api.post(f"/api/v1/projects/{other_project.id}/sessions")).status_code == 404
+        assert (await api.post(path, json={"user_id": user_id})).status_code == 422
+        session = await api.post(path)
         assert session.status_code == 201
+        assert session.json()["name"] == "会话 1"
         assert session.json()["next_msg_seq"] == 1
         assert session.json()["user_id"] == user_id
         assert session.json()["project_id"] == project.json()["id"]

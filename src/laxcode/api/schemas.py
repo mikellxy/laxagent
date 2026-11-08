@@ -15,6 +15,7 @@ class TokenResponse(BaseModel):
     access_token: str
     token_type: Literal["bearer"]
     expires_in: int
+    initial_session_id: int | None = None
 
 
 class SubmittedRunResponse(BaseModel):
@@ -35,7 +36,7 @@ class RunResponse(BaseModel):
     error: str | None
 
 
-class CreateUserRequest(BaseModel):
+class UserIdRequest(BaseModel):
     model_config = ConfigDict(extra="forbid", strict=True)
 
     user_id: str
@@ -46,24 +47,68 @@ class CreateUserRequest(BaseModel):
         return str(UUID(value))
 
 
-class CreateProjectRequest(CreateUserRequest):
-    name: str = Field(min_length=1, pattern=r"\S")
+class LoginRequest(UserIdRequest):
+    from_page: Literal["guest_login"] | None = None
 
 
-class CreateSessionRequest(CreateProjectRequest):
-    pass
+class NameRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+    name: str = Field(min_length=1)
+
+    @field_validator("name")
+    @classmethod
+    def trim_name(cls, value):
+        value = value.strip()
+        if not value:
+            raise ValueError("Name must not be blank")
+        return value
 
 
-class UserResponse(BaseModel):
+class CreateSessionRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+
+
+class ProjectResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
     id: int
     user_id: str
-
-
-class ProjectResponse(UserResponse):
     name: str
 
 
 class SessionResponse(ProjectResponse):
     project_id: int
     next_msg_seq: int
+
+
+class SessionDetailResponse(SessionResponse):
+    latest_run: RunResponse | None
+
+
+class TextMessageResponse(BaseModel):
+    seq: int
+    role: Literal["user", "assistant"]
+    content: str
+
+
+class ToolMessageResponse(BaseModel):
+    seq: int
+    role: Literal["tool"]
+    tool_name: str
+    arguments: str
+
+
+class MessagePageResponse(BaseModel):
+    items: list[TextMessageResponse | ToolMessageResponse]
+    has_more: bool
+    next_before_seq: int | None
+
+
+class ModelResponse(BaseModel):
+    id: str
+    provider: str
+    name: str
+
+
+class ModelCatalogResponse(BaseModel):
+    default_model: str
+    models: list[ModelResponse]

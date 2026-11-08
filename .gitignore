@@ -47,3 +47,6 @@ node_modules/
 playwright-report/
 test-results/
 *.tsbuildinfo
+
+# Editor swap files
+*.swp

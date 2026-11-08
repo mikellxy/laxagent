@@ -10,7 +10,8 @@ from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.exc import IntegrityError
 
 from laxcode.agent.context import AgentContext
-from laxcode.agent.nodes.preparation import SYSTEM_PROMPT, WORKSPACE, prepare_context
+from laxcode.agent.nodes.preparation import prepare, system_prompt
+from laxcode.layout import get_project_workdir
 from laxcode.api.app import create_app
 from laxcode.storage.database import Database, DatabaseError
 from laxcode.storage.models import Message, Session, SessionMessage, User
@@ -116,16 +117,16 @@ async def test_preparation_orders_context_and_hides_database_fields(repository, 
                 transaction.add(model(seq=seq, role=role, content=content, session_id=conversation["session_id"]))
         session = await transaction.get(Session, conversation["session_id"])
         session.next_msg_seq = 3
-    result = await prepare_context(
+    result = await prepare(
         {**conversation, "user_query": "third", "next_msg_seq": 1, "messages": []},
         Runtime(context=AgentContext(None, None, repository)),
     )
-    assert result["workspace"] == WORKSPACE
+    assert result["workspace"] == str(get_project_workdir(conversation["user_id"], conversation["project_id"]))
     assert result["model_input"] == result["messages"]
     assert result["pending_tool_calls"] == []
     assert result["next_msg_seq"] == 4
     assert result["messages"] == [
-        {"role": "system", "content": SYSTEM_PROMPT},
+        {"role": "system", "content": system_prompt(result["workspace"])},
         {"role": "user", "content": "first"}, {"role": "assistant", "content": "second"},
         {"role": "user", "content": "third"},
     ]

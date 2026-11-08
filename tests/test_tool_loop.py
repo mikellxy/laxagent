@@ -1,11 +1,13 @@
 import asyncio
 import copy
 import json
+from pathlib import Path
 
 import pytest
 from sqlalchemy import event
 from sqlalchemy.exc import IntegrityError
 
+from laxcode.layout import get_project_workdir
 from laxcode.agent.context import AgentContext
 from laxcode.agent.graph import build_graph
 from laxcode.models.responses import messages_to_input
@@ -17,6 +19,13 @@ from laxcode.storage.models import SessionMessage
 from model_helpers import ModelStream, client_for, completed
 from storage_helpers import message_snapshot
 from test_agent import MemoryEvents, state
+
+
+@pytest.fixture(autouse=True)
+def workspace_file(conversation):
+    workspace = get_project_workdir(conversation["user_id"], conversation["project_id"])
+    workspace.mkdir(parents=True)
+    (workspace / "hello.txt").write_text(Path("tests/fixtures/workspace/hello.txt").read_text(), encoding="utf-8")
 
 
 def tool_response(paths=("hello.txt", "hello.txt")):

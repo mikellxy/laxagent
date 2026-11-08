@@ -96,3 +96,11 @@ async def conversation(repository):
     project = await repository.create_project(user_id, "test-project")
     session = await repository.create_session(user_id, project.id, "test-session")
     return {"user_id": user_id, "project_id": project.id, "session_id": session.id}
+
+
+@pytest.fixture(autouse=True)
+def isolated_home(tmp_path, monkeypatch):
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.setattr(Path, "home", classmethod(lambda cls: home))
+    return home

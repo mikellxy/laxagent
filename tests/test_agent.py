@@ -9,7 +9,7 @@ from sqlalchemy.exc import IntegrityError
 
 from laxcode.agent.context import AgentContext
 from laxcode.agent.graph import build_graph
-from laxcode.agent.nodes.preparation import SYSTEM_PROMPT
+from laxcode.agent.nodes.preparation import system_prompt
 from laxcode.models.errors import ModelError
 from laxcode.runtime.events import EventStoreError
 from storage_helpers import run_agent
@@ -74,7 +74,7 @@ async def test_graph_aggregates_final_output_and_keeps_state_immutable(repositor
     async with client_for(stream, captured) as client:
         result = await run_agent(build_graph(), original, AgentContext(client, events, repository))
     assert original == snapshot
-    expected_input = [{"role": "system", "content": SYSTEM_PROMPT}, {"role": "user", "content": "Hi"}]
+    expected_input = [{"role": "system", "content": system_prompt(result["workspace"])}, {"role": "user", "content": "Hi"}]
     assert result["messages"] == [*expected_input, {"role": "assistant", "content": "actual final refusal"}]
     assert result["next_msg_seq"] == 3
     assert captured == [{"input": expected_input, "model": "chosen:model", "stream": True, "tools": tool_definitions()}]

@@ -103,13 +103,20 @@ async def test_multiple_calls_one_assistant_and_sequential_tool_commits(reposito
 
 
 @pytest.mark.anyio
-async def test_write_then_read_round_trip(repository, conversation):
+async def test_write_edit_read_round_trip(repository, conversation):
     text = "中文🙂\r\n第二行"
-    response = tool_response(("generated/nested/text.txt", "generated/nested/text.txt"))
+    edited = "中文🙂\r\n改好了"
+    path = "generated/nested/text.txt"
+    response = tool_response((path, path, path))
     write_call = response["response"]["output"][1]
     write_call["name"] = "write_file"
     write_call["arguments"] = json.dumps({"path": "generated/nested/text.txt", "content": text})
-    read_call = response["response"]["output"][2]
+    edit_call = response["response"]["output"][2]
+    edit_call["name"] = "edit_file"
+    edit_call["arguments"] = json.dumps({
+        "path": path, "edits": [{"old_text": " 第二行  ", "new_text": "改好了"}],
+    })
+    read_call = response["response"]["output"][3]
     read_call["arguments"] = json.dumps({
         "path": "generated/nested/text.txt", "start_line_no": 1, "start_byte_no": 1, "total_lines": 10,
     })
@@ -118,22 +125,26 @@ async def test_write_then_read_round_trip(repository, conversation):
     async with client_for(streams, captured) as client:
         result = await run_agent(build_graph(), state(conversation), AgentContext(client, events, repository))
     workspace = get_project_workdir(conversation["user_id"], conversation["project_id"])
-    assert (workspace / "generated/nested/text.txt").read_bytes() == text.encode()
-    assert {tool["name"] for tool in captured[0]["tools"]} == {"read_file", "write_file"}
+    assert (workspace / path).read_bytes() == edited.encode()
+    assert {tool["name"] for tool in captured[0]["tools"]} == {"read_file", "write_file", "edit_file"}
     _, tables = await message_snapshot(repository, conversation["session_id"])
     assert tables[0] == tables[1]
-    writes, reads = tables[0][2:4]
-    assert (writes.tool_name, reads.tool_name) == ("write_file", "read_file")
+    writes, edits, reads = tables[0][2:5]
+    assert (writes.tool_name, edits.tool_name, reads.tool_name) == ("write_file", "edit_file", "read_file")
     assert json.loads(writes.content) == {
         "error_code": None, "result": {"path": "generated/nested/text.txt", "bytes_written": len(text.encode())},
     }
-    assert json.loads(reads.content)["result"]["text"] == text
+    assert json.loads(edits.content) == {
+        "error_code": None, "result": {"path": path, "edits_applied": 1, "bytes_written": len(edited.encode())},
+    }
+    assert json.loads(reads.content)["result"]["text"] == edited
     assert [item["output"] for item in captured[1]["input"] if item.get("type") == "function_call_output"] == [
-        writes.content, reads.content,
+        writes.content, edits.content, reads.content,
     ]
     tool_events = [item for item in events.items if item["role"] == "tool"]
     assert [(item["type"], item["content"]["tool_name"]) for item in tool_events] == [
         ("tool_start", "write_file"), ("tool_end", "write_file"),
+        ("tool_start", "edit_file"), ("tool_end", "edit_file"),
         ("tool_start", "read_file"), ("tool_end", "read_file"),
     ]
     assert all(item["error"] is None for item in tool_events)
@@ -143,12 +154,19 @@ async def test_write_then_read_round_trip(repository, conversation):
 
 @pytest.mark.anyio
 @pytest.mark.parametrize("failure", ["database", "event"])
-async def test_written_file_survives_result_persistence_or_event_failure(repository, conversation, failure):
+@pytest.mark.parametrize("tool", ["write_file", "edit_file"])
+async def test_written_file_survives_result_persistence_or_event_failure(repository, conversation, failure, tool):
+    workspace = get_project_workdir(conversation["user_id"], conversation["project_id"])
+    if tool == "edit_file":
+        (workspace / "written.txt").write_bytes(b"old")
     response = tool_response(("written.txt", "never.txt"))
     for call in response["response"]["output"][1:]:
         path = json.loads(call["arguments"])["path"]
-        call["name"] = "write_file"
-        call["arguments"] = json.dumps({"path": path, "content": "written"})
+        call["name"] = tool
+        args = {"content": "written"} if tool == "write_file" else {
+            "edits": [{"old_text": "old", "new_text": "written"}],
+        }
+        call["arguments"] = json.dumps({"path": path, **args})
 
     def fail(mapper, connection, message):
         if message.role == "tool":

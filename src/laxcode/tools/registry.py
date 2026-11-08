@@ -1,7 +1,9 @@
+from laxcode.tools.builtin.edit_file import EditFileArgs, edit_file
 from laxcode.tools.builtin.read_file import ReadFileArgs, read_file
 from laxcode.tools.builtin.write_file import WriteFileArgs, write_file
 
-TOOLS = {"read_file": (ReadFileArgs, read_file), "write_file": (WriteFileArgs, write_file)}
+TOOLS = {"read_file": (ReadFileArgs, read_file), "write_file": (WriteFileArgs, write_file),
+         "edit_file": (EditFileArgs, edit_file)}
 
 
 def tool_definitions() -> list[dict]:
@@ -22,4 +24,14 @@ def tool_definitions() -> list[dict]:
             "Content is written exactly as supplied; empty content creates or empties a file."
         ),
         "parameters": WriteFileArgs.model_json_schema(),
+    }, {
+        "type": "function", "name": "edit_file", "strict": True,
+        "description": (
+            "Edit an existing UTF-8 file in workspace. Read it first. Each nonempty old_text must uniquely "
+            "match the original file, and matched byte ranges must not overlap. Exact matching takes priority; "
+            "only if absent, whole-line matching ignores leading/trailing spaces and tabs and accepts LF/CRLF. "
+            "Include enough context to disambiguate. new_text is written literally without indentation or "
+            "newline conversion; empty deletes. All edits succeed together or the file remains unchanged."
+        ),
+        "parameters": EditFileArgs.model_json_schema(),
     }]

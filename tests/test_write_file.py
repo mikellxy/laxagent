@@ -12,7 +12,7 @@ from laxcode.tools.executor import execute_tool
 from laxcode.tools.registry import TOOLS, tool_definitions
 from laxcode.tools.results import format_result
 
-module = importlib.import_module("laxcode.tools.builtin.write_file")
+module = importlib.import_module("laxcode.tools.workspace")
 
 
 def write(workspace, path="text.txt", content="中文🙂\r\nsecond\nlast"):

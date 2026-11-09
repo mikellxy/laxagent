@@ -148,8 +148,16 @@ async def _drain(stream: asyncio.StreamReader, output: OutputBuffer):
         output.feed(chunk)
 
 
-async def _finish_cleanup(task: asyncio.Task) -> bool:
-    """Finish cleanup even if cancellation is requested repeatedly; report it afterwards."""
+async def _start(argv: list[str], status_fd: int) -> asyncio.subprocess.Process:
+    return await asyncio.create_subprocess_exec(
+        *argv, stdin=asyncio.subprocess.DEVNULL, stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.PIPE, env={"PATH": "/usr/bin:/bin", "LANG": "C.UTF-8"},
+        cwd="/", pass_fds=(status_fd,), start_new_session=True,
+    )
+
+
+async def _finish(task: asyncio.Task) -> bool:
+    """Await the task to completion even if cancellation keeps arriving; report it."""
     cancelled = False
     while not task.done():
         try:
@@ -158,6 +166,31 @@ async def _finish_cleanup(task: asyncio.Task) -> bool:
             cancelled = True
     task.result()
     return cancelled
+
+
+def _signal_group(process: asyncio.subprocess.Process, sig: int) -> None:
+    try:
+        os.killpg(process.pid, sig)
+    except ProcessLookupError:
+        pass
+
+
+async def _cleanup(spawn: asyncio.Task, body: asyncio.Task, status: _StatusPipe, terminate: bool) -> None:
+    try:
+        process = await spawn
+    except OSError:
+        process = None
+    if terminate and process is not None and process.returncode is None:
+        _signal_group(process, signal.SIGTERM)
+        try:
+            # shield keeps body alive when the one-second grace expires.
+            await asyncio.wait_for(asyncio.shield(body), 1)
+        except TimeoutError:
+            if process.returncode is None:
+                _signal_group(process, signal.SIGKILL)
+    status.close_writer()
+    status.close_reader()
+    await asyncio.gather(body, status.eof, return_exceptions=True)
 
 
 async def run_bash(workspace: str, command: str, timeout: float = 120) -> dict:
@@ -171,72 +204,43 @@ async def run_bash(workspace: str, command: str, timeout: float = 120) -> dict:
         status.close_writer()
         status.close_reader()
         raise
-    spawn = asyncio.create_task(asyncio.create_subprocess_exec(
-        *argv, stdin=asyncio.subprocess.DEVNULL, stdout=asyncio.subprocess.PIPE,
-        stderr=asyncio.subprocess.PIPE, env={"PATH": "/usr/bin:/bin", "LANG": "C.UTF-8"},
-        cwd="/", pass_fds=(status.write_fd,), start_new_session=True,
-    ))
-    readers = []
+    spawn = asyncio.create_task(_start(argv, status.write_fd))
 
-    async def supervise():
-        try:
-            process = await asyncio.shield(spawn)
-        finally:
-            status.close_writer()
-        readers.extend([asyncio.create_task(_drain(process.stdout, stdout)),
-                        asyncio.create_task(_drain(process.stderr, stderr))])
-        await asyncio.gather(process.wait(), *readers, status.eof)
+    async def run() -> asyncio.subprocess.Process:
+        # Nobody ever cancels this task, so the spawn can be awaited directly.
+        process = await spawn
+        status.close_writer()
+        await asyncio.gather(process.wait(),
+                             asyncio.create_task(_drain(process.stdout, stdout)),
+                             asyncio.create_task(_drain(process.stderr, stderr)))
+        return process
 
-    running = asyncio.create_task(supervise())
-
-    async def cleanup():
-        try:
-            # A cancelled create_subprocess_exec can otherwise lose a live child handle.
-            try:
-                process = await spawn
-            except OSError:
-                return
-            if process.returncode is None:
-                try:
-                    os.killpg(process.pid, signal.SIGTERM)
-                except ProcessLookupError:
-                    pass
-            try:
-                await asyncio.wait_for(asyncio.shield(running), 1)
-            except asyncio.TimeoutError:
-                if process.returncode is None:
-                    try:
-                        os.killpg(process.pid, signal.SIGKILL)
-                    except ProcessLookupError:
-                        pass
-                await running
-        finally:
-            status.close_writer()
-            status.close_reader()
-            await asyncio.gather(running, *readers, return_exceptions=True)
-
-    timed_out = False
-    interrupted = False
-    failure = False
+    body = asyncio.create_task(run())
+    timed_out = interrupted = failure = False
+    process = None
     try:
         async with asyncio.timeout(timeout):
-            await asyncio.shield(running)
+            process = await asyncio.shield(body)
     except TimeoutError:
         timed_out = True
     except asyncio.CancelledError:
         interrupted = True
     except OSError:
         failure = True
+    except BaseException:
+        failure = True
+        raise  # the finally below still completes cleanup before this propagates
     finally:
-        interrupted = await _finish_cleanup(asyncio.create_task(cleanup())) or interrupted
-    if interrupted:
+        cancelled = await _finish(asyncio.create_task(
+            _cleanup(spawn, body, status, timed_out or interrupted or failure)))
+    if interrupted or cancelled:
         raise asyncio.CancelledError
     code = status.exit_code()
     result = {"exit_code": code, "stdout": stdout.text(), "stderr": stderr.text(), "timed_out": timed_out,
               "stdout_truncated": stdout.truncated, "stderr_truncated": stderr.truncated}
     if timed_out:
         raise SandboxError("BASH_TIMEOUT", result)
-    if failure or code is None:
+    if process is None or code is None:
         # Don't expose host paths from bwrap setup diagnostics to the model.
         raise SandboxError("SANDBOX_START_FAILED")
     return result

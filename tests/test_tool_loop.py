@@ -13,6 +13,7 @@ from laxcode.agent.graph import build_graph
 from laxcode.models.responses import messages_to_input
 from laxcode.models.errors import ModelError
 from laxcode.runtime.events import EventStoreError
+from laxcode.runtime.task_manager import TaskManager
 from storage_helpers import run_agent
 from laxcode.storage.database import DatabaseError
 from laxcode.storage.models import SessionMessage
@@ -103,14 +104,18 @@ async def test_multiple_calls_one_assistant_and_sequential_tool_commits(reposito
 
 
 @pytest.mark.anyio
-async def test_write_edit_read_round_trip(repository, conversation):
+@pytest.mark.parametrize("writer", ["write_file", pytest.param("bash", marks=pytest.mark.sandbox_linux)])
+async def test_write_edit_read_round_trip(repository, conversation, writer):
     text = "中文🙂\r\n第二行"
     edited = "中文🙂\r\n改好了"
     path = "generated/nested/text.txt"
     response = tool_response((path, path, path))
     write_call = response["response"]["output"][1]
-    write_call["name"] = "write_file"
-    write_call["arguments"] = json.dumps({"path": "generated/nested/text.txt", "content": text})
+    write_call["name"] = writer
+    write_call["arguments"] = json.dumps({"path": path, "content": text} if writer == "write_file" else {
+        "command": "mkdir -p generated/nested; printf '中文🙂\\r\\n第二行' > generated/nested/text.txt; exit 7",
+        "timeout_seconds": None,
+    })
     edit_call = response["response"]["output"][2]
     edit_call["name"] = "edit_file"
     edit_call["arguments"] = json.dumps({
@@ -126,14 +131,18 @@ async def test_write_edit_read_round_trip(repository, conversation):
         result = await run_agent(build_graph(), state(conversation), AgentContext(client, events, repository))
     workspace = get_project_workdir(conversation["user_id"], conversation["project_id"])
     assert (workspace / path).read_bytes() == edited.encode()
-    assert {tool["name"] for tool in captured[0]["tools"]} == {"read_file", "write_file", "edit_file"}
+    assert {tool["name"] for tool in captured[0]["tools"]} == {"read_file", "write_file", "edit_file", "bash"}
     _, tables = await message_snapshot(repository, conversation["session_id"])
     assert tables[0] == tables[1]
     writes, edits, reads = tables[0][2:5]
-    assert (writes.tool_name, edits.tool_name, reads.tool_name) == ("write_file", "edit_file", "read_file")
-    assert json.loads(writes.content) == {
-        "error_code": None, "result": {"path": "generated/nested/text.txt", "bytes_written": len(text.encode())},
-    }
+    assert (writes.tool_name, edits.tool_name, reads.tool_name) == (writer, "edit_file", "read_file")
+    if writer == "write_file":
+        assert json.loads(writes.content) == {
+            "error_code": None, "result": {"path": path, "bytes_written": len(text.encode())},
+        }
+    else:
+        assert json.loads(writes.content)["error_code"] is None
+        assert json.loads(writes.content)["result"]["exit_code"] == 7
     assert json.loads(edits.content) == {
         "error_code": None, "result": {"path": path, "edits_applied": 1, "bytes_written": len(edited.encode())},
     }
@@ -143,7 +152,7 @@ async def test_write_edit_read_round_trip(repository, conversation):
     ]
     tool_events = [item for item in events.items if item["role"] == "tool"]
     assert [(item["type"], item["content"]["tool_name"]) for item in tool_events] == [
-        ("tool_start", "write_file"), ("tool_end", "write_file"),
+        ("tool_start", writer), ("tool_end", writer),
         ("tool_start", "edit_file"), ("tool_end", "edit_file"),
         ("tool_start", "read_file"), ("tool_end", "read_file"),
     ]
@@ -154,7 +163,7 @@ async def test_write_edit_read_round_trip(repository, conversation):
 
 @pytest.mark.anyio
 @pytest.mark.parametrize("failure", ["database", "event"])
-@pytest.mark.parametrize("tool", ["write_file", "edit_file"])
+@pytest.mark.parametrize("tool", ["write_file", "edit_file", pytest.param("bash", marks=pytest.mark.sandbox_linux)])
 async def test_written_file_survives_result_persistence_or_event_failure(repository, conversation, failure, tool):
     workspace = get_project_workdir(conversation["user_id"], conversation["project_id"])
     if tool == "edit_file":
@@ -166,7 +175,9 @@ async def test_written_file_survives_result_persistence_or_event_failure(reposit
         args = {"content": "written"} if tool == "write_file" else {
             "edits": [{"old_text": "old", "new_text": "written"}],
         }
-        call["arguments"] = json.dumps({"path": path, **args})
+        call["arguments"] = json.dumps({"path": path, **args} if tool != "bash" else {
+            "command": f"printf written > {path}", "timeout_seconds": None,
+        })
 
     def fail(mapper, connection, message):
         if message.role == "tool":
@@ -272,3 +283,34 @@ async def test_repeated_tool_requests_stop_at_graph_limit(repository, conversati
             await run_agent(build_graph(), state(conversation), AgentContext(client, events, repository))
     assert len(captured) <= 13
     assert events.items[-1]["content"] == {"status": "failed"}
+
+
+@pytest.mark.sandbox_linux
+@pytest.mark.anyio
+async def test_shutdown_waits_for_bash_cleanup(repository, conversation):
+    from uuid import uuid4
+    from test_bash_linux import assert_gone, wait_file
+
+    token = "laxcode-" + uuid4().hex
+    response = tool_response(("unused",))
+    call = response["response"]["output"][-1]
+    call["name"] = "bash"
+    call["arguments"] = json.dumps({
+        "command": f"touch ready; setsid bash -c 'trap \"\" TERM; while :; do sleep 1; done' {token} & wait",
+        "timeout_seconds": None,
+    })
+    events = MemoryEvents()
+    async with client_for(ModelStream([response]), []) as client:
+        manager = TaskManager(build_graph(), AgentContext(client, events, repository))
+        run = await manager.submit(user_id=conversation["user_id"], session_id=conversation["session_id"],
+                                   user_query="run", model="chosen:model", context_limit=128000, output_limit=16000)
+        try:
+            workspace = get_project_workdir(conversation["user_id"], conversation["project_id"])
+            await wait_file(workspace / "ready")
+        finally:
+            await asyncio.wait_for(manager.close(), 5)
+    await assert_gone(token)
+    stored = await repository.get_run(run.id, conversation["user_id"])
+    assert stored.status == "failed" and stored.finished_at is not None
+    assert not any(item["type"] == "tool_end" for item in events.items)
+    assert events.items[-1]["content"] == {"status": "cancelled"}

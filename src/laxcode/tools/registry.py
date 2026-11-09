@@ -1,9 +1,10 @@
+from laxcode.tools.builtin.bash import BashArgs, bash
 from laxcode.tools.builtin.edit_file import EditFileArgs, edit_file
 from laxcode.tools.builtin.read_file import ReadFileArgs, read_file
 from laxcode.tools.builtin.write_file import WriteFileArgs, write_file
 
 TOOLS = {"read_file": (ReadFileArgs, read_file), "write_file": (WriteFileArgs, write_file),
-         "edit_file": (EditFileArgs, edit_file)}
+         "edit_file": (EditFileArgs, edit_file), "bash": (BashArgs, bash)}
 
 
 def tool_definitions() -> list[dict]:
@@ -34,4 +35,15 @@ def tool_definitions() -> list[dict]:
             "newline conversion; empty deletes. All edits succeed together or the file remains unchanged."
         ),
         "parameters": EditFileArgs.model_json_schema(),
+    }, {
+        "type": "function", "name": "bash", "strict": True,
+        "description": (
+            "Run a non-interactive Bash command in a fresh Linux bubblewrap sandbox, starting in workspace. "
+            "Only workspace changes persist. /tmp is for intermediate files and disappears on exit; "
+            "write all final deliverables to workspace. Host network is shared, system tools are read-only. "
+            "No shell state or background processes survive a call. timeout_seconds=null uses 120s (max 300s). "
+            "Nonzero command exits are returned with output. Each output stream retains at most 32 KiB "
+            "of source bytes (head and tail) plus a truncation marker. Never automatically retry side effects."
+        ),
+        "parameters": BashArgs.model_json_schema(),
     }]

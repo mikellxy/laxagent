@@ -35,7 +35,7 @@ async def run_store():
 @pytest.fixture(scope="session")
 def database_config():
     return {
-        "host": "127.0.0.1", "port": 5432, "name": "laxcode_test",
+        "host": os.getenv("LAXCODE_TEST_DB_HOST", "127.0.0.1"), "port": 5432, "name": "laxcode_test",
         "user": "laxcode_test", "password": "test-only-password",
     }
 

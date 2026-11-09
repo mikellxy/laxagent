@@ -28,6 +28,10 @@ fi
 SSH_OPTS=(-F "$SSH_CONFIG" -o ControlPath=none)
 ssh_with() { ssh "${SSH_OPTS[@]}" "$SSH_HOST" "$@"; }
 
+# Probe this checkout's exact production profile before copying deployment content.
+# Standard-library-only source is passed over stdin; no root or package installation.
+ssh_with "python3 - --probe" < "$SRC/src/laxcode/sandbox/bubblewrap.py"
+
 npm --prefix "$SRC/frontend" ci
 npm --prefix "$SRC/frontend" run build
 

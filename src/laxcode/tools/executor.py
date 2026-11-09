@@ -1,4 +1,5 @@
 import asyncio
+import inspect
 import json
 
 from laxcode.tools.errors import ToolError
@@ -15,7 +16,10 @@ async def execute_tool(name: str, arguments: str, *, workspace: str) -> dict:
     except ValueError:
         return {"error_code": "INVALID_ARGUMENTS", "result": {}}
     try:
-        result = await asyncio.to_thread(execute, workspace, args)
+        if inspect.iscoroutinefunction(execute):
+            result = await execute(workspace, args)
+        else:
+            result = await asyncio.to_thread(execute, workspace, args)
         return {"error_code": None, "result": result}
     except ToolError as exc:
-        return {"error_code": str(exc), "result": {}}
+        return {"error_code": str(exc), "result": exc.result}

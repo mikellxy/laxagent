@@ -28,3 +28,5 @@ build-backend = "hatchling.build"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+addopts = "-m 'not sandbox_linux'"
+markers = ["sandbox_linux: real Linux/bubblewrap acceptance; run explicitly with -m sandbox_linux, never skip missing dependencies"]

@@ -1,6 +1,10 @@
 import json
 
 ERROR_GUIDANCE = {
+    "SANDBOX_UNAVAILABLE": "Bash 沙箱不可用，需要 Linux 和可执行的 /usr/bin/bwrap；不会退回宿主执行。",
+    "SANDBOX_INVALID_WORKSPACE": "Bash workspace 无效，请检查项目工作目录及其路径边界。",
+    "SANDBOX_START_FAILED": "Bash 沙箱启动失败，请检查系统依赖、user namespace 和 AppArmor 配置。",
+    "BASH_TIMEOUT": "命令已超时并清理沙箱进程；已产生的 workspace 修改不会回滚，请先核实结果再继续。",
     "UNKNOWN_TOOL": "请使用当前提供的工具。",
     "INVALID_ARGUMENTS": "请按工具参数定义传入 JSON 对象，检查必填字段、字段类型和取值范围。",
     "INVALID_PATH": "请使用 workspace 内的相对路径，不允许 .. 或符号链接。",

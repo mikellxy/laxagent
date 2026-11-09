@@ -9,6 +9,7 @@ import shlex
 import signal
 import sys
 import tempfile
+import threading
 from uuid import uuid4
 
 import pytest
@@ -164,47 +165,50 @@ async def test_timeout_and_repeated_cancellation_clean_descendants(area):
 
 
 async def test_cancellation_during_spawn_does_not_lose_process(area, monkeypatch):
-    real_spawn = asyncio.create_subprocess_exec
-    spawned, release = asyncio.Event(), asyncio.Event()
+    real_start = backend._start
+    loop = asyncio.get_running_loop()
+    spawned, release = asyncio.Event(), threading.Event()
     token = "laxcode-" + uuid4().hex
 
-    async def delayed(*args, **kwargs):
-        process = await real_spawn(*args, **kwargs)
-        spawned.set()
-        await release.wait()
+    def delayed(*args):
+        process = real_start(*args)
+        loop.call_soon_threadsafe(spawned.set)
+        release.wait(5)
         return process
 
-    monkeypatch.setattr(backend.asyncio, "create_subprocess_exec", delayed)
+    monkeypatch.setattr(backend, "_start", delayed)
     task = asyncio.create_task(run(area[1], f"bash -c 'sleep 60' {token}"))
-    await asyncio.wait_for(spawned.wait(), 5)
-    task.cancel()
-    await asyncio.sleep(0)
-    task.cancel()
-    release.set()
-    with pytest.raises(asyncio.CancelledError):
-        await asyncio.wait_for(task, 5)
+    try:
+        await asyncio.wait_for(spawned.wait(), 5)
+        task.cancel()
+        await asyncio.sleep(0)
+        task.cancel()
+        await asyncio.sleep(0)
+        assert not task.done()
+    finally:
+        release.set()
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await asyncio.wait_for(task, 5)
     await assert_gone(token)
 
 
 @pytest.mark.parametrize("ignore_term", [False, True])
 async def test_output_failure_waits_for_process_and_readers(area, monkeypatch, ignore_term):
-    real_start, real_drain = backend._start, backend._drain
+    real_start, real_read = backend._start, backend._read_ready
     real_signal = backend._signal_group
-    processes, readers = [], []
+    processes, selectors_used = [], []
     token = "laxcode-" + uuid4().hex
 
-    async def start(*args):
-        process = await real_start(*args)
+    def start(*args):
+        process = real_start(*args)
         processes.append(process)
         return process
 
-    async def drain(stream, output):
-        readers.append(asyncio.current_task())
-        if stream is processes[0].stdout:
-            await stream.read(1)
-            raise OSError("injected output read failure")
-        await real_drain(stream, output)
-        await asyncio.sleep(0.05)
+    def read_ready(selector, timeout):
+        selectors_used.append(selector)
+        real_read(selector, timeout)
+        raise OSError("injected output read failure")
 
     def signal_group(process, sig):
         # Simulate ineffective SIGTERM while still delivering the real SIGKILL.
@@ -212,7 +216,7 @@ async def test_output_failure_waits_for_process_and_readers(area, monkeypatch, i
             real_signal(process, sig)
 
     monkeypatch.setattr(backend, "_start", start)
-    monkeypatch.setattr(backend, "_drain", drain)
+    monkeypatch.setattr(backend, "_read_ready", read_ready)
     monkeypatch.setattr(backend, "_signal_group", signal_group)
     try:
         result = await asyncio.wait_for(run(area[1], f"printf x; bash -c 'sleep 60' {token}"), 5)
@@ -220,20 +224,40 @@ async def test_output_failure_waits_for_process_and_readers(area, monkeypatch, i
         assert processes[0].returncode is not None
         if ignore_term:
             assert processes[0].returncode == -signal.SIGKILL
-        assert len(readers) == 2 and all(task.done() for task in readers)
+        assert processes[0].stdout.closed and processes[0].stderr.closed
+        assert selectors_used and all(not selector.get_map() for selector in selectors_used)
         await assert_gone(token)
     finally:
         for process in processes:
-            if process.returncode is None:
+            if process.poll() is None:
                 os.killpg(process.pid, signal.SIGKILL)
-            await process.wait()
-        await asyncio.gather(*readers, return_exceptions=True)
+            process.wait()
+
+
+async def test_status_is_drained_even_after_process_exit(area, monkeypatch):
+    real_start, real_read = backend._start, backend._read_ready
+    processes = []
+
+    def start(*args):
+        process = real_start(*args)
+        processes.append(process)
+        return process
+
+    def read_after_exit(selector, timeout):
+        processes[0].wait(timeout=5)
+        real_read(selector, timeout)
+
+    monkeypatch.setattr(backend, "_start", start)
+    monkeypatch.setattr(backend, "_read_ready", read_after_exit)
+    result = await run(area[1], "exit 7")
+    assert result["error_code"] is None and result["result"]["exit_code"] == 7
 
 
 async def test_parent_crash_cleans_sandbox(area):
     token = "laxcode-" + uuid4().hex
     command = f"touch ready; setsid bash -c 'trap \"\" TERM; while :; do sleep 1; done' {token} & wait"
-    code = "import asyncio,sys; from laxcode.sandbox.bubblewrap import run_bash; asyncio.run(run_bash(sys.argv[1],sys.argv[2]))"
+    code = ("import asyncio,sys; from laxcode.tools.builtin.bash import BashArgs,bash; "
+            "asyncio.run(bash(sys.argv[1],BashArgs(command=sys.argv[2],timeout_seconds=None)))")
     worker = await asyncio.create_subprocess_exec(sys.executable, "-c", code, str(area[1]), command,
                                                    stdout=asyncio.subprocess.DEVNULL, stderr=asyncio.subprocess.DEVNULL)
     try:

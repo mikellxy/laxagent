@@ -1,7 +1,10 @@
 import asyncio
+from concurrent.futures import CancelledError
 import importlib
 import json
 import os
+import selectors
+import threading
 from types import SimpleNamespace
 
 import pytest
@@ -38,8 +41,7 @@ def test_unicode_across_chunks_and_invalid_output():
     assert output.text().endswith("�")
 
 
-@pytest.mark.anyio
-async def test_status_requires_real_exit_record():
+def test_status_requires_real_exit_record():
     status = _StatusPipe()
     try:
         status.data.extend(b'{\n "child-pid": 123\n}\n{ "exit-code": 7 }\n')
@@ -53,31 +55,56 @@ async def test_status_requires_real_exit_record():
         status.close_reader()
 
 
-@pytest.mark.anyio
-async def test_status_cleanup_waits_for_buffered_data_and_real_eof():
+def test_status_cleanup_waits_for_buffered_data_and_real_eof():
     status = _StatusPipe()
-    # Leave the exit record in the OS pipe until after the body has finished.
-    status.loop.remove_reader(status.read_fd)
-    spawn = asyncio.create_task(asyncio.sleep(0))
-    body = asyncio.create_task(asyncio.sleep(0))
-    closing = None
     try:
         os.write(status.write_fd, b'{"exit-code":7}\n')
-        await asyncio.gather(spawn, body)
-        closing = asyncio.create_task(backend._close_status(spawn, body, status))
-        await asyncio.sleep(0)
-        assert status.write_fd is None
-        assert not closing.done()
-        assert not status.eof.done()
-
-        status.loop.add_reader(status.read_fd, status._read)
-        await asyncio.wait_for(closing, 1)
-        assert status.exit_code() == 7
-        assert status.read_fd is None
+        status.close_writer()
+        with selectors.DefaultSelector() as selector:
+            selector.register(status.read_fd, selectors.EVENT_READ, status)
+            backend._read_ready(selector, 1)
+            assert status.exit_code() == 7
+            assert selector.get_map()  # A data read must not be mistaken for EOF.
+            backend._read_ready(selector, 1)
+            assert not selector.get_map()
     finally:
         status.close_writer()
         status.close_reader()
-        await asyncio.gather(spawn, body, *([closing] if closing else []), return_exceptions=True)
+
+
+def test_cancelled_before_start_never_spawns(monkeypatch):
+    stop = threading.Event()
+    stop.set()
+
+    def unexpected_start(*args):
+        pytest.fail("A cancelled call must not start bwrap")
+
+    monkeypatch.setattr(backend, "_start", unexpected_start)
+    with pytest.raises(CancelledError):
+        backend.run_bash("/unused", "true", stop_event=stop)
+
+
+@pytest.mark.parametrize("error", [FileNotFoundError, RuntimeError])
+def test_spawn_failure_closes_status_pipe(monkeypatch, error):
+    pipes = []
+
+    def status_pipe():
+        status = _StatusPipe()
+        pipes.append(status)
+        return status
+
+    def fail_start(*args):
+        raise error("injected spawn failure")
+
+    monkeypatch.setattr(backend, "sys", SimpleNamespace(platform="linux"))
+    monkeypatch.setattr(backend, "BWRAP", "/bin/sh")
+    monkeypatch.setattr(backend, "build_argv", lambda *args: [])
+    monkeypatch.setattr(backend, "_StatusPipe", status_pipe)
+    monkeypatch.setattr(backend, "_start", fail_start)
+    with pytest.raises(SandboxError if error is FileNotFoundError else error):
+        backend.run_bash("/unused", "true")
+    assert len(pipes) == 1
+    assert pipes[0].read_fd is None and pipes[0].write_fd is None
 
 
 @pytest.mark.anyio
@@ -86,8 +113,9 @@ async def test_bash_schema_and_async_dispatch(tmp_path, monkeypatch):
     expected = {"exit_code": 7, "stdout": "hi", "stderr": "", "timed_out": False,
                 "stdout_truncated": False, "stderr_truncated": False}
 
-    async def run(workspace, command, timeout):
-        called.append((workspace, command, timeout, asyncio.get_running_loop()))
+    def run(workspace, command, timeout, *, stop_event):
+        called.append((workspace, command, timeout, threading.get_ident()))
+        assert not stop_event.is_set()
         return expected
 
     monkeypatch.setattr(tool, "run_bash", run)
@@ -103,7 +131,9 @@ async def test_bash_schema_and_async_dispatch(tmp_path, monkeypatch):
     assert not called
     result = await execute_tool("bash", '{"command":"pwd","timeout_seconds":null}', workspace=str(tmp_path))
     assert result == {"error_code": None, "result": expected}
-    assert called == [(str(tmp_path), "pwd", 120, asyncio.get_running_loop())]
+    assert len(called) == 1
+    assert called[0][:3] == (str(tmp_path), "pwd", 120)
+    assert called[0][3] != threading.get_ident()
     definition = next(item for item in tool_definitions() if item["name"] == "bash")
     assert definition["strict"]
     assert definition["parameters"]["required"] == ["command", "timeout_seconds"]
@@ -111,8 +141,8 @@ async def test_bash_schema_and_async_dispatch(tmp_path, monkeypatch):
 
 
 @pytest.mark.anyio
-async def test_timeout_keeps_partial_output_and_cancellation_propagates(tmp_path, monkeypatch):
-    async def timeout(*args):
+async def test_timeout_keeps_partial_output(tmp_path, monkeypatch):
+    def timeout(*args, **kwargs):
         raise SandboxError("BASH_TIMEOUT", {"stdout": "partial", "timed_out": True})
 
     monkeypatch.setattr(tool, "run_bash", timeout)
@@ -120,12 +150,44 @@ async def test_timeout_keeps_partial_output_and_cancellation_propagates(tmp_path
     result = await execute_tool("bash", args, workspace=str(tmp_path))
     assert result == {"error_code": "BASH_TIMEOUT", "result": {"stdout": "partial", "timed_out": True}}
 
-    async def cancel(*args):
-        raise asyncio.CancelledError
 
-    monkeypatch.setattr(tool, "run_bash", cancel)
-    with pytest.raises(asyncio.CancelledError):
-        await execute_tool("bash", args, workspace=str(tmp_path))
+@pytest.mark.anyio
+@pytest.mark.parametrize("fail_on_exit", [False, True])
+async def test_cancellation_waits_for_thread_cleanup(tmp_path, monkeypatch, fail_on_exit):
+    loop = asyncio.get_running_loop()
+    started, stopping = asyncio.Event(), asyncio.Event()
+    release, finished = threading.Event(), threading.Event()
+
+    def run(*args, stop_event):
+        loop.call_soon_threadsafe(started.set)
+        try:
+            assert stop_event.wait(5)
+            loop.call_soon_threadsafe(stopping.set)
+            assert release.wait(5)
+            if fail_on_exit:
+                raise SandboxError("SANDBOX_START_FAILED")
+            return {}
+        finally:
+            finished.set()
+
+    monkeypatch.setattr(tool, "run_bash", run)
+    task = asyncio.create_task(execute_tool("bash", '{"command":"true","timeout_seconds":null}',
+                                            workspace=str(tmp_path)))
+    try:
+        await asyncio.wait_for(started.wait(), 2)
+        task.cancel()
+        await asyncio.wait_for(stopping.wait(), 2)
+        task.cancel()
+        await asyncio.sleep(0)
+        assert not task.done()
+        release.set()
+        with pytest.raises(asyncio.CancelledError):
+            await asyncio.wait_for(task, 2)
+        assert finished.is_set()
+    finally:
+        release.set()
+        task.cancel()
+        await asyncio.gather(task, return_exceptions=True)
 
 
 @pytest.mark.anyio

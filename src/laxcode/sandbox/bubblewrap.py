@@ -1,17 +1,21 @@
-"""Fixed bwrap profile and bounded async execution. Also runnable with --probe.
+"""Fixed bwrap profile and bounded synchronous execution. Also runnable with --probe.
 
 Only the standard library is used, so deployment can probe this exact source
 before copying the application or installing its Python dependencies.
 """
 
 import argparse
-import asyncio
+from concurrent.futures import CancelledError
 import json
 import os
 from pathlib import Path
+import selectors
 import signal
+import subprocess
 import sys
 import tempfile
+from threading import Event
+import time
 
 BWRAP = "/usr/bin/bwrap"
 SANDBOX_PATH = "/usr/local/go/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
@@ -91,22 +95,13 @@ class OutputBuffer:
 
 class _StatusPipe:
     def __init__(self):
-        self.loop = asyncio.get_running_loop()
         self.read_fd, self.write_fd = os.pipe()
         os.set_blocking(self.read_fd, False)
-        self.eof = self.loop.create_future()
         self.data = bytearray()
         self.overflow = False
-        self.loop.add_reader(self.read_fd, self._read)
 
-    def _read(self):
-        try:
-            chunk = os.read(self.read_fd, 4096)
-        except BlockingIOError:
-            return
-        if not chunk:
-            self.close_reader()
-        elif len(self.data) + len(chunk) <= 16384:
+    def feed(self, chunk: bytes) -> None:
+        if len(self.data) + len(chunk) <= 16384:
             self.data.extend(chunk)
         else:
             self.overflow = True
@@ -118,11 +113,8 @@ class _StatusPipe:
 
     def close_reader(self):
         if self.read_fd is not None:
-            self.loop.remove_reader(self.read_fd)
             os.close(self.read_fd)
             self.read_fd = None
-        if not self.eof.done():
-            self.eof.set_result(None)
 
     def exit_code(self) -> int | None:
         if self.overflow:
@@ -143,142 +135,106 @@ class _StatusPipe:
         return None
 
 
-async def _drain(stream: asyncio.StreamReader, output: OutputBuffer):
-    while chunk := await stream.read(8192):
-        output.feed(chunk)
-
-
-async def _start(argv: list[str], status_fd: int) -> asyncio.subprocess.Process:
-    return await asyncio.create_subprocess_exec(
-        *argv, stdin=asyncio.subprocess.DEVNULL, stdout=asyncio.subprocess.PIPE,
-        stderr=asyncio.subprocess.PIPE, env={"PATH": "/usr/bin:/bin", "LANG": "C.UTF-8"},
+def _start(argv: list[str], status_fd: int) -> subprocess.Popen:
+    return subprocess.Popen(
+        argv, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE, env={"PATH": "/usr/bin:/bin", "LANG": "C.UTF-8"},
         cwd="/", pass_fds=(status_fd,), start_new_session=True,
     )
 
 
-async def _finish(task: asyncio.Future) -> bool:
-    """Await the task to completion even if cancellation keeps arriving; report it."""
-    cancelled = False
-    while not task.done():
-        try:
-            await asyncio.shield(task)
-        except asyncio.CancelledError:
-            cancelled = True
-    task.result()
-    return cancelled
-
-
-def _signal_group(process: asyncio.subprocess.Process, sig: int) -> None:
+def _signal_group(process: subprocess.Popen, sig: int) -> None:
     try:
         os.killpg(process.pid, sig)
     except ProcessLookupError:
         pass
 
 
-async def _reap_process(spawn: asyncio.Task, terminate: bool) -> None:
-    """Await the spawn, then stop the sandbox process group when the run failed."""
+def _stop_process(process: subprocess.Popen) -> None:
     try:
-        process = await spawn
-    except OSError:
-        return
-    if terminate and process.returncode is None:
-        _signal_group(process, signal.SIGTERM)
+        if process.poll() is None:
+            _signal_group(process, signal.SIGTERM)
+            try:
+                process.wait(timeout=1)
+            except subprocess.TimeoutExpired:
+                pass
+    finally:
+        # Also reap the process if signaling or the grace-period wait failed.
+        if process.poll() is None:
+            _signal_group(process, signal.SIGKILL)
+        process.wait()
+
+
+def _read_ready(selector: selectors.BaseSelector, timeout: float) -> None:
+    for key, _ in selector.select(timeout):
         try:
-            # The body may have failed before the process exited.
-            await asyncio.wait_for(process.wait(), 1)
-        except TimeoutError:
-            if process.returncode is None:
-                _signal_group(process, signal.SIGKILL)
-    await process.wait()
+            chunk = os.read(key.fd, 8192)
+        except BlockingIOError:
+            continue
+        if chunk:
+            key.data.feed(chunk)
+        else:
+            # Process exit alone is not EOF: consume buffered data before unregistering.
+            selector.unregister(key.fd)
 
 
-async def _absorb_body(body: asyncio.Task, workers: list[asyncio.Task]) -> None:
-    """Await the body to completion; its failure is reported through run_bash's result."""
-    try:
-        await body
-    except BaseException:
-        pass
-    # gather in the body propagates the first failure without waiting for siblings.
-    await asyncio.gather(*workers, return_exceptions=True)
-
-
-async def _close_status(spawn: asyncio.Task, body: asyncio.Task, status: _StatusPipe) -> None:
-    """Close our writer after exec (pass_fds), then let the reader drain to EOF."""
-    try:
-        await spawn
-    except OSError:
-        pass
-    status.close_writer()
-    try:
-        await body
-    except BaseException:
-        pass
-    # Process exit does not mean the reader has consumed the buffered exit record.
-    await status.eof
-
-
-async def run_bash(workspace: str, command: str, timeout: float = 120) -> dict:
+def run_bash(workspace: str, command: str, timeout: float = 120, *, stop_event: Event | None = None) -> dict:
+    deadline = time.monotonic() + timeout
+    if stop_event is not None and stop_event.is_set():
+        raise CancelledError
     if sys.platform != "linux" or not os.access(BWRAP, os.X_OK):
         raise SandboxError("SANDBOX_UNAVAILABLE")
     stdout, stderr = OutputBuffer(), OutputBuffer()
     status = _StatusPipe()
+    process = None
+    timed_out = failure = stopping = False
     try:
         argv = build_argv(workspace, command, status.write_fd)
-    except BaseException:
-        status.close_writer()
-        status.close_reader()
-        raise
-    spawn = asyncio.create_task(_start(argv, status.write_fd))
-    workers: list[asyncio.Task] = []
-
-    async def run() -> asyncio.subprocess.Process:
-        # Nobody ever cancels this task, so the spawn can be awaited directly.
-        process = await spawn
-        status.close_writer()
-        workers.extend([asyncio.create_task(process.wait()),
-                        asyncio.create_task(_drain(process.stdout, stdout)),
-                        asyncio.create_task(_drain(process.stderr, stderr))])
-        await asyncio.gather(*workers)
-        return process
-
-    body = asyncio.create_task(run())
-    timed_out = interrupted = failure = False
-    process = None
-    try:
-        async with asyncio.timeout(timeout):
-            process = await asyncio.shield(body)
-    except TimeoutError:
-        timed_out = True
-    except asyncio.CancelledError:
-        interrupted = True
+        with selectors.DefaultSelector() as selector:
+            process = _start(argv, status.write_fd)
+            status.close_writer()
+            for fd, output in ((process.stdout.fileno(), stdout), (process.stderr.fileno(), stderr),
+                               (status.read_fd, status)):
+                os.set_blocking(fd, False)
+                selector.register(fd, selectors.EVENT_READ, output)
+            while selector.get_map() or process.poll() is None:
+                cancelled = stop_event is not None and stop_event.is_set()
+                remaining = deadline - time.monotonic()
+                if not stopping and (cancelled or remaining <= 0):
+                    timed_out = not cancelled and remaining <= 0
+                    stopping = True
+                    _stop_process(process)
+                # A finite wait lets quiet commands respond to cancellation as well.
+                _read_ready(selector, 0.1 if stopping else max(0, min(0.1, remaining)))
     except OSError:
         failure = True
-    except BaseException:
-        failure = True
-        raise  # the finally below still completes cleanup before this propagates
     finally:
-        terminate = timed_out or interrupted or failure
-        stopped = asyncio.create_task(_reap_process(spawn, terminate))
-        drained = asyncio.create_task(_absorb_body(body, workers))
-        closed = asyncio.create_task(_close_status(spawn, body, status))
-        cancelled = await _finish(asyncio.gather(stopped, drained, closed, return_exceptions=True))
-    if interrupted or cancelled:
-        raise asyncio.CancelledError
+        try:
+            if process is not None:
+                _stop_process(process)
+        finally:
+            status.close_writer()
+            status.close_reader()
+            if process is not None:
+                process.stdout.close()
+                process.stderr.close()
+    if stop_event is not None and stop_event.is_set():
+        raise CancelledError
     code = status.exit_code()
     result = {"exit_code": code, "stdout": stdout.text(), "stderr": stderr.text(), "timed_out": timed_out,
               "stdout_truncated": stdout.truncated, "stderr_truncated": stderr.truncated}
     if timed_out:
         raise SandboxError("BASH_TIMEOUT", result)
-    if process is None or code is None:
+    if failure or code is None:
         # Don't expose host paths from bwrap setup diagnostics to the model.
         raise SandboxError("SANDBOX_START_FAILED")
     return result
 
 
-async def probe() -> None:
+def probe() -> None:
     # A home-based directory proves that /tmp is not accidentally masking the workspace bind.
     with tempfile.TemporaryDirectory(prefix=".laxcode-sandbox-probe-", dir=Path.home()) as workspace:
-        result = await run_bash(workspace, "pwd && python3 --version && go version", timeout=10)
+        result = run_bash(workspace, "pwd && python3 --version && go version", timeout=10)
         if result["exit_code"] != 0:
             raise SandboxError("SANDBOX_PROBE_FAILED", result)
         print(result["stdout"], end="")
@@ -289,7 +245,7 @@ if __name__ == "__main__":
     parser.add_argument("--probe", required=True, action="store_true")
     parser.parse_args()
     try:
-        asyncio.run(probe())
+        probe()
     except SandboxError as exc:
         print(f"Sandbox probe failed: {exc}. See docs/bash-sandbox.md (bwrap, tools, user namespaces, AppArmor).",
               file=sys.stderr)

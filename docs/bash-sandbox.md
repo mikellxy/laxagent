@@ -142,9 +142,9 @@ scripts/deploy_lima.sh
 
 ## 执行、取消与测试
 
-executor 对异步 Bash 直接 await，对原有文件工具继续使用线程。子进程 stdin 关闭，stdout/stderr 并发排空；不产生实时命令输出 SSE，只使用原有 tool_start/tool_end。
+executor 对异步 Bash 包装层直接 await，对原有文件工具继续使用线程。Bash 包装层通过 `asyncio.to_thread` 调用同步 `run_bash`；执行线程使用 `Popen` 和 `selectors` 管理进程，持续读取 stdout、stderr 和状态管道直到 EOF。子进程 stdin 关闭，不产生实时命令输出 SSE，只使用原有 tool_start/tool_end。
 
-超时和取消先终止 bwrap 进程组，一秒内未退出则强制杀死。独立 PID namespace 与 die-with-parent 同时收掉脱离进程组的后代。取消发生在创建进程期间时，仍先取得句柄再清理；重复取消不能打断收尾。服务关闭等待任务清理结束。
+超时和取消先终止 bwrap 进程组，一秒内未退出则强制杀死。独立 PID namespace 与 die-with-parent 同时收掉脱离进程组的后代。取消通过线程安全的停止标记通知执行线程；管道轮询最多等待 0.1 秒，以便无输出时也能检查停止请求。取消发生在创建进程期间时，仍先取得句柄再清理；异步包装层等待线程完成后才传播取消，重复取消不能打断收尾。服务关闭等待任务清理结束。当前使用默认线程池，暂不增加独立线程池或并发配额。
 
 ```bash
 # 本机普通回归；明确排除 Linux 验收，不把它当成沙箱验收结果。

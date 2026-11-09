@@ -1,3 +1,6 @@
+import asyncio
+from threading import Event
+
 from pydantic import BaseModel, ConfigDict, Field
 
 from laxcode.sandbox.bubblewrap import SandboxError, run_bash
@@ -12,7 +15,22 @@ class BashArgs(BaseModel):
 
 
 async def bash(workspace: str, args: BashArgs) -> dict:
+    stop_event = Event()
+    worker = asyncio.create_task(asyncio.to_thread(
+        run_bash, workspace, args.command, args.timeout_seconds or 120, stop_event=stop_event,
+    ))
+    interrupted = False
     try:
-        return await run_bash(workspace, args.command, args.timeout_seconds or 120)
+        while not worker.done():
+            try:
+                await asyncio.shield(worker)
+            except asyncio.CancelledError:
+                interrupted = True
+                stop_event.set()
+        return worker.result()
     except SandboxError as exc:
         raise ToolError(str(exc), result=exc.result) from None
+    finally:
+        # Cancelling the await cannot stop a thread; wait for its cleanup first.
+        if interrupted:
+            raise asyncio.CancelledError

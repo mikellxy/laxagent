@@ -175,7 +175,7 @@ def _signal_group(process: asyncio.subprocess.Process, sig: int) -> None:
         pass
 
 
-async def _reap_process(spawn: asyncio.Task, body: asyncio.Task, terminate: bool) -> None:
+async def _reap_process(spawn: asyncio.Task, terminate: bool) -> None:
     """Await the spawn, then stop the sandbox process group when the run failed."""
     try:
         process = await spawn
@@ -184,23 +184,26 @@ async def _reap_process(spawn: asyncio.Task, body: asyncio.Task, terminate: bool
     if terminate and process.returncode is None:
         _signal_group(process, signal.SIGTERM)
         try:
-            # shield keeps body alive when the one-second grace expires.
-            await asyncio.wait_for(asyncio.shield(body), 1)
+            # The body may have failed before the process exited.
+            await asyncio.wait_for(process.wait(), 1)
         except TimeoutError:
             if process.returncode is None:
                 _signal_group(process, signal.SIGKILL)
+    await process.wait()
 
 
-async def _absorb_body(body: asyncio.Task) -> None:
+async def _absorb_body(body: asyncio.Task, workers: list[asyncio.Task]) -> None:
     """Await the body to completion; its failure is reported through run_bash's result."""
     try:
         await body
     except BaseException:
         pass
+    # gather in the body propagates the first failure without waiting for siblings.
+    await asyncio.gather(*workers, return_exceptions=True)
 
 
 async def _close_status(spawn: asyncio.Task, body: asyncio.Task, status: _StatusPipe) -> None:
-    """Shut the status pipe down in order: writer after exec (pass_fds), reader after body."""
+    """Close our writer after exec (pass_fds), then let the reader drain to EOF."""
     try:
         await spawn
     except OSError:
@@ -210,7 +213,7 @@ async def _close_status(spawn: asyncio.Task, body: asyncio.Task, status: _Status
         await body
     except BaseException:
         pass
-    status.close_reader()
+    # Process exit does not mean the reader has consumed the buffered exit record.
     await status.eof
 
 
@@ -226,14 +229,16 @@ async def run_bash(workspace: str, command: str, timeout: float = 120) -> dict:
         status.close_reader()
         raise
     spawn = asyncio.create_task(_start(argv, status.write_fd))
+    workers: list[asyncio.Task] = []
 
     async def run() -> asyncio.subprocess.Process:
         # Nobody ever cancels this task, so the spawn can be awaited directly.
         process = await spawn
         status.close_writer()
-        await asyncio.gather(process.wait(),
-                             asyncio.create_task(_drain(process.stdout, stdout)),
-                             asyncio.create_task(_drain(process.stderr, stderr)))
+        workers.extend([asyncio.create_task(process.wait()),
+                        asyncio.create_task(_drain(process.stdout, stdout)),
+                        asyncio.create_task(_drain(process.stderr, stderr))])
+        await asyncio.gather(*workers)
         return process
 
     body = asyncio.create_task(run())
@@ -253,8 +258,8 @@ async def run_bash(workspace: str, command: str, timeout: float = 120) -> dict:
         raise  # the finally below still completes cleanup before this propagates
     finally:
         terminate = timed_out or interrupted or failure
-        stopped = asyncio.create_task(_reap_process(spawn, body, terminate))
-        drained = asyncio.create_task(_absorb_body(body))
+        stopped = asyncio.create_task(_reap_process(spawn, terminate))
+        drained = asyncio.create_task(_absorb_body(body, workers))
         closed = asyncio.create_task(_close_status(spawn, body, status))
         cancelled = await _finish(asyncio.gather(stopped, drained, closed, return_exceptions=True))
     if interrupted or cancelled:

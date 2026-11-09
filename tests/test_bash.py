@@ -1,6 +1,7 @@
 import asyncio
 import importlib
 import json
+import os
 from types import SimpleNamespace
 
 import pytest
@@ -50,6 +51,33 @@ async def test_status_requires_real_exit_record():
     finally:
         status.close_writer()
         status.close_reader()
+
+
+@pytest.mark.anyio
+async def test_status_cleanup_waits_for_buffered_data_and_real_eof():
+    status = _StatusPipe()
+    # Leave the exit record in the OS pipe until after the body has finished.
+    status.loop.remove_reader(status.read_fd)
+    spawn = asyncio.create_task(asyncio.sleep(0))
+    body = asyncio.create_task(asyncio.sleep(0))
+    closing = None
+    try:
+        os.write(status.write_fd, b'{"exit-code":7}\n')
+        await asyncio.gather(spawn, body)
+        closing = asyncio.create_task(backend._close_status(spawn, body, status))
+        await asyncio.sleep(0)
+        assert status.write_fd is None
+        assert not closing.done()
+        assert not status.eof.done()
+
+        status.loop.add_reader(status.read_fd, status._read)
+        await asyncio.wait_for(closing, 1)
+        assert status.exit_code() == 7
+        assert status.read_fd is None
+    finally:
+        status.close_writer()
+        status.close_reader()
+        await asyncio.gather(spawn, body, *([closing] if closing else []), return_exceptions=True)
 
 
 @pytest.mark.anyio

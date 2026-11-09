@@ -186,6 +186,50 @@ async def test_cancellation_during_spawn_does_not_lose_process(area, monkeypatch
     await assert_gone(token)
 
 
+@pytest.mark.parametrize("ignore_term", [False, True])
+async def test_output_failure_waits_for_process_and_readers(area, monkeypatch, ignore_term):
+    real_start, real_drain = backend._start, backend._drain
+    real_signal = backend._signal_group
+    processes, readers = [], []
+    token = "laxcode-" + uuid4().hex
+
+    async def start(*args):
+        process = await real_start(*args)
+        processes.append(process)
+        return process
+
+    async def drain(stream, output):
+        readers.append(asyncio.current_task())
+        if stream is processes[0].stdout:
+            await stream.read(1)
+            raise OSError("injected output read failure")
+        await real_drain(stream, output)
+        await asyncio.sleep(0.05)
+
+    def signal_group(process, sig):
+        # Simulate ineffective SIGTERM while still delivering the real SIGKILL.
+        if not ignore_term or sig != signal.SIGTERM:
+            real_signal(process, sig)
+
+    monkeypatch.setattr(backend, "_start", start)
+    monkeypatch.setattr(backend, "_drain", drain)
+    monkeypatch.setattr(backend, "_signal_group", signal_group)
+    try:
+        result = await asyncio.wait_for(run(area[1], f"printf x; bash -c 'sleep 60' {token}"), 5)
+        assert result["error_code"] == "SANDBOX_START_FAILED"
+        assert processes[0].returncode is not None
+        if ignore_term:
+            assert processes[0].returncode == -signal.SIGKILL
+        assert len(readers) == 2 and all(task.done() for task in readers)
+        await assert_gone(token)
+    finally:
+        for process in processes:
+            if process.returncode is None:
+                os.killpg(process.pid, signal.SIGKILL)
+            await process.wait()
+        await asyncio.gather(*readers, return_exceptions=True)
+
+
 async def test_parent_crash_cleans_sandbox(area):
     token = "laxcode-" + uuid4().hex
     command = f"touch ready; setsid bash -c 'trap \"\" TERM; while :; do sleep 1; done' {token} & wait"

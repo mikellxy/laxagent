@@ -156,7 +156,7 @@ async def _start(argv: list[str], status_fd: int) -> asyncio.subprocess.Process:
     )
 
 
-async def _finish(task: asyncio.Task) -> bool:
+async def _finish(task: asyncio.Future) -> bool:
     """Await the task to completion even if cancellation keeps arriving; report it."""
     cancelled = False
     while not task.done():
@@ -175,12 +175,13 @@ def _signal_group(process: asyncio.subprocess.Process, sig: int) -> None:
         pass
 
 
-async def _cleanup(spawn: asyncio.Task, body: asyncio.Task, status: _StatusPipe, terminate: bool) -> None:
+async def _reap_process(spawn: asyncio.Task, body: asyncio.Task, terminate: bool) -> None:
+    """Await the spawn, then stop the sandbox process group when the run failed."""
     try:
         process = await spawn
     except OSError:
-        process = None
-    if terminate and process is not None and process.returncode is None:
+        return
+    if terminate and process.returncode is None:
         _signal_group(process, signal.SIGTERM)
         try:
             # shield keeps body alive when the one-second grace expires.
@@ -188,9 +189,29 @@ async def _cleanup(spawn: asyncio.Task, body: asyncio.Task, status: _StatusPipe,
         except TimeoutError:
             if process.returncode is None:
                 _signal_group(process, signal.SIGKILL)
+
+
+async def _absorb_body(body: asyncio.Task) -> None:
+    """Await the body to completion; its failure is reported through run_bash's result."""
+    try:
+        await body
+    except BaseException:
+        pass
+
+
+async def _close_status(spawn: asyncio.Task, body: asyncio.Task, status: _StatusPipe) -> None:
+    """Shut the status pipe down in order: writer after exec (pass_fds), reader after body."""
+    try:
+        await spawn
+    except OSError:
+        pass
     status.close_writer()
+    try:
+        await body
+    except BaseException:
+        pass
     status.close_reader()
-    await asyncio.gather(body, status.eof, return_exceptions=True)
+    await status.eof
 
 
 async def run_bash(workspace: str, command: str, timeout: float = 120) -> dict:
@@ -231,8 +252,11 @@ async def run_bash(workspace: str, command: str, timeout: float = 120) -> dict:
         failure = True
         raise  # the finally below still completes cleanup before this propagates
     finally:
-        cancelled = await _finish(asyncio.create_task(
-            _cleanup(spawn, body, status, timed_out or interrupted or failure)))
+        terminate = timed_out or interrupted or failure
+        stopped = asyncio.create_task(_reap_process(spawn, body, terminate))
+        drained = asyncio.create_task(_absorb_body(body))
+        closed = asyncio.create_task(_close_status(spawn, body, status))
+        cancelled = await _finish(asyncio.gather(stopped, drained, closed, return_exceptions=True))
     if interrupted or cancelled:
         raise asyncio.CancelledError
     code = status.exit_code()

@@ -1,4 +1,5 @@
 from dataclasses import dataclass
+from pathlib import Path
 
 from openai import AsyncOpenAI
 
@@ -13,3 +14,4 @@ class AgentContext:
     repository: Repository
     recursion_limit: int = -1
     resume_time: int = 0
+    builtin_skills_dir: Path | None = None

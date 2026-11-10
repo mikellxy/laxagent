@@ -2,7 +2,7 @@ import json
 from pathlib import Path
 from typing import Annotated, Literal, Self
 
-from pydantic import Field, SecretStr, ValidationError, model_validator
+from pydantic import Field, PrivateAttr, SecretStr, ValidationError, model_validator
 
 from laxcode.llm_router.config import ConfigModel, LLMConfig
 
@@ -38,6 +38,7 @@ class FrontendConfig(ConfigModel):
 
 
 class AppConfig(ConfigModel):
+    _builtin_skills_dir: Path = PrivateAttr(default_factory=lambda: Path("config/builtin_skills").resolve())
     recursion_limit: Literal[-1] | Annotated[int, Field(gt=0)] = -1
     llm: LLMConfig
     api_server: ServerConfig
@@ -46,6 +47,10 @@ class AppConfig(ConfigModel):
     database: DatabaseConfig
     auth: AuthConfig
     frontend: FrontendConfig | None = None
+
+    @property
+    def builtin_skills_dir(self) -> Path:
+        return self._builtin_skills_dir
 
     @model_validator(mode="after")
     def check_ports(self) -> Self:
@@ -61,6 +66,7 @@ def load_config(path: Path) -> AppConfig:
         raise ValueError("Cannot read configuration as UTF-8 JSON") from None
     try:
         config = AppConfig.model_validate(data)
+        config._builtin_skills_dir = path.resolve().parent / "builtin_skills"
         if config.frontend is not None:
             config.frontend.dist_dir = str((path.resolve().parent / config.frontend.dist_dir).resolve())
         return config

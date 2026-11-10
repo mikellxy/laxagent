@@ -1,4 +1,4 @@
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 from laxcode.storage.repositories import Repository
 
@@ -10,3 +10,4 @@ class ToolContext:
     user_id: str
     repository: Repository
     workspace: str
+    loaded_skills: dict[str, dict] = field(default_factory=dict)

@@ -11,6 +11,7 @@ from laxcode.agent.context import AgentContext
 from laxcode.agent.state import AgentState
 from laxcode.run_errors import make_run_error
 from laxcode.models.responses import messages_to_input
+from laxcode.skills import initialize_skills, skill_catalog, SkillError
 
 
 def _ensure_directory(home: Path, path: Path) -> None:
@@ -32,7 +33,7 @@ def _ensure_directory(home: Path, path: Path) -> None:
         os.close(directory)
 
 
-def initialize_workspace(state: AgentState) -> str:
+def initialize_workspace(state: AgentState, builtin_skills_dir: Path | None = None) -> str:
     try:
         user_id = state["user_id"]
         if str(UUID(user_id)) != user_id:
@@ -46,22 +47,25 @@ def initialize_workspace(state: AgentState) -> str:
         workspace.relative_to(user_dir)
         for path in (user_dir, session_dir, workspace):
             _ensure_directory(Path.home(), path)
+        initialize_skills(user_id, builtin_skills_dir)
         return str(workspace)
-    except (OSError, ValueError):
+    except (OSError, ValueError, SkillError):
         raise make_run_error("workspace_initialization_failed") from None
 
 
 async def prepare(state: AgentState, runtime: Runtime[AgentContext]):
-    workspace = await asyncio.to_thread(initialize_workspace, state)
+    workspace = await asyncio.to_thread(initialize_workspace, state, runtime.context.builtin_skills_dir)
+    skills = await asyncio.to_thread(skill_catalog, state["user_id"])
     next_seq, messages = await runtime.context.repository.append_message(
         user_id=state["user_id"], project_id=state["project_id"], session_id=state["session_id"],
         role="user", content=state["user_query"], load_context=True,
         expected_seq=state.get("next_msg_seq"), replay_safe=True,
     )
-    messages = [{"role": "system", "content": system_prompt(workspace, state.get("user_configs"))}, *messages]
+    messages = [{"role": "system", "content": system_prompt(workspace, state.get("user_configs"), skills)}, *messages]
     return {
         "workspace": workspace, "pending_tool_calls": [],
         "model_input": messages_to_input(messages),
         "next_msg_seq": next_seq,
         "messages": messages,
+        "loaded_skills": {},
     }

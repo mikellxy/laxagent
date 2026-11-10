@@ -206,4 +206,4 @@ def test_definitions_match_registry():
     definition = definitions["write_file"]
     assert definition["strict"] is True
     assert definition["parameters"]["additionalProperties"] is False
-    assert definition["parameters"]["required"] == ["path", "content"]
+    assert definition["parameters"]["required"] == ["skill_name", "operation", "path", "content"]

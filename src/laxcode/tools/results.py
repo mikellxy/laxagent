@@ -1,6 +1,15 @@
 import json
 
 ERROR_GUIDANCE = {
+    "INVALID_SKILL_NAME": "技能名称须为不超过 64 字符的小写字母、数字和单连字符，且不能以连字符开头或结尾。",
+    "INVALID_SKILL_METADATA": "SKILL.md 元数据无效或缺失，请使用 skill-creator 指导修复；name 必须与技能目录名一致。",
+    "INVALID_SKILL_FILE": "技能只能包含普通目录和文件，不允许符号链接、硬链接或特殊文件。",
+    "SKILL_TOO_LARGE": "技能超过文件数量、大小或目录深度限制，请缩减内容后重试。",
+    "SKILL_NOT_FOUND": "指定技能不存在，请核对名称。",
+    "SKILL_NOT_LOADED": "执行脚本前须在当前 run 中先调用 load_skill。",
+    "SKILL_CHANGED": "技能内容已变化，本次未执行脚本；请重新 load_skill 后再决定下一步。",
+    "INVALID_SKILL_SCRIPT": "script 必须是 load_skill 返回的完整相对文件路径。",
+    "SKILL_ENTRY_REQUIRED": "不能删除 SKILL.md，请通过 write_file 或 edit_file 修改。",
     "TOOL_STATE_UNCERTAIN": "异常中断，工具执行状态未知，请先检查工作区状态，不要盲目重试",
     "MEMORY_UNAVAILABLE": "目标记忆不可用，可能已被替换；本批未执行，请重新查询相关分类的摘要。",
     "MEMORY_STORAGE_FAILED": "记忆存储操作未能确认成功；请先查询核实状态，不要盲目重试写入。",
@@ -10,7 +19,7 @@ ERROR_GUIDANCE = {
     "BASH_TIMEOUT": "命令已超时并清理沙箱进程；已产生的 workspace 修改不会回滚，请先核实结果再继续。",
     "UNKNOWN_TOOL": "请使用当前提供的工具。",
     "INVALID_ARGUMENTS": "请按工具参数定义传入 JSON 对象，检查必填字段、字段类型和取值范围。",
-    "INVALID_PATH": "请使用 workspace 内的相对路径，不允许 .. 或符号链接。",
+    "INVALID_PATH": "请使用所选 workspace 或 skill 内的相对路径，不允许 .. 或符号链接。",
     "FILE_NOT_FOUND": "文件不存在，请核对相对路径。",
     "ACCESS_DENIED": "无法访问文件或目录，请核对相应的读写权限。",
     "NOT_A_FILE": "只能读写普通文件，请提供文件路径。",

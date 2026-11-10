@@ -75,6 +75,7 @@ async def tool_node(state: AgentState, runtime: Runtime[AgentContext]):
     model_input = state["model_input"]
     tool_context = ToolContext(
         user_id=state["user_id"], repository=runtime.context.repository, workspace=state["workspace"],
+        loaded_skills=dict(state.get("loaded_skills", {})),
     )
     for call in state["pending_tool_calls"]:
         msg_seq = next_seq
@@ -102,4 +103,4 @@ async def tool_node(state: AgentState, runtime: Runtime[AgentContext]):
         messages.append(message)
         model_input = append_tool_message(model_input, message)
     return {"messages": messages, "next_msg_seq": next_seq,
-            "model_input": model_input, "pending_tool_calls": []}
+            "model_input": model_input, "pending_tool_calls": [], "loaded_skills": tool_context.loaded_skills}

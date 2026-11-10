@@ -10,6 +10,7 @@ class Message(TypedDict):
 
 
 class AgentState(TypedDict):
+    loaded_skills: NotRequired[dict[str, dict]]
     tool_node_state_uncertain: NotRequired[bool]
     pending_model_response: NotRequired[dict | None]
     user_configs: dict[str, str]

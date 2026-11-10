@@ -16,9 +16,13 @@ class BashArgs(BaseModel):
 
 
 async def bash(context: ToolContext, args: BashArgs) -> dict:
+    return await run_cancellable_sandbox(run_bash, context.workspace, args.command, args.timeout_seconds or 120)
+
+
+async def run_cancellable_sandbox(execute, *arguments) -> dict:
     stop_event = Event()
     worker = asyncio.create_task(asyncio.to_thread(
-        run_bash, context.workspace, args.command, args.timeout_seconds or 120, stop_event=stop_event,
+        execute, *arguments, stop_event=stop_event,
     ))
     interrupted = False
     try:

@@ -40,8 +40,10 @@ def file_error_code(exc: OSError, fallback: str) -> str:
 
 
 @contextmanager
-def open_parent(workspace: str, relative: Path, *, create: bool = False):
-    directory = os.open(workspace, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+def open_parent(workspace: str | int, relative: Path, *, create: bool = False):
+    directory = os.dup(workspace) if isinstance(workspace, int) else os.open(
+        workspace, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW,
+    )
     try:
         for part in relative.parts[:-1]:
             if create:

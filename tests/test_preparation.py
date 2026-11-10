@@ -36,7 +36,7 @@ async def test_initialization_repairs_missing_directories_and_preserves_shared_f
     session = layout.get_session_config_dir(state["user_id"], 1)
     assert workspace.is_dir() and session.is_dir()
     assert list(workspace.iterdir()) == list(session.iterdir()) == []
-    assert not (user / "skills").exists()
+    assert (user / "skills").is_dir()
     (workspace / "keep.txt").write_text("keep")
     session.rmdir()
     results = await asyncio.gather(*[

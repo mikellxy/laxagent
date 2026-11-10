@@ -22,6 +22,7 @@ from laxcode.runtime.task_manager import TaskManager
 from laxcode.storage.database import Database, DatabaseError
 from laxcode.storage.repositories import Repository
 from laxcode.storage.checkpoints import open_checkpointer
+from laxcode.skills import builtin_snapshots
 
 
 def create_app(config: AppConfig | None = None) -> FastAPI:
@@ -30,6 +31,7 @@ def create_app(config: AppConfig | None = None) -> FastAPI:
         if config is None:
             yield
             return
+        builtin_snapshots(config.builtin_skills_dir)
         async with AsyncExitStack() as stack:
             db = await stack.enter_async_context(Database.open(config.database))
             checkpointer = await stack.enter_async_context(open_checkpointer(config.database))
@@ -37,6 +39,7 @@ def create_app(config: AppConfig | None = None) -> FastAPI:
             client = await stack.enter_async_context(create_client(config.llm_router.port))
             app.state.agent_context = AgentContext(
                 client, events, Repository(db), recursion_limit=config.recursion_limit,
+                builtin_skills_dir=config.builtin_skills_dir,
             )
             await app.state.agent_context.repository.fail_interrupted_runs()
             app.state.graph = build_graph(checkpointer=checkpointer)

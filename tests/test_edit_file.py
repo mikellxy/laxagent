@@ -235,7 +235,7 @@ async def test_strict_arguments_errors_and_tool_definition(tmp_path):
     definition = definitions["edit_file"]
     assert definition["strict"] is True
     schema = definition["parameters"]
-    assert schema["required"] == ["path", "edits"]
+    assert schema["required"] == ["skill_name", "path", "edits"]
     assert schema["additionalProperties"] is False
     assert schema["properties"]["edits"]["minItems"] == 1
     assert schema["$defs"]["TextEdit"]["required"] == ["old_text", "new_text"]

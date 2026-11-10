@@ -13,3 +13,7 @@ def get_session_config_dir(user_id: str, session_id: int) -> Path:
 
 def get_project_workdir(user_id: str, project_id: int) -> Path:
     return get_user_data_dir(user_id) / "project" / str(project_id)
+
+
+def get_skills_dir(user_id: str) -> Path:
+    return get_user_data_dir(user_id) / "skills"

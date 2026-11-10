@@ -5,6 +5,8 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from laxcode.tools.context import ToolContext
 from laxcode.tools.errors import ToolError
+from laxcode.tools.file_scope import file_scope, scope_result
+from laxcode.skills import parse_metadata
 from laxcode.tools.workspace import (
     atomic_replace, encode_text, file_error_code, file_path, open_parent, read_bytes,
 )
@@ -20,7 +22,9 @@ class TextEdit(BaseModel):
 class EditFileArgs(BaseModel):
     model_config = ConfigDict(strict=True, extra="forbid")
 
-    path: str = Field(min_length=1, description="Existing file relative to workspace; no symlinks or '..'.")
+    skill_name: str | None = Field(default=None, description="Skill name to edit; null selects workspace.")
+
+    path: str = Field(min_length=1, description="Existing file relative to the selected workspace or skill; no symlinks or '..'.")
     edits: list[TextEdit] = Field(min_length=1, description="Non-overlapping edits, all matched against the original file.")
 
 
@@ -112,7 +116,7 @@ def edit_file(context: ToolContext, args: EditFileArgs) -> dict:
     try:
         relative = file_path(args.path)
         edits = [(encode_text(edit.old_text), encode_text(edit.new_text)) for edit in args.edits]
-        with open_parent(context.workspace, relative) as directory:
+        with file_scope(context, args.skill_name) as root, open_parent(root, relative) as directory:
             original = read_bytes(directory, relative.name)
             try:
                 original.decode("utf-8")
@@ -121,12 +125,16 @@ def edit_file(context: ToolContext, args: EditFileArgs) -> dict:
             if b"\x00" in original:
                 raise EditFileError("NOT_UTF8_TEXT")
             updated = _apply_matches(original, _locate_edits(original, edits))
+            if args.skill_name is not None and relative.as_posix() == "SKILL.md":
+                parse_metadata(args.skill_name, updated)
             changed = updated != original
             if changed:
                 failure = "WRITE_FAILED"
                 atomic_replace(directory, relative.name, updated, allow_missing=False)
-        return {"path": relative.as_posix(), "edits_applied": len(edits),
-                "bytes_written": len(updated) if changed else 0}
+            return scope_result(root, args.skill_name, {
+                "path": relative.as_posix(), "edits_applied": len(edits),
+                "bytes_written": len(updated) if changed else 0,
+            })
     except ToolError as exc:
         raise EditFileError(str(exc)) from None
     except OSError as exc:

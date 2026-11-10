@@ -9,6 +9,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from laxcode.tools.context import ToolContext
 from laxcode.tools.errors import ToolError
+from laxcode.tools.file_scope import file_scope
 
 MAX_LINES = 2000
 MAX_BYTES = 50 * 1024
@@ -17,7 +18,9 @@ MAX_BYTES = 50 * 1024
 class ReadFileArgs(BaseModel):
     model_config = ConfigDict(strict=True, extra="forbid")
 
-    path: str = Field(min_length=1, description="File path relative to workspace; no symlinks or '..'.")
+    skill_name: str | None = Field(default=None, description="Skill name to read; null selects workspace.")
+
+    path: str = Field(min_length=1, description="File path relative to the selected workspace or skill; no symlinks or '..'.")
     start_line_no: int = Field(ge=1, description="First line to read, 1-based.")
     start_byte_no: int = Field(ge=1, description="1-based UTF-8 byte offset within the first line, on a character boundary.")
     total_lines: int = Field(ge=1, description="Lines to read; capped at 2000 lines and 50 KiB.")
@@ -33,7 +36,9 @@ def open_workspace_file(workspace: str, path: str):
     if relative.is_absolute() or ".." in relative.parts or not relative.parts or "\x00" in path:
         raise ReadFileError("INVALID_PATH")
     # Open relative to directory descriptors: symlink swaps cannot escape the workspace.
-    directory = os.open(workspace, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+    directory = os.dup(workspace) if isinstance(workspace, int) else os.open(
+        workspace, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW,
+    )
     try:
         for part in relative.parts[:-1]:
             child = os.open(part, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=directory)
@@ -41,8 +46,11 @@ def open_workspace_file(workspace: str, path: str):
             directory = child
         fd = os.open(relative.parts[-1], os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=directory)
         with os.fdopen(fd, "rb") as file:
-            if not stat.S_ISREG(os.fstat(file.fileno()).st_mode):
+            info = os.fstat(file.fileno())
+            if not stat.S_ISREG(info.st_mode):
                 raise ReadFileError("NOT_A_FILE")
+            if isinstance(workspace, int) and info.st_nlink != 1:
+                raise ReadFileError("INVALID_SKILL_FILE")
             yield file
     finally:
         os.close(directory)
@@ -50,7 +58,7 @@ def open_workspace_file(workspace: str, path: str):
 
 def read_file(context: ToolContext, args: ReadFileArgs) -> dict:
     try:
-        with open_workspace_file(context.workspace, args.path) as file:
+        with file_scope(context, args.skill_name) as root, open_workspace_file(root, args.path) as file:
             for _ in range(args.start_line_no - 1):
                 while True:
                     chunk = file.readline(8192)

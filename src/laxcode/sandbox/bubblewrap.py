@@ -28,7 +28,7 @@ class SandboxError(Exception):
         self.result = result if result is not None else {}
 
 
-def build_argv(workspace: str, command: str, status_fd: int) -> list[str]:
+def build_argv(workspace: str, command: str, status_fd: int, *, skill_dir: str | None = None) -> list[str]:
     if sys.platform != "linux" or not os.access(BWRAP, os.X_OK):
         raise SandboxError("SANDBOX_UNAVAILABLE")
     root = Path(workspace)
@@ -38,7 +38,7 @@ def build_argv(workspace: str, command: str, status_fd: int) -> list[str]:
     except (OSError, RuntimeError, ValueError):
         raise SandboxError("SANDBOX_INVALID_WORKSPACE") from None
     # Never let a workspace bind replace a runtime/system mount or the sandbox root.
-    reserved = ("/usr", "/bin", "/sbin", "/lib", "/lib64", "/etc", "/proc", "/dev", "/tmp")
+    reserved = ("/usr", "/bin", "/sbin", "/lib", "/lib64", "/etc", "/proc", "/dev", "/tmp", "/skill")
     if root == Path("/") or any(root == Path(p) or root in Path(p).parents for p in reserved):
         raise SandboxError("SANDBOX_INVALID_WORKSPACE")
     if any(Path(p) in root.parents for p in reserved if p != "/tmp"):
@@ -57,7 +57,16 @@ def build_argv(workspace: str, command: str, status_fd: int) -> list[str]:
             raise SandboxError("SANDBOX_UNAVAILABLE") from None
         args += ["--ro-bind", source, path]
     args += ["--proc", "/proc", "--dev", "/dev", "--perms", "1777", "--tmpfs", "/tmp",
-             "--bind", workspace, workspace, "--chdir", workspace, "--clearenv",
+             "--bind", workspace, workspace]
+    if skill_dir is not None:
+        source = Path(skill_dir)
+        try:
+            if not source.is_absolute() or source.resolve(strict=True) != source or not source.is_dir():
+                raise SandboxError("INVALID_SKILL_FILE")
+        except (OSError, RuntimeError):
+            raise SandboxError("INVALID_SKILL_FILE") from None
+        args += ["--ro-bind", skill_dir, "/skill"]
+    args += ["--chdir", "/skill" if skill_dir is not None else workspace, "--clearenv",
              "--setenv", "PATH", SANDBOX_PATH, "--setenv", "HOME", "/tmp",
              "--setenv", "TMPDIR", "/tmp", "--setenv", "LANG", "C.UTF-8",
              "--remount-ro", "/", "--json-status-fd", str(status_fd),
@@ -178,7 +187,8 @@ def _read_ready(selector: selectors.BaseSelector, timeout: float) -> None:
             selector.unregister(key.fd)
 
 
-def run_bash(workspace: str, command: str, timeout: float = 120, *, stop_event: Event | None = None) -> dict:
+def run_bash(workspace: str, command: str, timeout: float = 120, *, stop_event: Event | None = None,
+             skill_dir: str | None = None) -> dict:
     deadline = time.monotonic() + timeout
     if stop_event is not None and stop_event.is_set():
         raise CancelledError
@@ -189,7 +199,7 @@ def run_bash(workspace: str, command: str, timeout: float = 120, *, stop_event: 
     process = None
     timed_out = failure = stopping = False
     try:
-        argv = build_argv(workspace, command, status.write_fd)
+        argv = build_argv(workspace, command, status.write_fd, **({"skill_dir": skill_dir} if skill_dir else {}))
         with selectors.DefaultSelector() as selector:
             process = _start(argv, status.write_fd)
             status.close_writer()

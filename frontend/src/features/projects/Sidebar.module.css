@@ -16,6 +16,7 @@
 .selected { background: #dfdfda; }
 .rename { display: grid; place-items: center; width: 24px; height: 26px; color: #92948e; opacity: 0; border-radius: 5px; flex-shrink: 0; }
 .sessionRow:hover .rename, .sessionRow:focus-within .rename, .selected .rename { opacity: 1; }
+.sidebar .delete:hover { color: #c42e29; background: #d9383214; }
 .emptyCreate { display: flex; justify-content: center; align-items: center; gap: 6px; width: calc(100% - 24px); height: 29px; margin: 6px 12px 8px; border: 1px solid #d9dad4; border-radius: 6px; color: #858780; font-size: 12px; }
 .sidebar button:hover, .sessionRow:hover:not(.selected) { background: #e3e4de; }
 @media (max-width: 700px) { .sidebar { width: 210px; flex-basis: 210px; padding-inline: 10px; } .newSession { font-size: 10px; } }

@@ -1,9 +1,10 @@
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, Path, Query
+from fastapi import APIRouter, Depends, Path, Query, Request, Response
 
 from laxcode.api.auth import get_current_user
 from laxcode.api.dependencies import get_repository
+from laxcode.storage.database import DatabaseError
 from laxcode.api.schemas import (
     CreateSessionRequest, MessagePageResponse, NameRequest, RunResponse, SessionDetailResponse, SessionResponse,
 )
@@ -34,6 +35,15 @@ async def session_detail(session_id: ResourceId, user_id=Depends(get_current_use
     session, run = await repository.session_detail(user_id, session_id)
     return {**SessionResponse.model_validate(session).model_dump(),
             "latest_run": RunResponse.model_validate(run) if run else None}
+
+
+@router.delete("/sessions/{session_id}", status_code=204, response_class=Response)
+async def delete_session(session_id: ResourceId, request: Request, user_id=Depends(get_current_user)):
+    manager = getattr(request.app.state, "task_manager", None)
+    if manager is None:
+        raise DatabaseError("Agent runtime is not initialized")
+    await manager.delete_session(user_id, session_id)
+    return Response(status_code=204)
 
 
 @router.get("/sessions/{session_id}/messages", response_model=MessagePageResponse)

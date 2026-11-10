@@ -9,6 +9,23 @@ from laxcode.memory import MemoryUnavailableError
 from laxcode.storage.database import DatabaseError
 
 
+async def run_sync_tool(execute, target, args):
+    # asyncio cancellation cannot stop a file-operation thread. Drain it before
+    # allowing the run to finish, while preserving cancellation over its result.
+    worker = asyncio.create_task(asyncio.to_thread(execute, target, args))
+    interrupted = False
+    try:
+        while not worker.done():
+            try:
+                await asyncio.shield(worker)
+            except asyncio.CancelledError:
+                interrupted = True
+        return worker.result()
+    finally:
+        if interrupted:
+            raise asyncio.CancelledError
+
+
 async def execute_tool(name: str, arguments: str, *, workspace: str, context: ToolContext | None = None) -> dict:
     tool = TOOLS.get(name)
     if tool is None:
@@ -24,7 +41,7 @@ async def execute_tool(name: str, arguments: str, *, workspace: str, context: To
         if inspect.iscoroutinefunction(tool.execute):
             result = await tool.execute(target, args)
         else:
-            result = await asyncio.to_thread(tool.execute, target, args)
+            result = await run_sync_tool(tool.execute, target, args)
         return {"error_code": None, "result": result}
     except MemoryUnavailableError:
         return {"error_code": "MEMORY_UNAVAILABLE", "result": {}}

@@ -1,6 +1,6 @@
-import { json } from './http'
+import { json, request } from './http'
 import { streamRun } from './sse'
-import type { MessagePage, Models, Project, Session, SessionDetail } from './types'
+import type { MessagePage, Models, Project, Run, Session, SessionDetail } from './types'
 
 export const api = {
   projects: (signal?: AbortSignal) => json<Project[]>('/projects', { signal }),
@@ -8,6 +8,8 @@ export const api = {
   sessions: (project: number, signal?: AbortSignal) => json<Session[]>(`/projects/${project}/sessions`, { signal }),
   createSession: (project: number) => json<Session>(`/projects/${project}/sessions`, { method: 'POST' }),
   renameSession: (session: number, name: string) => json<Session>(`/sessions/${session}`, { method: 'PATCH', body: JSON.stringify({ name }) }),
+  deleteSession: async (session: number): Promise<void> => { await request(`/sessions/${session}`, { method: 'DELETE' }) },
+  cancelRun: (run: number, signal?: AbortSignal) => json<Run>(`/runs/${run}/cancel`, { method: 'POST', signal }),
   models: (signal?: AbortSignal) => json<Models>('/models', { signal }),
   detail: (session: number, signal?: AbortSignal) => json<SessionDetail>(`/sessions/${session}`, { signal }),
   messages: (session: number, before: number, signal?: AbortSignal) => json<MessagePage>(`/sessions/${session}/messages?before_seq=${before}&limit=50`, { signal }),

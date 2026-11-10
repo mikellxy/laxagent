@@ -58,12 +58,13 @@ class Session(Base):
     project_id: Mapped[int] = mapped_column(Integer)
     user_id: Mapped[str] = mapped_column(String(36))
     next_msg_seq: Mapped[int] = mapped_column(Integer, server_default=text("1"))
+    deleted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
 
 class Run(Base):
     __tablename__ = "runs"
     __table_args__ = (
-        CheckConstraint("status IN ('waiting', 'running', 'success', 'failed')", name="ck_runs_status"),
+        CheckConstraint("status IN ('waiting', 'running', 'success', 'failed', 'cancelled')", name="ck_runs_status"),
         CheckConstraint("context_limit > 0 AND output_limit > 0 AND output_limit <= context_limit",
                         name="ck_runs_limits"),
         Index("ix_runs_session_id_id", "session_id", "id"),

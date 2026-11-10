@@ -28,7 +28,7 @@ class RunResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
     run_id: int = Field(validation_alias="id")
     session_id: int
-    status: Literal["waiting", "running", "success", "failed"]
+    status: Literal["waiting", "running", "success", "failed", "cancelled"]
     model: str
     created_at: datetime
     started_at: datetime | None

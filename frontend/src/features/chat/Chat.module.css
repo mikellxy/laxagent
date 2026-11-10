@@ -38,3 +38,4 @@
 .send:disabled { background: #b8bbb4; opacity: 1; }
 .latest { position: absolute; right: 50%; transform: translateX(50%); top: -30px; border: 1px solid #d9dad4; background: #fffffff5; box-shadow: 0 2px 10px #00000008; padding: 7px 12px; border-radius: 20px; display: flex; align-items: center; gap: 6px; font-size: 12px; z-index: 1; }
 @media (max-width: 700px) { .userIdBar { padding: 6px 16px 0; } .scrollArea { padding: 14px 16px 12px; } .footer { position: relative; padding: 10px 16px 20px; } .message { padding: 12px 14px; } }
+.cancelled { color: var(--muted); font-size: 12px; margin-bottom: 8px; }

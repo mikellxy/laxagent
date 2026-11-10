@@ -70,6 +70,7 @@ class Repository:
                 await transaction.flush()
             session = await transaction.scalar(select(Session).where(
                 Session.user_id == user_id, Session.project_id == project.id, Session.name == "LaxCode",
+                Session.deleted_at.is_(None),
             ).order_by(Session.id).limit(1))
             if session is None:
                 session = Session(user_id=user_id, project_id=project.id, name="LaxCode")
@@ -78,10 +79,33 @@ class Repository:
             return session.id
 
     @staticmethod
-    def owned_session(user_id: str, session_id: int):
-        return select(Session).join(Project, Project.id == Session.project_id).join(
+    def owned_session(user_id: str, session_id: int, *, include_deleted=False):
+        query = select(Session).join(Project, Project.id == Session.project_id).join(
             User, User.user_id == Session.user_id,
         ).where(Session.id == session_id, Session.user_id == user_id, Project.user_id == user_id)
+        return query if include_deleted else query.where(Session.deleted_at.is_(None))
+
+    async def session_for_deletion(self, user_id: str, session_id: int) -> Session:
+        async with self.db.transaction() as transaction:
+            session = await transaction.scalar(self.owned_session(user_id, session_id, include_deleted=True))
+            if session is None:
+                raise DatabaseError("Session not found", 404)
+            return session
+
+    async def delete_session(self, user_id: str, session_id: int):
+        async with self.db.transaction() as transaction:
+            session = await transaction.scalar(self.owned_session(
+                user_id, session_id, include_deleted=True,
+            ).with_for_update(of=Session))
+            if session is None:
+                raise DatabaseError("Session not found", 404)
+            if session.deleted_at is not None:
+                return
+            if await transaction.scalar(select(Run.id).where(
+                Run.session_id == session_id, Run.status.in_(["waiting", "running"]),
+            )) is not None:
+                raise DatabaseError("Session still has an active run", 409)
+            session.deleted_at = func.now()
 
     async def create_run(self, *, user_id: str, session_id: int, user_query: str,
                          model: str, context_limit: int, output_limit: int) -> Run:
@@ -113,11 +137,11 @@ class Repository:
             ).values(status="running", started_at=func.now()).returning(Run))
         return run
 
-    async def finish_run(self, run_id: int, *, error: str | None = None) -> bool:
+    async def finish_run(self, run_id: int, *, error: str | None = None, cancelled=False) -> bool:
         async with self.db.transaction() as transaction:
             result = await transaction.execute(update(Run).where(
                 Run.id == run_id, Run.status.in_(["waiting", "running"]),
-            ).values(status="failed" if error is not None else "success",
+            ).values(status="cancelled" if cancelled else "failed" if error is not None else "success",
                      finished_at=func.now(), error=error))
         return result.rowcount == 1
 
@@ -174,6 +198,7 @@ class Repository:
                 raise DatabaseError("Project not found", 404)
             return list(await transaction.scalars(select(Session).where(
                 Session.project_id == project_id, Session.user_id == user_id,
+                Session.deleted_at.is_(None),
             ).order_by(Session.id)))
 
     async def rename_session(self, user_id: str, session_id: int, name: str) -> Session:
@@ -231,6 +256,7 @@ class Repository:
             session = await transaction.scalar(select(Session).where(
                 Session.id == session_id, Session.user_id == user_id,
                 Session.project_id == project_id,
+                Session.deleted_at.is_(None),
             ).with_for_update())
             if session is None:
                 raise DatabaseError("Session not found", 404)

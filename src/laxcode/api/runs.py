@@ -33,6 +33,14 @@ async def get_run(run_id: ResourceId, user_id=Depends(get_current_user), reposit
     return await repository.get_run(run_id, user_id)
 
 
+@router.post("/runs/{run_id}/cancel", response_model=RunResponse)
+async def cancel_run(run_id: ResourceId, request: Request, user_id=Depends(get_current_user)):
+    manager = getattr(request.app.state, "task_manager", None)
+    if manager is None:
+        raise DatabaseError("Agent runtime is not initialized")
+    return await manager.cancel(user_id, run_id)
+
+
 async def subscription(run_id: ResourceId, user_id=Depends(get_current_user), context=Depends(get_context)):
     await context.repository.get_run(run_id, user_id)
     async with context.events.subscribe(run_id) as sub:

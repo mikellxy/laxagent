@@ -1,7 +1,7 @@
 export interface Project { id: number; user_id: string; name: string }
 export interface Session extends Project { project_id: number; next_msg_seq: number }
 export interface Run {
-  run_id: number; session_id: number; status: 'waiting' | 'running' | 'success' | 'failed'
+  run_id: number; session_id: number; status: 'waiting' | 'running' | 'success' | 'failed' | 'cancelled'
   model: string; error: string | null
 }
 export interface SessionDetail extends Session { latest_run: Run | null }

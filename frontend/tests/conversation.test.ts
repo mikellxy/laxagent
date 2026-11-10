@@ -14,6 +14,7 @@ function harness(initial = detail(), rows: Message[] = [user(1)]) {
   const transport: Transport = {
     detail: vi.fn().mockResolvedValue(initial), messages: vi.fn().mockResolvedValue(page(rows)),
     chat: vi.fn().mockResolvedValue({ run_id: 10, status: 'waiting' }),
+    cancelRun: vi.fn().mockResolvedValue(run('cancelled')),
     stream: vi.fn((_id, callback, signal) => {
       receive = callback
       return new Promise<void>((_resolve, reject) => signal.addEventListener('abort', () => reject(new DOMException('Aborted', 'AbortError'))))
@@ -148,4 +149,67 @@ describe('conversation synchronization', () => {
     h.controller.dispose(); h.event('message_chunk', 2, 'late')
     expect(h.controller.getSnapshot()).toBe(previous)
   })
+})
+
+it('cancels once, discards unfinished chunks and can send again', async () => {
+  const h = harness()
+  await h.controller.refresh()
+  h.event('message_chunk', 2, 'unfinished')
+  await waitFor(() => expect(h.controller.getSnapshot().syncing).toBe(false))
+  const cancellation = deferred<Run>()
+  vi.mocked(h.transport.cancelRun).mockReturnValue(cancellation.promise)
+  const pending = h.controller.cancel()
+  await h.controller.cancel()
+  expect(h.transport.cancelRun).toHaveBeenCalledOnce()
+  expect(h.controller.getSnapshot().cancelling).toBe(true)
+  expect(await h.controller.send('too early', 'p:m')).toBe(false)
+  vi.mocked(h.transport.detail).mockResolvedValue(detail(2, run('cancelled')))
+  cancellation.resolve(run('cancelled'))
+  await pending
+  expect(h.controller.getSnapshot().messages).toEqual([user(1)])
+  expect(h.controller.getSnapshot()).toMatchObject({ busy: false, cancelling: false, error: null })
+  expect(await h.controller.send('next', 'p:m')).toBe(true)
+  h.controller.dispose()
+})
+
+it('clears a pending message cancelled before it was committed', async () => {
+  const h = harness(detail(1, null), [])
+  await h.controller.refresh()
+  await h.controller.send('hello', 'p:m')
+  vi.mocked(h.transport.detail).mockResolvedValue(detail(1, run('cancelled')))
+  await h.controller.cancel()
+  expect(h.controller.getSnapshot()).toMatchObject({ pending: null, messages: [], error: null, busy: false })
+  h.controller.dispose()
+})
+
+it('allows retrying failed cancellation and ignores responses after disposal', async () => {
+  const h = harness()
+  await h.controller.refresh()
+  vi.mocked(h.transport.cancelRun).mockRejectedValueOnce(new Error('offline'))
+  await h.controller.cancel()
+  expect(h.controller.getSnapshot()).toMatchObject({ busy: true, cancelling: false, error: 'offline' })
+  const response = deferred<Run>()
+  vi.mocked(h.transport.cancelRun).mockReturnValue(response.promise)
+  const pending = h.controller.cancel()
+  h.controller.dispose()
+  const snapshot = h.controller.getSnapshot()
+  response.resolve(run('cancelled'))
+  await pending
+  expect(h.controller.getSnapshot()).toBe(snapshot)
+})
+
+it('does a fresh read when cancellation races an older detail snapshot', async () => {
+  const h = harness()
+  await h.controller.refresh()
+  const older = deferred<MessagePage>()
+  vi.mocked(h.transport.messages).mockReturnValueOnce(older.promise)
+  const refresh = h.controller.refresh(false)
+  await waitFor(() => expect(h.transport.messages).toHaveBeenCalledTimes(2))
+  const cancel = h.controller.cancel()
+  vi.mocked(h.transport.detail).mockResolvedValue(detail(2, run('cancelled')))
+  older.resolve(page([user(1)]))
+  await refresh; await cancel
+  expect(h.controller.getSnapshot().detail?.latest_run?.status).toBe('cancelled')
+  expect(h.controller.getSnapshot().busy).toBe(false)
+  h.controller.dispose()
 })

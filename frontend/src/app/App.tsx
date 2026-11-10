@@ -24,6 +24,7 @@ export function App() {
   useEffect(() => { void load() }, [load])
   const select = useCallback((id: number | null) => { setSelected(id); if (owner) selectSession(owner, id) }, [owner])
   const missing = useCallback(() => select(null), [select])
+  const deleted = useCallback((id: number) => setSelected(current => current === id ? null : current), [])
   if (!owner) return <div className="login">
     {error && <div role="alert" className="error">{error}</div>}
     {busy ? <LoaderCircle size={20} className="spin" aria-label="正在登录" /> :
@@ -39,7 +40,7 @@ export function App() {
       }}>{retryBootstrap ? '重试' : '以游客登录'}</button>}
     <span aria-hidden className="loginWatermark">LAXCODE</span>
   </div>
-  return <div className="shell"><Sidebar owner={owner} selected={selected} onSelect={select} />
+  return <div className="shell"><Sidebar owner={owner} selected={selected} onSelect={select} onDeleted={deleted} />
     {selected !== null ? <Chat key={`${owner}:${selected}`} owner={owner} sessionId={selected} onMissing={missing} /> : <main className="blank" />}
   </div>
 }

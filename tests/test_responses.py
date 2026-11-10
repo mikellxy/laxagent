@@ -156,3 +156,34 @@ async def test_invalid_completed_calls_are_rejected(change):
         with pytest.raises(ModelError):
             async for _ in stream_response(client, model="chosen:model", messages=[]):
                 pass
+
+
+def test_interrupted_tool_turn_keeps_only_completed_pairs_and_text():
+    calls = [{'call_id': f'c{i}', 'name': 'read_file', 'arguments': '{}'} for i in range(3)]
+    messages = [
+        {'role': 'assistant', 'content': 'Reading files', 'tool_call': calls},
+        {'role': 'tool', 'content': 'first result', 'tool_call': calls[0]},
+        {'role': 'user', 'content': 'continue'},
+    ]
+    before = deepcopy(messages)
+    assert messages_to_input(messages) == [
+        {'role': 'assistant', 'content': 'Reading files'},
+        {'type': 'function_call', **calls[0]},
+        {'type': 'function_call_output', 'call_id': 'c0', 'output': 'first result'},
+        {'role': 'user', 'content': 'continue'},
+    ]
+    assert messages == before
+
+
+def test_old_tool_result_cannot_complete_reused_call_id_in_a_cancelled_turn():
+    call = {'call_id': 'same-id', 'name': 'read_file', 'arguments': '{}'}
+    messages = [
+        {'role': 'assistant', 'content': '', 'tool_call': [call]},
+        {'role': 'tool', 'content': 'old result', 'tool_call': call},
+        {'role': 'user', 'content': 'again'},
+        {'role': 'assistant', 'content': '', 'tool_call': [call]},
+        {'role': 'user', 'content': 'continue'},
+    ]
+    converted = messages_to_input(messages)
+    assert sum(item.get('type') == 'function_call' for item in converted) == 1
+    assert converted[-2:] == [{'role': 'user', 'content': 'again'}, {'role': 'user', 'content': 'continue'}]

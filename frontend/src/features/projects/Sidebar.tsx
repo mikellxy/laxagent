@@ -8,7 +8,7 @@ import { SessionList } from '../sessions/SessionList'
 import type { Project, Session } from '../../api/types'
 import styles from './Sidebar.module.css'
 
-function ProjectGroup({ project, owner, selected, onSelect }: { project: Project; owner: string; selected: number | null; onSelect: (id: number) => void }) {
+function ProjectGroup({ project, owner, selected, onSelect, onDeleted }: { project: Project; owner: string; selected: number | null; onSelect: (id: number) => void; onDeleted: (id: number) => void }) {
   const client = useQueryClient()
   const [expanded, setExpanded] = useState(true)
   const [creating, setCreating] = useState(false)
@@ -34,10 +34,10 @@ function ProjectGroup({ project, owner, selected, onSelect }: { project: Project
       </button>
     </div>
     {error && <div role="alert" className="error">{error}</div>}
-    {expanded && <SessionList projectId={project.id} owner={owner} selected={selected} onSelect={onSelect} creating={creating} onCreate={() => void create()} />}
+    {expanded && <SessionList projectId={project.id} owner={owner} selected={selected} onSelect={onSelect} onDeleted={onDeleted} creating={creating} onCreate={() => void create()} />}
   </section>
 }
-export function Sidebar({ owner, selected, onSelect }: { owner: string; selected: number | null; onSelect: (id: number) => void }) {
+export function Sidebar({ owner, selected, onSelect, onDeleted }: { owner: string; selected: number | null; onSelect: (id: number) => void; onDeleted: (id: number) => void }) {
   const client = useQueryClient()
   const query = useQuery({ queryKey: ['projects', owner], queryFn: ({ signal }) => api.projects(signal) })
   const [expanded, setExpanded] = useState(true)
@@ -51,7 +51,7 @@ export function Sidebar({ owner, selected, onSelect }: { owner: string; selected
     </div>
     {query.error && <div role="alert" className="error">{messageOf(query.error)}</div>}
     {expanded && <nav className={styles.projects} aria-label="项目和会话">{query.data?.map(project =>
-      <ProjectGroup key={project.id} project={project} owner={owner} selected={selected} onSelect={onSelect} />)}</nav>}
+      <ProjectGroup key={project.id} project={project} owner={owner} selected={selected} onSelect={onSelect} onDeleted={onDeleted} />)}</nav>}
     {creating && <NameDialog title="新建项目" onClose={() => setCreating(false)} onSave={async name => {
       const project = await api.createProject(name)
       client.setQueryData<Project[]>(['projects', owner], old => [...(old ?? []), project].sort((a, b) => a.id - b.id))

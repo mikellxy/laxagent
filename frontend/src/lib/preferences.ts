@@ -19,6 +19,12 @@ function save(p: Preferences) {
 }
 export function selectedSession(owner: string) { return read(owner).selected }
 export function selectSession(owner: string, session: number | null) { const p = read(owner); p.selected = session; save(p) }
+export function forgetSession(owner: string, session: number) {
+  const p = read(owner)
+  if (p.selected === session) p.selected = null
+  p.models = p.models.filter(([id]) => id !== session)
+  save(p)
+}
 export function sessionModel(owner: string, session: number, catalog: Models): string {
   const p = read(owner)
   const selected = p.models.find(([id]) => id === session)?.[1] ?? p.global ?? catalog.default_model

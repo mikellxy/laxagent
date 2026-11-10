@@ -60,8 +60,10 @@ def completed_tool_calls(response: dict) -> list[dict]:
 
 
 def messages_to_input(messages: list[dict]) -> list[dict]:
+    # Interrupted tool turns can leave calls without outputs. Keep completed
+    # pairs and assistant text without fabricating results or rewriting history.
     result = []
-    for message in messages:
+    for index, message in enumerate(messages):
         if message["role"] == "tool":
             result.append({"type": "function_call_output", "call_id": message["tool_call"]["call_id"],
                            "output": message["content"]})
@@ -69,7 +71,13 @@ def messages_to_input(messages: list[dict]) -> list[dict]:
             if message["content"] or not message.get("tool_call"):
                 result.append({"role": message["role"], "content": message["content"]})
             if message.get("tool_call"):
-                result.extend({"type": "function_call", **call} for call in message["tool_call"])
+                completed_ids = set()
+                following = index + 1
+                while following < len(messages) and messages[following]["role"] == "tool":
+                    completed_ids.add(messages[following]["tool_call"]["call_id"])
+                    following += 1
+                result.extend({"type": "function_call", **call} for call in message["tool_call"]
+                              if call["call_id"] in completed_ids)
     return result
 
 

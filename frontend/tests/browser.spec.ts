@@ -1,11 +1,13 @@
 import { expect, test, type Page } from '@playwright/test'
-import type { Message, Project, Session } from '../src/api/types'
+import type { Message, Project, Run, Session } from '../src/api/types'
 
 async function mockAPI(page: Page) {
   let owner = '12345678-1234-4234-8234-123456789abc'
   const state = {
     projects: [] as Project[], sessions: [] as Session[], messages: new Map<number, Message[]>(),
     posts: [] as { path: string; body: any }[], historyReads: [] as number[],
+    runs: new Map<number, Run>(), deletions: [] as number[], deleteFailures: 0, cancelFailures: 0,
+    streams: new Map<number, (() => void)[]>(),
   }
   await page.route('**/api/v1/**', async route => {
     const request = route.request(), path = new URL(request.url()).pathname.replace('/api/v1', '')
@@ -39,10 +41,35 @@ async function mockAPI(page: Page) {
       }
       return reply(state.sessions.filter(s => s.project_id === id))
     }
+    const runRoute = path.match(/^\/runs\/(\d+)\/(cancel|events)$/)
+    if (runRoute) {
+      const id = Number(runRoute[1]), run = state.runs.get(id)
+      if (!run) return reply({ detail: 'Not found' }, 404)
+      if (runRoute[2] === 'cancel') {
+        if (state.cancelFailures-- > 0) return reply({ detail: '取消失败，请重试' }, 503)
+        run.status = 'cancelled'
+        state.streams.get(id)?.forEach(end => end())
+        return reply(run)
+      }
+      if (run.status === 'running' || run.status === 'waiting') await new Promise<void>(resolve => {
+        state.streams.set(id, [...(state.streams.get(id) ?? []), resolve])
+      })
+      const event = { run_id: id, msg_seq: null, type: 'sse_end', role: 'system', error: null, content: { status: run.status } }
+      return route.fulfill({ contentType: 'text/event-stream', body: `event: sse_end\ndata: ${JSON.stringify(event)}\n\n` })
+    }
     const session = path.match(/^\/sessions\/(\d+)(\/messages|\/chat)?$/)
     if (session) {
       const id = Number(session[1]), item = state.sessions.find(s => s.id === id)
       if (!item) return reply({ detail: 'Not found' }, 404)
+      if (method === 'DELETE') {
+        state.deletions.push(id)
+        if (state.deleteFailures-- > 0) return reply({ detail: '删除失败，请重试' }, 503)
+        state.sessions = state.sessions.filter(s => s.id !== id)
+        for (const run of state.runs.values()) if (run.session_id === id) {
+          run.status = 'cancelled'; state.streams.get(run.run_id)?.forEach(end => end())
+        }
+        return route.fulfill({ status: 204 })
+      }
       if (method === 'PATCH') { item.name = body.name; return reply(item) }
       const messages = state.messages.get(id) ?? []
       if (session[2] === '/messages') {
@@ -51,8 +78,13 @@ async function mockAPI(page: Page) {
         const eligible = messages.filter(m => m.seq < before), items = eligible.slice(-50)
         return reply({ items, has_more: eligible.length > items.length, next_before_seq: eligible.length > items.length ? items[0].seq : null })
       }
-      if (session[2] === '/chat') return reply({ run_id: 10, session_id: id, status: 'waiting' }, 202)
-      return reply({ ...item, next_msg_seq: (messages.at(-1)?.seq ?? 0) + 1, latest_run: null })
+      if (session[2] === '/chat') {
+        const run: Run = { run_id: state.runs.size + 10, session_id: id, status: 'running', model: body.model, error: null }
+        state.runs.set(run.run_id, run)
+        messages.push({ role: 'user', seq: (messages.at(-1)?.seq ?? 0) + 1, content: body.user_query })
+        return reply({ run_id: run.run_id, session_id: id, status: 'waiting' }, 202)
+      }
+      return reply({ ...item, next_msg_seq: (messages.at(-1)?.seq ?? 0) + 1, latest_run: [...state.runs.values()].filter(r => r.session_id === id).at(-1) ?? null })
     }
     return reply({ detail: 'Not found' }, 404)
   })
@@ -137,4 +169,64 @@ test('renders markdown and tools, paginates silently and preserves reading posit
   await page.evaluate(() => document.dispatchEvent(new Event('visibilitychange')))
   await expect(page.locator('[data-seq="122"]')).toBeVisible()
   await page.screenshot({ path: 'test-results/messages.png', fullPage: true })
+})
+
+test('delete dialog confirms once, retries errors and clears only the deleted selection', async ({ page }) => {
+  const state = await mockAPI(page)
+  await page.goto('/'); await page.getByRole('button', { name: '以游客登录' }).click()
+  await page.getByRole('button', { name: 'LaxCode 新会话', exact: true }).click()
+  await expect(page.getByRole('button', { name: '会话 2', exact: true })).toHaveAttribute('aria-current', 'page')
+  await page.getByRole('button', { name: '删除会话 laxcode', exact: true }).click()
+  const dialog = page.getByRole('dialog')
+  await expect(dialog.getByRole('button', { name: '取消', exact: true })).toBeFocused()
+  await page.screenshot({ path: 'test-results/delete-confirm.png', fullPage: true })
+  await page.keyboard.press('Escape')
+  expect(state.deletions).toEqual([])
+  await page.getByRole('button', { name: '删除会话 laxcode', exact: true }).click()
+  state.deleteFailures = 1
+  await dialog.getByRole('button', { name: '删除', exact: true }).click()
+  await expect(dialog.getByRole('alert')).toContainText('删除失败')
+  await expect(page.getByRole('button', { name: 'laxcode', exact: true })).toBeVisible()
+  await dialog.getByRole('button', { name: '删除', exact: true }).click()
+  await expect(dialog).toHaveCount(0)
+  await expect(page.getByRole('button', { name: 'laxcode', exact: true })).toHaveCount(0)
+  await expect(page.getByRole('button', { name: '会话 2', exact: true })).toHaveAttribute('aria-current', 'page')
+  await page.getByRole('button', { name: '删除会话 会话 2', exact: true }).click()
+  await dialog.getByRole('button', { name: '删除', exact: true }).click()
+  await expect(page.getByLabel('聊天', { exact: true })).toHaveCount(0)
+  await expect(page.getByRole('button', { name: '新建会话', exact: true })).toBeVisible()
+  const preferences = (await page.context().cookies()).find(c => c.name === 'laxcode_preferences')!
+  expect(JSON.parse(decodeURIComponent(preferences.value))).toMatchObject({ selected: null, models: [] })
+  await page.reload()
+  await expect(page.getByLabel('聊天', { exact: true })).toHaveCount(0)
+  await expect(page.getByRole('button', { name: '新建会话', exact: true })).toBeVisible()
+})
+
+test('composer cancels without confirmation and delete stops a running session', async ({ page }) => {
+  const state = await mockAPI(page)
+  await page.goto('/'); await page.getByRole('button', { name: '以游客登录' }).click()
+  await page.getByRole('textbox', { name: '消息输入' }).fill('hello')
+  await page.getByRole('button', { name: '发送消息', exact: true }).click()
+  await expect(page.getByRole('button', { name: '取消生成', exact: true })).toBeEnabled()
+  await page.getByRole('textbox', { name: '消息输入' }).fill('draft')
+  await page.getByRole('textbox', { name: '消息输入' }).press('Enter')
+  expect(state.posts.filter(p => p.path.endsWith('/cancel'))).toHaveLength(0)
+  expect(state.posts.filter(p => p.path.endsWith('/chat'))).toHaveLength(1)
+  state.cancelFailures = 1
+  await page.getByRole('button', { name: '取消生成', exact: true }).click()
+  await expect(page.getByRole('alert')).toContainText('取消失败')
+  await page.getByRole('button', { name: '取消生成', exact: true }).click()
+  await expect(page.getByRole('status')).toHaveText('已取消')
+  await expect(page.getByRole('dialog')).toHaveCount(0)
+  await expect(page.getByRole('button', { name: '发送消息', exact: true })).toBeEnabled()
+  await page.reload()
+  await expect(page.getByRole('status')).toHaveText('已取消')
+  await page.getByRole('textbox', { name: '消息输入' }).fill('continue')
+  await page.getByRole('button', { name: '发送消息', exact: true }).click()
+  await expect(page.getByRole('button', { name: '取消生成', exact: true })).toBeEnabled()
+  await page.getByRole('button', { name: '删除会话 laxcode', exact: true }).click()
+  await page.getByRole('dialog').getByRole('button', { name: '删除', exact: true }).click()
+  await expect(page.getByLabel('聊天', { exact: true })).toHaveCount(0)
+  expect(state.runs.get(11)?.status).toBe('cancelled')
+  expect(state.posts.filter(p => p.path.endsWith('/cancel'))).toHaveLength(2)
 })

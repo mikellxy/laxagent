@@ -2,11 +2,11 @@ import { api } from '../../api/resources'
 import { ApiError, messageOf } from '../../api/errors'
 import type { Message, Run, SessionDetail, StreamEvent } from '../../api/types'
 
-export type Transport = Pick<typeof api, 'detail' | 'messages' | 'chat' | 'stream'>
+export type Transport = Pick<typeof api, 'detail' | 'messages' | 'chat' | 'stream' | 'cancelRun'>
 export interface PendingMessage { content: string; afterSeq: number; runId: number | null; failed: boolean }
 export interface ConversationSnapshot {
   messages: Message[]; pending: PendingMessage | null; detail: SessionDetail | null
-  busy: boolean; ready: boolean; syncing: boolean; loadingOlder: boolean; hasMore: boolean
+  busy: boolean; ready: boolean; syncing: boolean; loadingOlder: boolean; hasMore: boolean; cancelling: boolean
   error: string | null; missing: boolean
 }
 const active = (run: Run | null | undefined) => run?.status === 'waiting' || run?.status === 'running'
@@ -21,6 +21,7 @@ export class Conversation {
   private hasMore = false
   private ready = false
   private submitting = false
+  private cancelling = false
   private syncFailed = false
   private syncing = false
   private loadingOlder = false
@@ -37,7 +38,7 @@ export class Conversation {
   private retryDelay = 500
   private listeners = new Set<() => void>()
   private snapshot: ConversationSnapshot = { messages: [], pending: null, detail: null, busy: false, ready: false,
-    syncing: false, loadingOlder: false, hasMore: false, error: null, missing: false }
+    syncing: false, loadingOlder: false, hasMore: false, error: null, missing: false, cancelling: false }
 
   constructor(readonly sessionId: number, private transport: Transport = api) {}
   subscribe = (listener: () => void) => { this.listeners.add(listener); return () => { this.listeners.delete(listener) } }
@@ -47,7 +48,8 @@ export class Conversation {
     const messages = new Map([...this.history, ...this.live])
     this.snapshot = {
       messages: [...messages.values()].sort((a, b) => a.seq - b.seq), pending: this.pending ? { ...this.pending } : null,
-      detail: this.detail, busy: this.submitting || active(this.detail?.latest_run), ready: this.ready,
+      detail: this.detail, busy: this.submitting || this.cancelling || active(this.detail?.latest_run), ready: this.ready,
+      cancelling: this.cancelling,
       syncing: this.syncing, loadingOlder: this.loadingOlder, hasMore: this.hasMore, error: this.error ?? (this.pending?.failed ? "消息提交失败" : null), missing: this.missing,
     }
     this.listeners.forEach(listener => listener())
@@ -88,6 +90,7 @@ export class Conversation {
         this.detail = detail; this.ready = true; this.error = detail.latest_run?.error ?? null
         this.reconcilePending()
         if (this.pending && detail.latest_run?.status === 'failed') this.pending.failed = true
+        if (detail.latest_run?.status === 'cancelled') this.pending = null
         return true
       } catch (error) {
         if (!this.disposed) {
@@ -174,7 +177,7 @@ export class Conversation {
   }
 
   send = async (content: string, model: string): Promise<boolean> => {
-    if (this.disposed || !this.ready || this.submitting || active(this.detail?.latest_run) || !content.trim()) return false
+    if (this.disposed || !this.ready || this.submitting || this.cancelling || active(this.detail?.latest_run) || !content.trim()) return false
     this.submitting = true; this.error = null; this.emit()
     try {
       // Establish a fresh lower bound so repeated text cannot match old historical prompts.
@@ -200,6 +203,23 @@ export class Conversation {
       }
       return false
     } finally { this.submitting = false; this.emit() }
+  }
+
+  cancel = async (): Promise<void> => {
+    const run = this.detail?.latest_run
+    if (this.disposed || this.cancelling || !run || !active(run)) return
+    this.cancelling = true; this.error = null; this.emit()
+    try {
+      const ended = await this.transport.cancelRun(run.run_id, this.lifetime.signal)
+      if (this.disposed) return
+      // Drain an older read before applying the terminal response and taking a fresh snapshot.
+      if (this.syncFlight) await this.syncFlight
+      if (this.disposed) return
+      if (this.detail?.latest_run?.run_id === ended.run_id) this.detail = { ...this.detail, latest_run: ended }
+      await this.refresh(true)
+    } catch (error) {
+      if (!this.disposed) this.error = messageOf(error)
+    } finally { this.cancelling = false; this.emit() }
   }
 
   dispose() {

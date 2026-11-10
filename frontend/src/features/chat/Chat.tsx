@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react'
 import { useQuery } from '@tanstack/react-query'
-import { ArrowDown, ArrowUp, Check, ChevronDown, Copy, LoaderCircle, Wrench } from 'lucide-react'
+import { ArrowDown, ArrowUp, Check, ChevronDown, Copy, LoaderCircle, Square, Wrench } from 'lucide-react'
 import Markdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import { api } from '../../api/resources'
@@ -52,6 +52,7 @@ function UserIdBar({ owner, sessionId }: { owner: string; sessionId: number }) {
 export function Chat({ owner, sessionId, onMissing }: { owner: string; sessionId: number; onMissing: () => void }) {
   const conversation = useMemo(() => new Conversation(sessionId), [sessionId])
   const snapshot = useSyncExternalStore(conversation.subscribe, conversation.getSnapshot)
+  const canCancel = snapshot.detail?.latest_run?.status === 'waiting' || snapshot.detail?.latest_run?.status === 'running'
   const catalog = useQuery({ queryKey: ['models', owner], queryFn: ({ signal }) => api.models(signal) })
   const [model, setModel] = useState('')
   const [draft, setDraft] = useState('')
@@ -124,6 +125,7 @@ export function Chat({ owner, sessionId, onMissing }: { owner: string; sessionId
     <div className={styles.footer}>
       {!following && <button className={styles.latest} onClick={() => { anchor.current = null; setFollow(true); moveScroll(el => { el.scrollTop = el.scrollHeight }) }}><ArrowDown size={14} />回到最新</button>}
       {(snapshot.error || catalog.error) && <div className="error" role="alert">{snapshot.error ?? messageOf(catalog.error)}</div>}
+      {!snapshot.error && !snapshot.busy && snapshot.detail?.latest_run?.status === 'cancelled' && <div role="status" className={styles.cancelled}>已取消</div>}
       <div className={styles.composer}>
         <textarea ref={textarea} aria-label="消息输入" value={draft} rows={2} onChange={e => setDraft(e.target.value)}
           onKeyDown={event => {
@@ -136,9 +138,13 @@ export function Chat({ owner, sessionId, onMissing }: { owner: string; sessionId
             }}>{catalog.data?.models.map(item => <option key={item.id} value={item.id}>{item.id}</option>)}</select>
             <ChevronDown size={13} />
           </div>
-          <button className={styles.send} aria-label="发送消息" onClick={() => void send()} disabled={!draft.trim() || !model || snapshot.busy || !snapshot.ready}>
-            {snapshot.busy ? <LoaderCircle size={18} className="spin" /> : <ArrowUp size={19} strokeWidth={2} />}
-          </button>
+          {canCancel || snapshot.cancelling
+            ? <button className={styles.send} aria-label={snapshot.cancelling ? '正在取消' : '取消生成'} onClick={() => void conversation.cancel()} disabled={snapshot.cancelling}>
+              {snapshot.cancelling ? <LoaderCircle size={18} className="spin" /> : <Square size={14} fill="currentColor" />}
+            </button>
+            : <button className={styles.send} aria-label="发送消息" onClick={() => void send()} disabled={!draft.trim() || !model || snapshot.busy || !snapshot.ready}>
+              {snapshot.busy ? <LoaderCircle size={18} className="spin" /> : <ArrowUp size={19} strokeWidth={2} />}
+            </button>}
         </div>
       </div>
     </div>

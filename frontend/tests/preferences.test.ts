@@ -1,5 +1,5 @@
 import { beforeEach, expect, it } from 'vitest'
-import { chooseModel, selectSession, selectedSession, sessionModel } from '../src/lib/preferences'
+import { chooseModel, forgetSession, selectSession, selectedSession, sessionModel } from '../src/lib/preferences'
 import { clearCookie, readCookie, writeCookie } from '../src/lib/cookies'
 import { errorText } from '../src/api/errors'
 import { validToken } from '../src/features/auth/session'
@@ -38,4 +38,15 @@ it('requires a matching subject and a future token expiration', () => {
   expect(validToken('u')).toBe(true); expect(validToken('other')).toBe(false)
   writeCookie('access_token', jwt('u', 1)); expect(validToken('u')).toBe(false)
   writeCookie('access_token', 'broken'); expect(validToken('u')).toBe(false)
+})
+
+it('forgets only the deleted session and preserves the global model preference', () => {
+  chooseModel('u', 1, 'p:b'); chooseModel('u', 2, 'p:c'); selectSession('u', 2)
+  forgetSession('u', 1)
+  expect(selectedSession('u')).toBe(2)
+  expect(JSON.parse(readCookie('laxcode_preferences')!).models).toEqual([[2, 'p:c']])
+  forgetSession('u', 2)
+  expect(selectedSession('u')).toBeNull()
+  expect(JSON.parse(readCookie('laxcode_preferences')!).models).toEqual([])
+  expect(sessionModel('u', 3, catalog)).toBe('p:c')
 })

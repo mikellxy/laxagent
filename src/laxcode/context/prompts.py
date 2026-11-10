@@ -2,6 +2,14 @@ from laxcode.context.memory_prompt import MEMORY_RULES
 from laxcode.memory import memory_category_description
 
 
+OPERATION_COMMUNICATION = """操作过程沟通：
+开始一组关联性强、工作量较大的操作前，优先用一两句简短的助手正文说明接下来要做什么，
+以及这些操作的直接目的。说明应作为用户可见的 assistant content 输出，并放在相关工具调用之前，
+不要只写在 reasoning 中。同一组连续操作通常说明一次；进入新的主要阶段或计划明显变化时再更新。
+简单问答、单次轻量操作不必添加说明，用户明确要求省略过程说明时遵从用户要求。
+表达具体、简洁，避免空泛进度、逐个罗列工具和提前宣称操作成功。"""
+
+
 def _base_prompt(workspace: str) -> str:
     return (
         "你是一个有帮助的 AI 助手，请准确、简洁地回答用户的问题。"
@@ -20,6 +28,7 @@ def system_prompt(workspace: str) -> str:
     """Compose prompt sections; future instruction and skill loaders belong here."""
     return "\n\n".join([
         _base_prompt(workspace),
+        OPERATION_COMMUNICATION,
         "长期记忆分类：\n" + memory_category_description(),
         MEMORY_RULES,
     ])

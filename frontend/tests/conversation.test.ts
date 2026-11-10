@@ -1,10 +1,10 @@
 import { describe, expect, it, vi } from 'vitest'
 import { waitFor } from '@testing-library/react'
 import { Conversation, type Transport } from '../src/features/chat/conversation'
-import type { Message, MessagePage, Run, SessionDetail, StreamEvent } from '../src/api/types'
+import type { Message, MessagePage, TextMessage, Run, SessionDetail, StreamEvent } from '../src/api/types'
 
 const user = (seq: number, content = `user ${seq}`): Message => ({ seq, role: 'user', content })
-const assistant = (seq: number, content: string): Message => ({ seq, role: 'assistant', content })
+const assistant = (seq: number, content: string): TextMessage => ({ seq, role: 'assistant', content })
 const page = (items: Message[], has_more = false): MessagePage => ({ items, has_more, next_before_seq: has_more ? items[0].seq : null })
 const run = (status: Run['status'] = 'running'): Run => ({ run_id: 10, session_id: 1, model: 'p:m', status, error: null })
 const detail = (next_msg_seq = 2, latest_run: Run | null = run()): SessionDetail => ({ id: 1, user_id: 'owner', name: 'session', project_id: 1, next_msg_seq, latest_run })
@@ -21,11 +21,46 @@ function harness(initial = detail(), rows: Message[] = [user(1)]) {
     }),
   }
   const controller = new Conversation(1, transport)
-  const event = (type: string, seq: number | null, content: StreamEvent['content'] = '', error: string | null = null) => receive({ type, msg_seq: seq, content, run_id: 10, role: 'assistant', error })
+  const event = (type: string, seq: number | null, content: StreamEvent['content'] = '', error: string | null = null, channel?: StreamEvent['channel']) => receive({ type, msg_seq: seq, content, run_id: 10, role: 'assistant', error, channel })
   return { controller, transport, event }
 }
 
 describe('conversation synchronization', () => {
+  it('streams reasoning channels, replaces completed snapshots, and reconciles replay without duplicates', async () => {
+    const h = harness()
+    await h.controller.refresh()
+    h.event('reasoning_chunk', 2, 'first', null, 'text')
+    await waitFor(() => expect(h.controller.getSnapshot().syncing).toBe(false))
+    const before = h.controller.getSnapshot()
+    h.event('reasoning_chunk', 2, ' second', null, 'text')
+    h.event('reasoning_chunk', 2, 'summary', null, 'summary')
+    expect(before.messages[1]).toMatchObject({ reasoning: [{ channel: 'text', text: 'first' }] })
+    expect(h.controller.getSnapshot().activity).toEqual({ firstSeq: 2, thinkingSeq: 2, toolSeq: null })
+    expect(h.controller.getSnapshot().messages[1]).toMatchObject({ reasoning: [
+      { channel: 'text', text: 'first second' }, { channel: 'summary', text: 'summary' },
+    ] })
+    h.event('message_chunk', 2, 'answer')
+    expect(h.controller.getSnapshot().activity?.thinkingSeq).toBeNull()
+    const reasoning = [{ channel: 'summary' as const, text: 'final summary' }]
+    h.event('message_end', 2, { text: 'final answer', reasoning })
+    expect(h.controller.getSnapshot().messages[1]).toMatchObject({ reasoning })
+    vi.mocked(h.transport.detail).mockResolvedValue(detail(3))
+    vi.mocked(h.transport.messages).mockResolvedValue(page([user(1), { ...assistant(2, 'final answer'), reasoning }]))
+    await h.controller.refresh()
+    h.event('reasoning_chunk', 2, 'first')
+    h.event('message_end', 2, { text: 'final answer', reasoning })
+    expect(h.controller.getSnapshot().messages[1]).toEqual({ ...assistant(2, 'final answer'), reasoning })
+    expect(h.controller.getSnapshot().activity?.thinkingSeq).toBeNull()
+    h.event('tool_start', 3, { tool_name: 'read_file', arguments: '{}' })
+    expect(h.controller.getSnapshot().activity?.toolSeq).toBe(3)
+    h.event('tool_end', 3)
+    expect(h.controller.getSnapshot().activity?.toolSeq).toBeNull()
+    vi.mocked(h.transport.detail).mockResolvedValue(detail(3, run('cancelled')))
+    h.event('sse_end', null)
+    await waitFor(() => expect(h.controller.getSnapshot().activity).toBeNull())
+    expect(h.controller.getSnapshot().messages).toHaveLength(2)
+    h.controller.dispose()
+  })
   it.each(['waiting', 'running'] as const)('subscribes directly for %s without status polling', async status => {
     const h = harness(detail(2, run(status)))
     await h.controller.refresh()
@@ -41,18 +76,19 @@ describe('conversation synchronization', () => {
     expect(h.controller.getSnapshot().messages).toEqual([user(1)])
     h.controller.dispose()
   })
-  it('uses the detail watermark, appends same-seq chunks, replaces final text, and hides reasoning/results', async () => {
+  it('uses the detail watermark, preserves reasoning through text/final chunks, and hides tool results', async () => {
     const h = harness()
     await h.controller.refresh()
     h.event('message_chunk', 2, 'hel')
     await waitFor(() => expect(h.controller.getSnapshot().syncing).toBe(false))
     h.event('message_chunk', 2, 'lo')
-    h.event('reasoning_chunk', 2, 'private reasoning')
-    expect(h.controller.getSnapshot().messages).toEqual([user(1), assistant(2, 'hello')])
+    h.event('reasoning_chunk', 2, 'public reasoning')
+    const reasoning = [{ channel: 'text', text: 'public reasoning' }]
+    expect(h.controller.getSnapshot().messages).toEqual([user(1), { ...assistant(2, 'hello'), reasoning }])
     h.event('message_end', 2, { text: 'Hello!' })
     h.event('tool_start', 3, { tool_name: 'read_file', arguments: '{"path":"hello.txt"}' })
     h.event('tool_end', 3, { tool_name: 'read_file', result: 'private output' })
-    expect(h.controller.getSnapshot().messages).toEqual([user(1), assistant(2, 'Hello!'), { seq: 3, role: 'tool', tool_name: 'read_file', arguments: '{"path":"hello.txt"}' }])
+    expect(h.controller.getSnapshot().messages).toEqual([user(1), { ...assistant(2, 'Hello!'), reasoning }, { seq: 3, role: 'tool', tool_name: 'read_file', arguments: '{"path":"hello.txt"}' }])
     h.event('message_chunk', 1, 'replay')
     expect(h.controller.getSnapshot().messages[0]).toEqual(user(1))
     h.controller.dispose()

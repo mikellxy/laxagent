@@ -20,10 +20,44 @@
 .assistant a { color: #3674ba; }
 .assistant blockquote { margin-left: 0; padding-left: 14px; border-left: 3px solid #d0d1ca; color: #6b6e65; }
 .tool { background: #e9eae4; color: #686c63; padding: 12px 16px; }
-.toolTitle { display: flex; align-items: center; gap: 7px; font-size: 12px; font-weight: 500; background: none; border: 0; padding: 0; margin: 0; color: inherit; cursor: pointer; text-align: left; }
-.chevron { transition: transform .15s ease; }
+.toolTitle { display: flex; align-items: center; gap: 7px; max-width: 100%; font-size: 12px; font-weight: 500; background: none; border: 0; padding: 0; margin: 0; color: inherit; cursor: pointer; text-align: left; }
+.processHeading { display: inline-flex; align-items: center; min-width: 0; }
+.processLabel { flex-shrink: 0; }
+.workPreview { display: inline-flex; align-items: center; min-width: 0; max-width: 44ch; font-weight: 400; }
+.previewBracket { flex-shrink: 0; }
+.previewViewport { min-width: 0; overflow: hidden; height: 1.5em; line-height: 1.5; }
+.previewLine { display: block; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; animation: previewSlide .25s ease-out; }
+@keyframes previewSlide {
+  from { opacity: .3; transform: translateY(100%); }
+  to { opacity: 1; transform: translateY(0); }
+}
+.processIcon { display: inline-flex; flex-shrink: 0; }
+.processActive .processIcon { animation: processBreathe 1.8s ease-in-out infinite; }
+.processActive .processLabel { animation: processGlow 1.8s ease-in-out infinite; }
+@keyframes processBreathe {
+  0%, 100% { opacity: .55; transform: scale(.94); }
+  50% { opacity: 1; transform: scale(1.08); }
+}
+@keyframes processGlow {
+  0%, 100% { opacity: .75; }
+  50% { opacity: 1; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .processActive .processIcon, .processActive .processLabel, .previewLine { animation: none; }
+}
+.chevron { flex-shrink: 0; transition: transform .15s ease; }
 .chevronOpen { transform: rotate(180deg); }
 .tool pre { margin: 7px 0 0; }
+.work { margin: 0 0 14px; padding: 8px 3px; color: #686c63; }
+.work > .toolTitle { font-size: 13px; }
+.workContents { margin: 10px 0 0 7px; padding-left: 15px; border-left: 1px solid #d8d9d2; }
+.workContents > * + * { margin-top: 10px; }
+.workContents .tool { border-radius: 8px; }
+.thinking { padding: 5px 0; }
+.reasoning { margin: 10px 0 0 23px; font-size: 14px; line-height: 1.75; overflow-wrap: anywhere; }
+.reasoning .assistant { background: transparent; border: 0; color: #686c63; }
+.reasoning .assistant + .assistant { margin-top: 12px; }
+.toolTitle:focus-visible { outline: 2px solid #8a9780; outline-offset: 4px; border-radius: 3px; }
 .failed { outline: 1px solid #bb7777; }
 .footer { position: relative; padding: 10px 40px 28px; }
 .footer > * { max-width: 960px; margin-left: auto; margin-right: auto; }

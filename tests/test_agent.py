@@ -53,6 +53,9 @@ async def test_graph_aggregates_final_output_and_keeps_state_immutable(repositor
                 assert next_seq == 3
                 assert len(rows[0]) == 2 and rows[0] == rows[1]
                 assert rows[0][-1].content == item["content"]["text"]
+                assert rows[0][-1].reasoning == item["content"]["reasoning"] == [
+                    {"channel": "text", "text": "thinking"}, {"channel": "summary", "text": "summary"},
+                ]
             await super().publish(item)
 
     final = completed("actual final ")
@@ -103,7 +106,8 @@ async def test_graph_aggregates_final_output_and_keeps_state_immutable(repositor
     ([{"type": "response.output_text.delta", "delta": None}], "failed"),
 ])
 async def test_model_failure_never_commits_partial_message(tail, status, repository, conversation):
-    stream = ModelStream([{"type": "response.output_text.delta", "delta": "partial"}, *tail])
+    stream = ModelStream([{"type": "response.reasoning_text.delta", "delta": "unfinished thought"},
+                         {"type": "response.output_text.delta", "delta": "partial"}, *tail])
     events, original = MemoryEvents(), state(conversation)
     async with client_for(stream, []) as client:
         with pytest.raises(ModelError) as exc:
@@ -148,7 +152,7 @@ async def test_publish_failure_closes_model_stream_without_success(fail_at, repo
 @pytest.mark.anyio
 async def test_cancellation_closes_stream_and_emits_cancelled(repository, conversation):
     waiting = asyncio.Event()
-    stream = ModelStream([], wait=waiting)
+    stream = ModelStream([{"type": "response.reasoning_text.delta", "delta": "unfinished thought"}], wait=waiting)
     events = MemoryEvents()
     async with client_for(stream, []) as client:
         task = asyncio.create_task(run_agent(build_graph(), state(conversation), AgentContext(client, events, repository)))
@@ -158,6 +162,9 @@ async def test_cancellation_closes_stream_and_emits_cancelled(repository, conver
             await task
     assert stream.closed
     assert events.items[-1]["content"] == {"status": "cancelled"}
+    _, rows = await message_snapshot(repository, conversation["session_id"])
+    assert [row.role for row in rows[0]] == ["user"]
+    assert rows[0] == rows[1]
 
 
 @pytest.mark.anyio

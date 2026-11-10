@@ -1,13 +1,15 @@
 import { api } from '../../api/resources'
 import { ApiError, messageOf } from '../../api/errors'
-import type { Message, Run, SessionDetail, StreamEvent } from '../../api/types'
+import type { Message, ReasoningPart, Run, SessionDetail, StreamEvent } from '../../api/types'
 
 export type Transport = Pick<typeof api, 'detail' | 'messages' | 'chat' | 'stream' | 'cancelRun'>
 export interface PendingMessage { content: string; afterSeq: number; runId: number | null; failed: boolean }
+export interface Activity { firstSeq: number; thinkingSeq: number | null; toolSeq: number | null }
 export interface ConversationSnapshot {
   messages: Message[]; pending: PendingMessage | null; detail: SessionDetail | null
   busy: boolean; ready: boolean; syncing: boolean; loadingOlder: boolean; hasMore: boolean; cancelling: boolean
   error: string | null; missing: boolean
+  activity: Activity | null
 }
 const active = (run: Run | null | undefined) => run?.status === 'waiting' || run?.status === 'running'
 
@@ -34,11 +36,12 @@ export class Conversation {
   private buffered: StreamEvent[] = []
   private reconnectWanted = false
   private checkedRun: number | null = null
+  private activity: Activity | null = null
   private retry: ReturnType<typeof setTimeout> | null = null
   private retryDelay = 500
   private listeners = new Set<() => void>()
   private snapshot: ConversationSnapshot = { messages: [], pending: null, detail: null, busy: false, ready: false,
-    syncing: false, loadingOlder: false, hasMore: false, error: null, missing: false, cancelling: false }
+    syncing: false, loadingOlder: false, hasMore: false, error: null, missing: false, cancelling: false, activity: null }
 
   constructor(readonly sessionId: number, private transport: Transport = api) {}
   subscribe = (listener: () => void) => { this.listeners.add(listener); return () => { this.listeners.delete(listener) } }
@@ -50,6 +53,7 @@ export class Conversation {
       messages: [...messages.values()].sort((a, b) => a.seq - b.seq), pending: this.pending ? { ...this.pending } : null,
       detail: this.detail, busy: this.submitting || this.cancelling || active(this.detail?.latest_run), ready: this.ready,
       cancelling: this.cancelling,
+      activity: active(this.detail?.latest_run) && this.activity ? { ...this.activity } : null,
       syncing: this.syncing, loadingOlder: this.loadingOlder, hasMore: this.hasMore, error: this.error ?? (this.pending?.failed ? "消息提交失败" : null), missing: this.missing,
     }
     this.listeners.forEach(listener => listener())
@@ -87,6 +91,11 @@ export class Conversation {
         this.boundary = boundary // Only advance after ALL required page reads succeeded.
         for (const seq of this.live.keys()) if (seq <= boundary || this.reconnectWanted || !active(detail.latest_run)) this.live.delete(seq)
         this.syncFailed = false
+        if (detail.latest_run?.run_id !== this.detail?.latest_run?.run_id || !active(detail.latest_run)) this.activity = null
+        if (this.activity) {
+          if (this.activity.thinkingSeq !== null && this.activity.thinkingSeq <= boundary) this.activity.thinkingSeq = null
+          if (this.activity.toolSeq !== null && this.activity.toolSeq <= boundary) this.activity.toolSeq = null
+        }
         this.detail = detail; this.ready = true; this.error = detail.latest_run?.error ?? null
         this.reconcilePending()
         if (this.pending && detail.latest_run?.status === 'failed') this.pending.failed = true
@@ -145,21 +154,46 @@ export class Conversation {
   private apply(event: StreamEvent) {
     if (event.type === 'sse_end') { void this.refresh(true); return }
     if (event.type === 'error' || event.type === 'response_incomplete') {
+      this.activity = null
       this.error = event.error ?? '运行失败'; this.emit(); return
     }
     const seq = event.msg_seq
-    if (seq === null || seq <= this.boundary) return
+    if (seq === null) return
+    // Replayed committed events identify this run's range, but never restart its completed phases.
+    if (active(this.detail?.latest_run)) {
+      this.activity ??= { firstSeq: seq, thinkingSeq: null, toolSeq: null }
+      this.activity.firstSeq = Math.min(this.activity.firstSeq, seq)
+    }
+    if (seq <= this.boundary) { this.emit(); return }
     const content = typeof event.content === 'object' ? event.content : {}
+    const previous = this.live.get(seq)
+    const old = previous?.role === 'assistant' ? previous : { seq, role: 'assistant' as const, content: '' }
     if (event.type === 'message_chunk' || event.type === 'refusal_chunk') {
-      const old = this.live.get(seq)
-      const text = old?.role === 'assistant' ? old.content : ''
-      this.live.set(seq, { seq, role: 'assistant', content: text + (typeof event.content === 'string' ? event.content : '') })
+      const text = old.content + (typeof event.content === 'string' ? event.content : '')
+      this.live.set(seq, { ...old, content: text })
+      if (text && this.activity) this.activity.thinkingSeq = null
+    } else if (event.type === 'reasoning_chunk') {
+      const text = typeof event.content === 'string' ? event.content : ''
+      if (text) {
+        const parts = (old.reasoning ?? []).map(part => ({ ...part }))
+        const channel = event.channel ?? 'text'
+        const last = parts.at(-1)
+        if (last?.channel === channel) last.text += text
+        else parts.push({ channel, text })
+        this.live.set(seq, { ...old, reasoning: parts })
+        if (this.activity && !old.content) this.activity.thinkingSeq = seq
+      }
     } else if (event.type === 'message_end') {
-      this.live.set(seq, { seq, role: 'assistant', content: typeof content.text === 'string' ? content.text : '' })
+      this.live.set(seq, { ...old, content: typeof content.text === 'string' ? content.text : '',
+        ...(Array.isArray(content.reasoning) ? { reasoning: content.reasoning as ReasoningPart[] } : {}) })
+      if (this.activity) this.activity.thinkingSeq = null
     } else if (event.type === 'tool_start') {
       this.live.set(seq, { seq, role: 'tool', tool_name: String(content.tool_name ?? ''), arguments: String(content.arguments ?? '') })
+      if (this.activity) { this.activity.toolSeq = seq; this.activity.thinkingSeq = null }
+    } else if (event.type === 'tool_end') {
+      if (this.activity?.toolSeq === seq) this.activity.toolSeq = null
     }
-    // tool_end, reasoning, usage and tool outputs never create additional visible rows.
+    // Tool outputs and usage never create additional visible rows.
     this.emit()
   }
 
@@ -190,6 +224,7 @@ export class Conversation {
       const submitted = await this.transport.chat(this.sessionId, content, model, this.lifetime.signal)
       if (this.disposed) return false
       if (this.pending) this.pending.runId = submitted.run_id
+      this.activity = null
       this.detail = { ...this.detail!, latest_run: { run_id: submitted.run_id, session_id: this.sessionId, status: 'waiting', model, error: null } }
       this.checkedRun = null
       this.connect() // 202 guarantees the stream exists, not that the user message has committed.

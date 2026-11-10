@@ -1,35 +1,77 @@
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react'
+import { useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react'
 import { useQuery } from '@tanstack/react-query'
-import { ArrowDown, ArrowUp, Check, ChevronDown, Copy, LoaderCircle, Square, Wrench } from 'lucide-react'
+import { ArrowDown, ArrowUp, Check, ChevronDown, Copy, Layers, LoaderCircle, Sparkles, Square, Wrench } from 'lucide-react'
 import Markdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import { api } from '../../api/resources'
 import { chooseModel, sessionModel } from '../../lib/preferences'
 import { messageOf } from '../../api/errors'
 import { Conversation } from './conversation'
+import { groupTimeline, latestWorkLine, type WorkGroup } from './timeline'
 import type { Message, ToolMessage } from '../../api/types'
 import styles from './Chat.module.css'
 
 function argumentsText(value: string) { try { return JSON.stringify(JSON.parse(value), null, 2) } catch { return value } }
-function ToolCall({ message }: { message: ToolMessage }) {
-  const [open, setOpen] = useState(false)
-  const text = argumentsText(message.arguments)
-  return <div>
-    <button type="button" className={styles.toolTitle} aria-expanded={open} onClick={() => setOpen(value => !value)}>
-      <Wrench size={14} />{message.tool_name}<ChevronDown size={13} className={`${styles.chevron} ${open ? styles.chevronOpen : ''}`} />
+interface Fold { open: boolean; toggle: () => void }
+function Disclosure({ label, icon, fold, active = false, preview, children }: { label: string; icon: React.ReactNode; fold: Fold; active?: boolean; preview?: string | null; children: React.ReactNode }) {
+  const id = useId()
+  const showPreview = active && !fold.open && !!preview
+  return <>
+    <button type="button" className={`${styles.toolTitle} ${active ? styles.processActive : ''}`} aria-label={label}
+      aria-describedby={showPreview ? `${id}-preview` : undefined} aria-expanded={fold.open} aria-controls={id} onClick={fold.toggle}>
+      <span className={styles.processIcon} aria-hidden="true">{icon}</span>
+      <span className={styles.processHeading}>
+        <span className={styles.processLabel}>{label}</span>
+        {showPreview && <span className={styles.workPreview} id={`${id}-preview`}>
+          <span className={styles.previewBracket}>(</span>
+          <span className={styles.previewViewport} title={preview}>
+            <span key={preview} className={styles.previewLine}>{preview}</span>
+          </span>
+          <span className={styles.previewBracket}>)</span>
+        </span>}
+      </span>
+      <ChevronDown size={13} className={`${styles.chevron} ${fold.open ? styles.chevronOpen : ''}`} />
     </button>
-    {open && text && <pre>{text}</pre>}
-  </div>
+    <div id={id} hidden={!fold.open}>{fold.open && children}</div>
+  </>
+}
+function AssistantMarkdown({ text }: { text: string }) {
+  return <Markdown remarkPlugins={[remarkGfm]} skipHtml components={{
+    a: ({ children, ...props }) => <a {...props} target="_blank" rel="noopener noreferrer">{children}</a>,
+  }}>{text}</Markdown>
+}
+function ToolCall({ message, fold }: { message: ToolMessage; fold: Fold }) {
+  const text = argumentsText(message.arguments)
+  return <Disclosure label={message.tool_name} icon={<Wrench size={14} />} fold={fold}>
+    {text && <pre>{text}</pre>}
+  </Disclosure>
 }
 function MessageCard({ message }: { message: Message }) {
+  if (message.role === 'tool') return null
   if (message.role === 'assistant' && !message.content) return null
   return <article data-seq={message.seq} aria-label={message.role === 'user' ? '用户消息' : message.role === 'assistant' ? '助手消息' : '工具调用'}
     className={`${styles.message} ${styles[message.role]}`}>
-    {message.role === 'tool' ? <ToolCall message={message} />
-      : message.role === 'assistant' ? <Markdown remarkPlugins={[remarkGfm]} skipHtml components={{
-        a: ({ children, ...props }) => <a {...props} target="_blank" rel="noopener noreferrer">{children}</a>,
-      }}>{message.content}</Markdown> : message.content}
+    {message.role === 'assistant' ? <AssistantMarkdown text={message.content} /> : message.content}
   </article>
+}
+
+function WorkCard({ group, fold }: { group: WorkGroup; fold: (keys: string[]) => Fold }) {
+  return <section className={styles.work} aria-label="工作过程">
+    <Disclosure label={group.active ? '正在工作' : '已工作'} icon={<Layers size={16} />} active={group.active}
+      preview={group.active ? latestWorkLine(group) : null}
+      fold={fold(group.items.map(item => `work:${item.message.seq}`))}>
+      <div className={styles.workContents}>{group.items.map(item => item.kind === 'tool'
+        ? <div key={`tool:${item.message.seq}`} data-anchor={`process:${item.message.seq}`} data-members={`process:${item.message.seq}`} data-seq={item.message.seq} className={styles.tool} aria-label="工具调用" aria-busy={item.active}>
+          <ToolCall message={item.message} fold={fold([`tool:${item.message.seq}`])} />
+        </div>
+        : <div key={`thinking:${item.message.seq}`} data-anchor={`process:${item.message.seq}`} data-members={`process:${item.message.seq}`} className={styles.thinking}>
+          <Disclosure label={item.active ? '正在思考' : '已思考'} icon={<Sparkles size={16} />} active={item.active} fold={fold([`thinking:${item.message.seq}`])}>
+            <div className={styles.reasoning}>{item.message.reasoning?.map((part, index) =>
+              <div className={styles.assistant} key={index}><AssistantMarkdown text={part.text} /></div>)}</div>
+          </Disclosure>
+        </div>)}</div>
+    </Disclosure>
+  </section>
 }
 
 function UserIdBar({ owner, sessionId }: { owner: string; sessionId: number }) {
@@ -62,7 +104,20 @@ export function Chat({ owner, sessionId, onMissing }: { owner: string; sessionId
   const textarea = useRef<HTMLTextAreaElement>(null)
   const programmatic = useRef(false)
   const lastTop = useRef(0)
-  const anchor = useRef<{ seq: string; offset: number } | null>(null)
+  const anchor = useRef<{ key: string; member: string; offset: number } | null>(null)
+  // Member identities survive a leading partial group merging with an older page.
+  const folds = useMemo(() => new Map<string, { open: boolean; order: number }>(), [sessionId])
+  const foldOrder = useRef(0)
+  const [, setFoldVersion] = useState(0)
+  function fold(keys: string[]): Fold {
+    const latest = keys.map(key => folds.get(key)).filter(value => value !== undefined).sort((a, b) => b.order - a.order)[0]
+    const open = latest?.open ?? false
+    return { open, toggle: () => {
+      const value = { open: !open, order: ++foldOrder.current }
+      keys.forEach(key => folds.set(key, value))
+      setFoldVersion(value.order)
+    } }
+  }
 
   useEffect(() => {
     void conversation.refresh()
@@ -83,7 +138,9 @@ export function Chat({ owner, sessionId, onMissing }: { owner: string; sessionId
     if (!element) return
     if (anchor.current) {
       const saved = anchor.current
-      const row = element.querySelector<HTMLElement>(`[data-seq="${saved.seq}"]`)
+      const candidates = [...element.querySelectorAll<HTMLElement>('[data-anchor]')]
+        .filter(row => row.dataset.members?.split(',').includes(saved.member))
+      const row = candidates.find(row => row.dataset.anchor === saved.key) ?? candidates[0]
       if (row) moveScroll(el => { el.scrollTop += row.getBoundingClientRect().top - el.getBoundingClientRect().top - saved.offset })
       if (!snapshot.loadingOlder) anchor.current = null
     } else if (follow.current) moveScroll(el => { el.scrollTop = el.scrollHeight })
@@ -94,8 +151,13 @@ export function Chat({ owner, sessionId, onMissing }: { owner: string; sessionId
   async function older() {
     const element = scroller.current
     if (!element || snapshot.loadingOlder || snapshot.syncing || !snapshot.hasMore || follow.current) return
-    const row = [...element.querySelectorAll<HTMLElement>('[data-seq]')].find(row => row.getBoundingClientRect().bottom > element.getBoundingClientRect().top)
-    if (row) anchor.current = { seq: row.dataset.seq!, offset: row.getBoundingClientRect().top - element.getBoundingClientRect().top }
+    const viewport = element.getBoundingClientRect()
+    const visible = [...element.querySelectorAll<HTMLElement>('[data-anchor]')].filter(row => {
+      const rect = row.getBoundingClientRect()
+      return rect.height > 0 && rect.bottom > viewport.top && rect.top < viewport.bottom
+    })
+    const row = visible.find(row => !visible.some(child => child !== row && row.contains(child)))
+    if (row) anchor.current = { key: row.dataset.anchor!, member: row.dataset.members!.split(',').at(-1)!, offset: row.getBoundingClientRect().top - element.getBoundingClientRect().top }
     await conversation.loadOlder()
   }
   async function send() {
@@ -103,8 +165,11 @@ export function Chat({ owner, sessionId, onMissing }: { owner: string; sessionId
     const submitted = draft
     if (await conversation.send(submitted, model)) setDraft(current => current === submitted ? '' : current)
   }
-  const rows: { key: string; seq: number; node: React.ReactNode }[] = snapshot.messages.map(message => ({ key: String(message.seq), seq: message.seq, node: <MessageCard message={message} /> }))
-  if (snapshot.pending) rows.push({ key: 'pending', seq: snapshot.pending.afterSeq + 0.5,
+  const rows: { key: string; seq: number; members: string; node: React.ReactNode }[] = groupTimeline(snapshot.messages, snapshot.pending ? null : snapshot.activity).map(row => ({
+    key: row.key, seq: row.seq, members: row.kind === 'work' ? row.items.map(item => `process:${item.message.seq}`).join(',') : `message:${row.seq}`,
+    node: row.kind === 'work' ? <WorkCard group={row} fold={fold} /> : <MessageCard message={row.message} />,
+  }))
+  if (snapshot.pending) rows.push({ key: 'pending', seq: snapshot.pending.afterSeq + 0.5, members: 'pending',
     node: <article className={`${styles.message} ${styles.user} ${snapshot.pending.failed ? styles.failed : ''}`} aria-label="待确认用户消息">{snapshot.pending.content}</article> })
   rows.sort((a, b) => a.seq - b.seq)
   return <main className={styles.chat} aria-label="聊天">
@@ -120,7 +185,7 @@ export function Chat({ owner, sessionId, onMissing }: { owner: string; sessionId
         lastTop.current = element.scrollTop
         if (element.scrollTop < 160) void older()
       }}>
-      <div className={styles.timeline}>{rows.map(row => <div key={row.key}>{row.node}</div>)}</div>
+      <div className={styles.timeline}>{rows.map(row => <div key={row.key} data-anchor={row.key} data-members={row.members}>{row.node}</div>)}</div>
     </div>
     <div className={styles.footer}>
       {!following && <button className={styles.latest} onClick={() => { anchor.current = null; setFollow(true); moveScroll(el => { el.scrollTop = el.scrollHeight }) }}><ArrowDown size={14} />回到最新</button>}

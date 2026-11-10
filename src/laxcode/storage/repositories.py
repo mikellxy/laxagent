@@ -242,6 +242,8 @@ class Repository:
                     item.update(tool_name=row.tool_name or "", arguments=call.get("arguments", ""))
                 else:
                     item["content"] = row.content
+                    if row.role == "assistant":
+                        item["reasoning"] = row.reasoning or []
                 items.append(item)
             return {"items": items, "has_more": has_more,
                     "next_before_seq": rows[0].seq if has_more else None}
@@ -251,6 +253,7 @@ class Repository:
         role: str, content: str, expected_seq: int | None = None, load_context=False,
         tool_call_id: str | None = None, tool_name: str | None = None,
         tool_call: dict | list[dict] | None = None,
+        reasoning: list[dict] | None = None,
     ) -> tuple[int, list[dict]]:
         async with self.db.transaction() as transaction:
             session = await transaction.scalar(select(Session).where(
@@ -269,7 +272,8 @@ class Repository:
             if expected_seq is not None and expected_seq != seq:
                 raise DatabaseError("Session message sequence changed", 409)
             values = dict(seq=seq, session_id=session_id, role=role, content=content,
-                          tool_call_id=tool_call_id, tool_name=tool_name, tool_call=tool_call)
+                          tool_call_id=tool_call_id, tool_name=tool_name, tool_call=tool_call,
+                          reasoning=reasoning)
             transaction.add_all([Message(**values), SessionMessage(**values)])
             session.next_msg_seq = seq + 1
             await transaction.flush()

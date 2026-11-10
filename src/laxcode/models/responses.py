@@ -59,6 +59,29 @@ def completed_tool_calls(response: dict) -> list[dict]:
     return calls
 
 
+def append_reasoning(parts: list[dict], channel: str, text: str) -> None:
+    if not text:
+        return
+    if parts and parts[-1]["channel"] == channel:
+        parts[-1]["text"] += text
+    else:
+        parts.append({"channel": channel, "text": text})
+
+
+def completed_reasoning(output: list[dict]) -> list[dict]:
+    """Read only public reasoning text, never opaque provider payloads."""
+    parts: list[dict] = []
+    for item in output:
+        if item.get("type") != "reasoning":
+            continue
+        for field, channel, kind in (("content", "text", "reasoning_text"),
+                                      ("summary", "summary", "summary_text")):
+            for part in item.get(field) or []:
+                if part.get("type") == kind and isinstance(part.get("text"), str):
+                    append_reasoning(parts, channel, part["text"])
+    return parts
+
+
 def messages_to_input(messages: list[dict]) -> list[dict]:
     # Interrupted tool turns can leave calls without outputs. Keep completed
     # pairs and assistant text without fabricating results or rewriting history.

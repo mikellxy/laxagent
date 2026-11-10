@@ -86,8 +86,20 @@ class SessionDetailResponse(SessionResponse):
 
 class TextMessageResponse(BaseModel):
     seq: int
-    role: Literal["user", "assistant"]
+    role: Literal["user"]
     content: str
+
+
+class ReasoningPart(BaseModel):
+    channel: Literal["text", "summary"]
+    text: str
+
+
+class AssistantMessageResponse(BaseModel):
+    seq: int
+    role: Literal["assistant"]
+    content: str
+    reasoning: list[ReasoningPart] = Field(default_factory=list)
 
 
 class ToolMessageResponse(BaseModel):
@@ -98,7 +110,7 @@ class ToolMessageResponse(BaseModel):
 
 
 class MessagePageResponse(BaseModel):
-    items: list[TextMessageResponse | ToolMessageResponse]
+    items: list[TextMessageResponse | AssistantMessageResponse | ToolMessageResponse]
     has_more: bool
     next_before_seq: int | None
 

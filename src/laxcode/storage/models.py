@@ -93,6 +93,7 @@ class MessageColumns:
     seq: Mapped[int] = mapped_column(Integer)
     session_id: Mapped[int] = mapped_column(Integer)
     content: Mapped[str] = mapped_column(Text)
+    reasoning: Mapped[list[dict] | None] = mapped_column(JSONB(none_as_null=True), nullable=True)
     role: Mapped[str] = mapped_column(Text)
     tool_call_id: Mapped[str | None] = mapped_column(Text, nullable=True)
     tool_name: Mapped[str | None] = mapped_column(Text, nullable=True)

@@ -36,6 +36,8 @@ async def test_migration_has_no_foreign_keys_and_nullable_tool_columns(repositor
             assert str(columns["tool_name"]["type"]) == "TEXT"
             assert columns["tool_call"]["nullable"]
             assert isinstance(columns["tool_call"]["type"], JSONB)
+            assert columns["reasoning"]["nullable"]
+            assert isinstance(columns["reasoning"]["type"], JSONB)
             assert columns["id"]["identity"]["always"]
             assert any(c["column_names"] == ["session_id", "seq"] for c in schema.get_unique_constraints(table))
 

@@ -144,6 +144,7 @@ test('renders markdown and tools, paginates silently and preserves reading posit
       : { seq: i + 1, role: 'tool' as const, tool_name: 'read_file', arguments: JSON.stringify({ path: 'hello.txt', line: i + 1 }) }))
   await page.reload()
   const list = page.getByLabel('消息列表', { exact: true })
+  await page.locator('[data-anchor="work:119"]').getByRole('button', { name: '已工作' }).click()
   await expect(page.locator('[data-seq="120"]')).toBeVisible()
   await expect(page.locator('[data-seq="119"] strong')).toHaveText('说明')
   await expect(page.locator('[data-seq="120"]')).toContainText('read_file')
@@ -152,7 +153,7 @@ test('renders markdown and tools, paginates silently and preserves reading posit
   await expect(page.getByRole('button', { name: '回到最新' })).toBeVisible()
   await list.evaluate(el => { el.scrollTop = 80 })
   await expect.poll(() => state.historyReads.some(n => n === 71)).toBe(true)
-  await expect(page.locator('[data-seq="21"]')).toBeAttached()
+  await expect(page.locator('[data-anchor="work:start"]')).toBeAttached()
   const anchor = await list.evaluate(el => {
     const row = [...el.querySelectorAll<HTMLElement>('[data-seq]')].find(row => row.getBoundingClientRect().bottom > el.getBoundingClientRect().top)!
     return { seq: row.dataset.seq!, offset: row.getBoundingClientRect().top - el.getBoundingClientRect().top }
@@ -169,6 +170,88 @@ test('renders markdown and tools, paginates silently and preserves reading posit
   await page.evaluate(() => document.dispatchEvent(new Event('visibilitychange')))
   await expect(page.locator('[data-seq="122"]')).toBeVisible()
   await page.screenshot({ path: 'test-results/messages.png', fullPage: true })
+})
+
+test('streams nested reasoning disclosures and preserves expansion when history replaces live data', async ({ page }) => {
+  await page.addInitScript(() => {
+    const original = window.fetch.bind(window)
+    window.fetch = (input, init) => {
+      if (String(input).match(/\/runs\/\d+\/events$/)) {
+        return Promise.resolve(new Response(new ReadableStream({ start(controller) {
+          ;(window as any).reasoningEvent = (event: unknown) => controller.enqueue(new TextEncoder().encode(`data: ${JSON.stringify(event)}\n\n`))
+          init?.signal?.addEventListener('abort', () => { try { controller.close() } catch { /* Already cancelled */ } })
+        } }), { headers: { 'Content-Type': 'text/event-stream' } }))
+      }
+      return original(input, init)
+    }
+  })
+  const state = await mockAPI(page)
+  await page.goto('/')
+  await page.getByRole('button', { name: '以游客登录' }).click()
+  await page.getByRole('textbox', { name: '消息输入' }).fill('检查文件并说明结果')
+  await page.getByRole('button', { name: '发送消息', exact: true }).click()
+  await page.waitForFunction(() => typeof (window as any).reasoningEvent === 'function')
+  const emit = async (type: string, msg_seq: number | null, content: unknown) => page.evaluate(event => {
+    ;(window as any).reasoningEvent(event)
+  }, { run_id: 10, type, msg_seq, content, role: 'assistant', error: null, channel: 'text' })
+  await emit('reasoning_chunk', 2, '先检查 **消息链路**。')
+  const work = page.getByRole('button', { name: '正在工作', exact: true })
+  await expect(work).toHaveAttribute('aria-expanded', 'false')
+  await expect(work).toHaveText('正在工作')
+  await emit('reasoning_chunk', 2, '\n')
+  await expect(work).toContainText('正在工作(先检查 **消息链路**。)')
+  const longLine = '正在检查消息存储和流式事件，确认每条完整内容都能按顺序显示。'.repeat(5)
+  await emit('reasoning_chunk', 2, `${longLine}\n未完成的尾行`)
+  await page.setViewportSize({ width: 600, height: 900 })
+  const preview = work.getByTitle(longLine).locator('span')
+  await expect(preview).toBeVisible()
+  expect(await preview.evaluate(element => element.scrollWidth > element.clientWidth)).toBe(true)
+  await expect(preview).toHaveCSS('text-overflow', 'ellipsis')
+  await expect(work).not.toContainText('未完成的尾行')
+  await page.emulateMedia({ reducedMotion: 'reduce' })
+  await expect(preview).toHaveCSS('animation-name', 'none')
+  await page.screenshot({ path: 'test-results/work-preview.png', fullPage: true })
+  await page.emulateMedia({ reducedMotion: 'no-preference' })
+  await page.setViewportSize({ width: 1440, height: 900 })
+  await work.click()
+  await expect(work).toHaveText('正在工作')
+  const thinking = page.getByRole('button', { name: '正在思考', exact: true })
+  await expect(thinking).toHaveAttribute('aria-expanded', 'false')
+  await thinking.focus(); await page.keyboard.press('Enter')
+  await emit('reasoning_chunk', 2, '\n\n再核对历史消息与流式事件。')
+  await expect(page.getByText('消息链路', { exact: true })).toBeVisible()
+  await expect(page.getByText('再核对历史消息与流式事件。')).toBeVisible()
+  await emit('message_chunk', 2, '我先读取相关文件，核对 reasoning 的传递过程。')
+  await expect(page.getByRole('button', { name: '已工作', exact: true })).toHaveAttribute('aria-expanded', 'true')
+  await expect(page.getByRole('button', { name: '已思考', exact: true })).toHaveAttribute('aria-expanded', 'true')
+  const reasoning = [{ channel: 'text' as const, text: '先检查 **消息链路**。\n\n再核对历史消息与流式事件。' }]
+  const content = '我先读取相关文件，核对 reasoning 的传递过程。'
+  await emit('message_end', 2, { text: content, reasoning })
+  await emit('tool_start', 3, { tool_name: 'read_file', arguments: '{"path":"example.py"}' })
+  await page.getByRole('button', { name: '正在工作', exact: true }).click()
+  await page.getByRole('button', { name: 'read_file' }).click()
+  await emit('tool_end', 3, { result: 'not displayed' })
+  await emit('reasoning_chunk', 4, '已找到需要补齐的字段。')
+  await page.getByRole('button', { name: '正在思考' }).click()
+  await emit('reasoning_chunk', 4, '接下来汇总结果。')
+  await expect(page.getByText('已找到需要补齐的字段。接下来汇总结果。')).toBeVisible()
+  await page.screenshot({ path: 'test-results/reasoning-stream.png', fullPage: true })
+  state.messages.get(1)!.push({ seq: 2, role: 'assistant', content, reasoning },
+    { seq: 3, role: 'tool', tool_name: 'read_file', arguments: '{"path":"example.py"}' },
+    { seq: 4, role: 'assistant', content: '检查完成。', reasoning: [{ channel: 'text', text: '已找到需要补齐的字段。接下来汇总结果。' }] })
+  state.runs.get(10)!.status = 'success'
+  await emit('sse_end', null, { status: 'completed' })
+  await expect(page.getByText('检查完成。')).toBeVisible()
+  for (const button of await page.getByRole('button', { name: '已工作', exact: true }).all()) {
+    await expect(button).toHaveAttribute('aria-expanded', 'true')
+  }
+  await expect(page.getByText('已找到需要补齐的字段。接下来汇总结果。')).toBeVisible()
+  await expect(page.getByText('not displayed')).toHaveCount(0)
+  await page.reload()
+  await expect(page.getByRole('button', { name: '已工作', exact: true })).toHaveCount(2)
+  for (const button of await page.getByRole('button', { name: '已工作', exact: true }).all()) {
+    await expect(button).toHaveAttribute('aria-expanded', 'false')
+  }
 })
 
 test('delete dialog confirms once, retries errors and clears only the deleted selection', async ({ page }) => {

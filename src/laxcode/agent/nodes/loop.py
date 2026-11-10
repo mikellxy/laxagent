@@ -5,7 +5,7 @@ from langgraph.runtime import Runtime
 from laxcode.agent.context import AgentContext
 from laxcode.agent.state import AgentState
 from laxcode.models.errors import ModelError
-from laxcode.models.responses import append_model_response, append_tool_message, stream_response
+from laxcode.models.responses import append_model_response, append_tool_message, append_reasoning, completed_reasoning, stream_response
 from laxcode.runtime.events import make_event
 from laxcode.tools.executor import execute_tool
 from laxcode.tools.context import ToolContext
@@ -14,6 +14,7 @@ from laxcode.tools.results import format_result
 
 
 async def call_model(state: AgentState, runtime: Runtime[AgentContext]):
+    reasoning: list[dict] = []
     async def publish(kind, content, **extra):
         await runtime.context.events.publish(make_event(
             state["run_id"], kind, content, msg_seq=state["next_msg_seq"], **extra,
@@ -29,18 +30,20 @@ async def call_model(state: AgentState, runtime: Runtime[AgentContext]):
             elif event.type == "text_delta":
                 await publish("message_chunk", event.text)
             elif event.type == "reasoning_delta":
+                append_reasoning(reasoning, event.channel or "text", event.text)
                 await publish("reasoning_chunk", event.text, channel=event.channel)
             elif event.type == "refusal_delta":
                 await publish("refusal_chunk", event.text)
             elif event.type == "completed":
+                reasoning = reasoning or completed_reasoning(event.output or [])
                 calls = event.tool_calls or []
                 metadata = {"tool_call": calls} if calls else {}
                 next_seq, _ = await runtime.context.repository.append_message(
                     user_id=state["user_id"], project_id=state["project_id"], session_id=state["session_id"],
-                    role="assistant", content=event.text, expected_seq=state["next_msg_seq"],
+                    role="assistant", content=event.text, reasoning=reasoning, expected_seq=state["next_msg_seq"],
                     **metadata,
                 )
-                await publish("message_end", {"text": event.text, "usage": event.usage, **metadata})
+                await publish("message_end", {"text": event.text, "reasoning": reasoning, "usage": event.usage, **metadata})
                 message = {"role": "assistant", "content": event.text, **metadata}
                 return {"messages": [*state["messages"], message], "next_msg_seq": next_seq,
                         "pending_tool_calls": calls,

@@ -11,3 +11,4 @@ class AgentContext:
     client: AsyncOpenAI
     events: EventStore
     repository: Repository
+    recursion_limit: int = -1

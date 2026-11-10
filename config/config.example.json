@@ -1,4 +1,5 @@
 {
+  "recursion_limit": -1,
   "llm": {
     "default_model": "example:model-name",
     "provider_list": [

@@ -1,5 +1,6 @@
 import asyncio
 import logging
+from math import inf
 
 import anyio
 from langgraph.errors import GraphRecursionError
@@ -46,8 +47,10 @@ async def run_agent(graph, run_id: int, context: AgentContext) -> AgentState | N
             "run_id": run.id, "user_query": run.user_query, "model": run.model,
             "messages": [], "model_input": [], "pending_tool_calls": [],
         }
+        # LangGraph rejects -1; infinity disables its step cutoff without a finite substitute.
+        recursion_limit = inf if context.recursion_limit == -1 else context.recursion_limit
         result = await graph.ainvoke(state, config={
-            "recursion_limit": 25, "configurable": {"thread_id": run.thread_id},
+            "recursion_limit": recursion_limit, "configurable": {"thread_id": run.thread_id},
         }, context=context)
         await context.repository.finish_run(run_id)
     except asyncio.CancelledError:

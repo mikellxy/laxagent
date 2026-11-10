@@ -31,7 +31,9 @@ def create_app(config: AppConfig | None = None) -> FastAPI:
             db = await stack.enter_async_context(Database.open(config.database))
             events = await stack.enter_async_context(EventStore.connect(config.nats.url))
             client = await stack.enter_async_context(create_client(config.llm_router.port))
-            app.state.agent_context = AgentContext(client, events, Repository(db))
+            app.state.agent_context = AgentContext(
+                client, events, Repository(db), recursion_limit=config.recursion_limit,
+            )
             await app.state.agent_context.repository.fail_interrupted_runs()
             app.state.graph = build_graph(checkpointer=InMemorySaver())
             app.state.task_manager = TaskManager(app.state.graph, app.state.agent_context)

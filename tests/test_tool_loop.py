@@ -283,9 +283,32 @@ async def test_repeated_tool_requests_stop_at_graph_limit(repository, conversati
     events, captured = MemoryEvents(), []
     async with client_for(streams, captured) as client:
         with pytest.raises(ModelError, match="step limit"):
-            await run_agent(build_graph(), state(conversation), AgentContext(client, events, repository))
+            await run_agent(build_graph(), state(conversation), AgentContext(
+                client, events, repository, recursion_limit=25,
+            ))
     assert len(captured) <= 13
     assert events.items[-1]["content"] == {"status": "failed"}
+
+
+@pytest.mark.anyio
+async def test_unlimited_tool_loop_completes_beyond_old_graph_limit(repository, conversation):
+    from langgraph.checkpoint.memory import InMemorySaver
+
+    streams = []
+    for index in range(30):
+        response = tool_response(("hello.txt",))
+        response["response"]["output"][-1]["call_id"] = f"c{index}"
+        streams.append(ModelStream([response]))
+    streams.append(ModelStream([completed("读完了")]))
+    events, captured = MemoryEvents(), []
+    async with client_for(streams, captured) as client:
+        result = await run_agent(
+            build_graph(checkpointer=InMemorySaver()), state(conversation),
+            AgentContext(client, events, repository),
+        )
+    assert len(captured) == 31
+    assert result["messages"][-1]["content"] == "读完了"
+    assert events.items[-1]["content"] == {"status": "completed"}
 
 
 @pytest.mark.sandbox_linux

@@ -1,6 +1,6 @@
 import json
 from pathlib import Path
-from typing import Annotated, Self
+from typing import Annotated, Literal, Self
 
 from pydantic import Field, SecretStr, ValidationError, model_validator
 
@@ -38,6 +38,7 @@ class FrontendConfig(ConfigModel):
 
 
 class AppConfig(ConfigModel):
+    recursion_limit: Literal[-1] | Annotated[int, Field(gt=0)] = -1
     llm: LLMConfig
     api_server: ServerConfig
     llm_router: ServerConfig

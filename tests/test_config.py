@@ -10,6 +10,7 @@ def test_load_config(config_data, tmp_path):
     path.write_text(json.dumps(config_data))
     config = load_config(path)
     assert config.api_server.port == 8000
+    assert config.recursion_limit == -1
     assert config.llm_router.port == 8001
     assert config.llm.default_model == "example:model-name"
     assert config.nats.url == "nats://127.0.0.1:4222"
@@ -19,7 +20,19 @@ def test_load_config(config_data, tmp_path):
     assert "sk-private-test" not in repr(config)
 
 
+@pytest.mark.parametrize("limit", [-1, 1, 25])
+def test_recursion_limit_config(config_data, tmp_path, limit):
+    config_data["recursion_limit"] = limit
+    path = tmp_path / "config.json"
+    path.write_text(json.dumps(config_data))
+    assert load_config(path).recursion_limit == limit
+
+
 @pytest.mark.parametrize("change", [
+    lambda c: c.update(recursion_limit=0),
+    lambda c: c.update(recursion_limit=-2),
+    lambda c: c.update(recursion_limit=True),
+    lambda c: c.update(recursion_limit="25"),
     lambda c: c["api_server"].update(port=True),
     lambda c: c["api_server"].update(port="8000"),
     lambda c: c["api_server"].update(port=0),

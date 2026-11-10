@@ -229,7 +229,7 @@ async def test_strict_arguments_errors_and_tool_definition(tmp_path):
     assert await execute_tool("edit_file", json.dumps(args), workspace=str(tmp_path)) == {
         "error_code": None, "result": {"path": "text.txt", "edits_applied": 1, "bytes_written": 3},
     }
-    definitions = {item["name"]: item for item in tool_definitions()}
+    definitions = {item["name"]: item for item in tool_definitions({"enable_memory": "1"})}
     assert definitions.keys() == TOOLS.keys()
     definition = definitions["edit_file"]
     assert definition["strict"] is True

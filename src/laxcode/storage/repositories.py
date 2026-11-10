@@ -4,13 +4,42 @@ from sqlalchemy import delete, func, select, update
 from sqlalchemy.dialects.postgresql import insert
 
 from laxcode.storage.database import Database, DatabaseError
-from laxcode.storage.models import Memory, Message, Project, Run, Session, SessionMessage, User
+from laxcode.storage.models import Memory, Message, Project, Run, Session, SessionMessage, User, UserConfig
 from laxcode.memory import MemoryCategory, MemoryUnavailableError
 
 
 class Repository:
     def __init__(self, db: Database):
         self.db = db
+
+    async def get_user_configs(self, user_id: str) -> dict[str, str]:
+        async with self.db.transaction() as transaction:
+            configs = await transaction.scalar(select(UserConfig.configs).where(UserConfig.user_id == user_id))
+            return dict(configs or {})
+
+    async def update_user_config(self, user_id: str, key: str, value: str) -> dict[str, str]:
+        statement = insert(UserConfig).values(user_id=user_id, configs={key: value})
+        # Merge in the database, including when concurrent requests create the first row.
+        statement = statement.on_conflict_do_update(
+            index_elements=[UserConfig.user_id],
+            set_={"configs": UserConfig.configs.op("||")(statement.excluded.configs)},
+        ).returning(UserConfig.configs)
+        async with self.db.transaction() as transaction:
+            return dict(await transaction.scalar(statement))
+
+    async def list_memories(self, user_id: str) -> list[dict]:
+        async with self.db.transaction() as transaction:
+            rows = (await transaction.execute(select(
+                Memory.category, Memory.id, Memory.abstract, Memory.detail,
+            ).where(Memory.user_id == user_id).order_by(Memory.id))).mappings()
+            return [dict(row) for row in rows]
+
+    async def delete_memories(self, user_id: str, memory_id: int | None = None) -> None:
+        statement = delete(Memory).where(Memory.user_id == user_id)
+        if memory_id is not None:
+            statement = statement.where(Memory.id == memory_id)
+        async with self.db.transaction() as transaction:
+            await transaction.execute(statement)
 
     async def write_memory(self, *, user_id: str, abstract: str, detail: str,
                            category: MemoryCategory, merge_ids: list[int]) -> dict:

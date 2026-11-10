@@ -71,7 +71,9 @@ async def run_agent(graph, run_id: int, context: AgentContext, *,
             return None
         # Recheck ownership after dispatch; API validation is not execution authorization.
         await context.repository.get_run(run_id, run.user_id)
+        user_configs = await context.repository.get_user_configs(run.user_id)
         state: AgentState = {
+            "user_configs": user_configs,
             "user_id": run.user_id, "project_id": run.project_id, "session_id": run.session_id,
             "run_id": run.id, "user_query": run.user_query, "model": run.model,
             "messages": [], "model_input": [], "pending_tool_calls": [],

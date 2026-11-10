@@ -5,6 +5,15 @@ from typing import Literal
 
 MemoryCategory = Literal["profile", "preference", "instruction", "knowledge", "project", "workflow"]
 
+MEMORY_CATEGORY_LABELS: dict[MemoryCategory, str] = {
+    "profile": "用户背景", "preference": "长期偏好", "instruction": "行为要求",
+    "knowledge": "业务知识", "project": "项目背景", "workflow": "工作方法",
+}
+
+
+def memory_enabled(user_configs: dict[str, str] | None) -> bool:
+    return (user_configs or {}).get("enable_memory") == "1"
+
 MEMORY_CATEGORY_DESCRIPTIONS: dict[MemoryCategory, str] = {
     "profile": "用户明确提供的稳定背景、角色和长期环境，不保存推测的人物画像。",
     "preference": "用户明确表达的长期偏好，保留适用条件和例外。",

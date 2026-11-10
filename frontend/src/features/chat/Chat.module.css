@@ -1,4 +1,4 @@
-.chat { display: flex; flex-direction: column; flex: 1; min-width: 0; height: 100dvh; position: relative; }
+.chat { display: flex; flex-direction: column; flex: 1; min-width: 0; min-height: 0; position: relative; }
 .userIdBar { display: flex; align-items: center; flex-wrap: wrap; column-gap: 4px; row-gap: 2px; padding: 7px 40px 0; min-width: 0; }
 .userIdBar > span:nth-of-type(2) { margin-left: 14px; }
 .userIdBar > span { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; line-height: 20px; color: var(--muted); font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }

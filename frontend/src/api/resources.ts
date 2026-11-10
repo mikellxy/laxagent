@@ -1,8 +1,13 @@
 import { json, request } from './http'
 import { streamRun } from './sse'
-import type { MessagePage, Models, Project, Run, Session, SessionDetail } from './types'
+import type { UserConfigs, Memories, MessagePage, Models, Project, Run, Session, SessionDetail } from './types'
 
 export const api = {
+  userConfigs: (signal?: AbortSignal) => json<UserConfigs>('/user-configs', { signal }),
+  updateUserConfig: (key: string, value: string) => json<UserConfigs>('/user-configs', { method: 'PATCH', body: JSON.stringify({ key, value }) }),
+  memories: (signal?: AbortSignal) => json<Memories>('/memories', { signal }),
+  deleteMemory: async (id: number): Promise<void> => { await request(`/memories/${id}`, { method: 'DELETE' }) },
+  deleteMemories: async (): Promise<void> => { await request('/memories', { method: 'DELETE' }) },
   projects: (signal?: AbortSignal) => json<Project[]>('/projects', { signal }),
   createProject: (name: string) => json<Project>('/projects', { method: 'POST', body: JSON.stringify({ name }) }),
   sessions: (project: number, signal?: AbortSignal) => json<Session[]>(`/projects/${project}/sessions`, { signal }),

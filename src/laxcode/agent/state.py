@@ -10,6 +10,7 @@ class Message(TypedDict):
 
 
 class AgentState(TypedDict):
+    user_configs: dict[str, str]
     workspace: str
     model_input: list[dict]
     pending_tool_calls: list[dict]

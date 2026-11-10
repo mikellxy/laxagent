@@ -18,6 +18,17 @@ class User(Base):
     user_id: Mapped[str] = mapped_column(String(36), unique=True)
 
 
+class UserConfig(Base):
+    __tablename__ = "user_configs"
+    __table_args__ = (
+        CheckConstraint("jsonb_typeof(configs) = 'object'", name="ck_user_configs_object"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, Identity(always=True), primary_key=True)
+    user_id: Mapped[str] = mapped_column(String(36), unique=True)
+    configs: Mapped[dict[str, str]] = mapped_column(JSONB, server_default=text("'{}'::jsonb"))
+
+
 class Memory(Base):
     __tablename__ = "memories"
     __table_args__ = (

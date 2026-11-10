@@ -1,5 +1,5 @@
 from laxcode.context.memory_prompt import MEMORY_RULES
-from laxcode.memory import memory_category_description
+from laxcode.memory import memory_category_description, memory_enabled
 
 
 OPERATION_COMMUNICATION = """操作过程沟通：
@@ -24,11 +24,9 @@ def _base_prompt(workspace: str) -> str:
     )
 
 
-def system_prompt(workspace: str) -> str:
+def system_prompt(workspace: str, user_configs: dict[str, str] | None = None) -> str:
     """Compose prompt sections; future instruction and skill loaders belong here."""
-    return "\n\n".join([
-        _base_prompt(workspace),
-        OPERATION_COMMUNICATION,
-        "长期记忆分类：\n" + memory_category_description(),
-        MEMORY_RULES,
-    ])
+    sections = [_base_prompt(workspace), OPERATION_COMMUNICATION]
+    if memory_enabled(user_configs):
+        sections.extend(["长期记忆分类：\n" + memory_category_description(), MEMORY_RULES])
+    return "\n\n".join(sections)

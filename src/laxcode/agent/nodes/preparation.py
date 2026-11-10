@@ -57,7 +57,7 @@ async def prepare(state: AgentState, runtime: Runtime[AgentContext]):
         user_id=state["user_id"], project_id=state["project_id"], session_id=state["session_id"],
         role="user", content=state["user_query"], load_context=True,
     )
-    messages = [{"role": "system", "content": system_prompt(workspace)}, *messages]
+    messages = [{"role": "system", "content": system_prompt(workspace, state.get("user_configs"))}, *messages]
     return {
         "workspace": workspace, "pending_tool_calls": [],
         "model_input": messages_to_input(messages),

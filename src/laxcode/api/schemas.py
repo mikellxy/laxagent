@@ -4,6 +4,42 @@ from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
+from laxcode.memory import MemoryCategory
+
+
+class UserConfigRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+
+    key: str = Field(min_length=1)
+    value: str
+
+    @field_validator("key")
+    @classmethod
+    def not_blank(cls, value: str) -> str:
+        if not value.strip():
+            raise ValueError("Configuration key must not be blank")
+        return value
+
+
+class UserConfigsResponse(BaseModel):
+    configs: dict[str, str]
+
+
+class MemoryResponse(BaseModel):
+    id: int
+    abstract: str
+    detail: str
+
+
+class MemoryCategoryResponse(BaseModel):
+    category: MemoryCategory
+    label: str
+    items: list[MemoryResponse]
+
+
+class MemoriesResponse(BaseModel):
+    categories: list[MemoryCategoryResponse]
+
 
 class ChatRequest(BaseModel):
     model_config = ConfigDict(extra="forbid", strict=True)

@@ -1,9 +1,11 @@
 import { expect, test, type Page } from '@playwright/test'
-import type { Message, Project, Run, Session } from '../src/api/types'
+import type { MemoryItem, Message, Project, Run, Session } from '../src/api/types'
 
 async function mockAPI(page: Page) {
   let owner = '12345678-1234-4234-8234-123456789abc'
   const state = {
+    configs: {} as Record<string, string>, configFailures: 0, memoryFailures: 0, memoryDeleteFailures: 0,
+    memories: [] as (MemoryItem & { category: string })[],
     projects: [] as Project[], sessions: [] as Session[], messages: new Map<number, Message[]>(),
     posts: [] as { path: string; body: any }[], historyReads: [] as number[],
     runs: new Map<number, Run>(), deletions: [] as number[], deleteFailures: 0, cancelFailures: 0,
@@ -23,6 +25,22 @@ async function mockAPI(page: Page) {
         state.messages.set(1, [])
       }
       return reply({ access_token: token, token_type: 'bearer', expires_in: 86400, initial_session_id: body.from_page ? 1 : null })
+    }
+    if (path === '/user-configs') {
+      if (state.configFailures-- > 0) return reply({ detail: '配置保存失败，请重试' }, 503)
+      if (method === 'PATCH') state.configs[body.key] = body.value
+      return reply({ configs: state.configs })
+    }
+    if (path === '/memories' || path.startsWith('/memories/')) {
+      if (method === 'DELETE') {
+        if (state.memoryDeleteFailures-- > 0) return reply({ detail: '记忆删除失败，请重试' }, 503)
+        state.memories = path === '/memories' ? [] : state.memories.filter(item => item.id !== Number(path.split('/').at(-1)))
+        return route.fulfill({ status: 204 })
+      }
+      if (state.memoryFailures-- > 0) return reply({ detail: '记忆加载失败，请重试' }, 503)
+      return reply({ categories: Object.entries({ profile: '用户背景', preference: '长期偏好', instruction: '行为要求', knowledge: '业务知识', project: '项目背景', workflow: '工作方法' }).map(([category, label]) => ({
+        category, label, items: state.memories.filter(item => item.category === category).map(({ category: _, ...item }) => item),
+      })) })
     }
     if (path === '/models') return reply({ default_model: 'p:a', models: ['a', 'b', 'c'].map(name => ({ id: `p:${name}`, provider: 'p', name })) })
     if (path === '/projects') {
@@ -312,4 +330,110 @@ test('composer cancels without confirmation and delete stops a running session',
   await expect(page.getByLabel('聊天', { exact: true })).toHaveCount(0)
   expect(state.runs.get(11)?.status).toBe('cancelled')
   expect(state.posts.filter(p => p.path.endsWith('/cancel'))).toHaveLength(2)
+})
+
+
+test('memory switch persists across sessions and reload, with save failure recovery', async ({ page }) => {
+  const state = await mockAPI(page)
+  await page.goto('/')
+  await page.getByRole('button', { name: '以游客登录' }).click()
+  const toggle = page.getByRole('switch', { name: '记忆', exact: true })
+  await expect(toggle).toBeEnabled()
+  await expect(toggle).toHaveAttribute('aria-checked', 'false')
+  state.configFailures = 1
+  await toggle.click()
+  await expect(page.getByRole('alert')).toContainText('配置保存失败')
+  await expect(toggle).toHaveAttribute('aria-checked', 'false')
+  await toggle.click()
+  await expect(toggle).toHaveAttribute('aria-checked', 'true')
+  expect(state.configs.enable_memory).toBe('1')
+  await page.getByRole('button', { name: 'LaxCode 新会话', exact: true }).click()
+  await expect(toggle).toHaveAttribute('aria-checked', 'true')
+  await page.reload()
+  await expect(toggle).toHaveAttribute('aria-checked', 'true')
+  await toggle.click()
+  await expect(toggle).toHaveAttribute('aria-checked', 'false')
+  await page.getByRole('button', { name: '查看记忆', exact: true }).click()
+  await expect(page.getByRole('dialog', { name: '用户记忆', exact: true })).toBeVisible()
+})
+
+test('memory drawer groups, full text, deletion failures, focus and responsive layout', async ({ page }) => {
+  const state = await mockAPI(page)
+  const longText = '<script>alert(1)</script> 长期项目的完整背景、范围和条件。'.repeat(30)
+  state.memories = [
+    { id: 10, category: 'profile', abstract: '用户背景摘要'.repeat(30), detail: longText },
+    { id: 11, category: 'preference', abstract: '偏好摘要', detail: '偏好详情' },
+  ]
+  await page.goto('/')
+  await page.getByRole('button', { name: '以游客登录' }).click()
+  const open = page.getByRole('button', { name: '查看记忆', exact: true })
+  await open.click()
+  const drawer = page.getByRole('dialog', { name: '用户记忆', exact: true })
+  await expect(drawer).toBeVisible()
+  await expect(drawer.getByRole('region')).toHaveCount(6)
+  const box = await drawer.boundingBox()
+  expect(box!.width).toBeCloseTo(480, 0)
+  const preview = drawer.getByRole('button', { name: '记忆 10 详情', exact: true })
+  expect(await preview.evaluate(element => element.scrollWidth > element.clientWidth)).toBe(true)
+  await preview.hover()
+  const tooltip = page.getByRole('tooltip').filter({ hasText: '<script>alert(1)</script>' })
+  await expect(tooltip).toBeVisible()
+  await expect(tooltip).toHaveText(longText)
+  await preview.focus()
+  await expect(tooltip).toBeVisible()
+  await page.keyboard.press('Escape')
+  await expect(drawer).toBeVisible()
+  await drawer.getByRole('button', { name: '删除记忆 10', exact: true }).click()
+  let confirmation = page.getByRole('dialog', { name: '删除记忆 10？', exact: true })
+  await expect(confirmation).toBeVisible()
+  await expect(confirmation).toContainText('运行中的任务仍可能生成新记忆')
+  await confirmation.getByRole('button', { name: '取消', exact: true }).click()
+  expect(state.memories).toHaveLength(2)
+  await drawer.getByRole('button', { name: '删除记忆 10', exact: true }).click()
+  state.memoryDeleteFailures = 1
+  await confirmation.getByRole('button', { name: '确认删除', exact: true }).click()
+  await expect(confirmation.getByRole('alert')).toContainText('记忆删除失败')
+  expect(state.memories).toHaveLength(2)
+  await confirmation.getByRole('button', { name: '确认删除', exact: true }).click()
+  await expect(drawer.getByRole('button', { name: '删除记忆 10', exact: true })).toHaveCount(0)
+  await drawer.getByRole('button', { name: '全部删除', exact: true }).click()
+  confirmation = page.getByRole('dialog', { name: '删除全部记忆？', exact: true })
+  await confirmation.getByRole('button', { name: '确认删除', exact: true }).click()
+  await expect(drawer.getByText('0 条记忆', { exact: true })).toBeVisible()
+  await expect(drawer.getByRole('button', { name: '全部删除', exact: true })).toBeDisabled()
+  await page.keyboard.press('Escape')
+  await expect(drawer).toHaveCount(0)
+  await expect(open).toBeFocused()
+  await page.setViewportSize({ width: 390, height: 844 })
+  state.memories = [{ id: 12, category: 'profile', abstract: '小屏摘要', detail: longText }]
+  await open.click()
+  await expect(drawer).toBeVisible()
+  await expect(drawer.getByRole('button', { name: '记忆 12 详情', exact: true })).toBeVisible()
+  expect((await drawer.boundingBox())!.width).toBe(390)
+  await drawer.getByRole('button', { name: '记忆 12 详情', exact: true }).click()
+  await expect(page.getByRole('tooltip').filter({ hasText: '<script>alert(1)</script>' })).toBeVisible()
+  await page.screenshot({ path: 'test-results/memory-drawer-mobile.png' })
+})
+
+test('memory management remains available without a session and supports load retry', async ({ page }) => {
+  const state = await mockAPI(page)
+  await page.goto('/')
+  await page.getByRole('button', { name: '以游客登录' }).click()
+  await expect(page.getByRole('textbox', { name: '消息输入' })).toBeVisible()
+  state.sessions = []
+  state.configFailures = 1
+  state.memoryFailures = 1
+  await page.reload()
+  await expect(page.getByRole('button', { name: '重试配置', exact: true })).toBeVisible()
+  await page.getByRole('button', { name: '重试配置', exact: true }).click()
+  await expect(page.getByRole('switch', { name: '记忆', exact: true })).toBeEnabled()
+  await page.getByRole('button', { name: '查看记忆', exact: true }).click()
+  const drawer = page.getByRole('dialog', { name: '用户记忆', exact: true })
+  await expect(drawer.getByRole('alert')).toContainText('记忆加载失败')
+  await drawer.getByRole('button', { name: '重试加载', exact: true }).click()
+  await expect(drawer.getByText('0 条记忆', { exact: true })).toBeVisible()
+  await expect(drawer.getByRole('region')).toHaveCount(6)
+  state.memories = [{ id: 8, category: 'workflow', abstract: '操作方法', detail: '操作方法详情' }]
+  await drawer.getByRole('button', { name: '刷新', exact: true }).click()
+  await expect(drawer.getByRole('button', { name: '记忆 8 摘要', exact: true })).toBeVisible()
 })

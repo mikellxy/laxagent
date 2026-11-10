@@ -3,6 +3,8 @@ from dataclasses import dataclass
 
 from pydantic import BaseModel
 
+from laxcode.memory import memory_enabled
+
 from laxcode.tools.builtin.bash import BashArgs, bash
 from laxcode.tools.builtin.edit_file import EditFileArgs, edit_file
 from laxcode.tools.builtin.read_file import ReadFileArgs, read_file
@@ -31,7 +33,20 @@ TOOLS = {
 }
 
 
-def tool_definitions() -> list[dict]:
+MEMORY_TOOLS = frozenset({"write_memory", "list_memory_abstracts", "get_memory_details"})
+
+
+def available_tools(user_configs: dict[str, str] | None = None) -> dict[str, Tool]:
+    enabled = memory_enabled(user_configs)
+    return {name: tool for name, tool in TOOLS.items() if enabled or name not in MEMORY_TOOLS}
+
+
+def tool_definitions(user_configs: dict[str, str] | None = None) -> list[dict]:
+    available = available_tools(user_configs)
+    return [definition for definition in _all_tool_definitions() if definition["name"] in available]
+
+
+def _all_tool_definitions() -> list[dict]:
     return [{
         "type": "function", "name": "read_file", "strict": True,
         "description": (

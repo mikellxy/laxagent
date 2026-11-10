@@ -200,7 +200,7 @@ async def test_executor_validation_results_and_guidance(tmp_path, monkeypatch):
 
 
 def test_definitions_match_registry():
-    definitions = {item["name"]: item for item in tool_definitions()}
+    definitions = {item["name"]: item for item in tool_definitions({"enable_memory": "1"})}
     assert definitions.keys() == TOOLS.keys()
     definition = definitions["write_file"]
     assert definition["strict"] is True

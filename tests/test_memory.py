@@ -46,7 +46,7 @@ def tool_response(name, arguments, call_id="call_memory"):
 def test_memory_schema_has_no_identity_and_matches_prompt_categories():
     categories = set(get_args(MemoryCategory))
     assert categories == set(MEMORY_CATEGORY_DESCRIPTIONS)
-    definitions = {item["name"]: item for item in tool_definitions()}
+    definitions = {item["name"]: item for item in tool_definitions({"enable_memory": "1"})}
     for name in ("write_memory", "list_memory_abstracts", "get_memory_details"):
         schema = definitions[name]["parameters"]
         assert definitions[name]["strict"] is True
@@ -55,7 +55,7 @@ def test_memory_schema_has_no_identity_and_matches_prompt_categories():
         assert set(schema["required"]) == set(schema["properties"])
     assert set(definitions["write_memory"]["parameters"]["properties"]["category"]["enum"]) == categories
     assert set(definitions["list_memory_abstracts"]["parameters"]["properties"]["categories"]["items"]["enum"]) == categories
-    prompt = system_prompt("/workspace")
+    prompt = system_prompt("/workspace", {"enable_memory": "1"})
     for category in categories:
         assert f"- {category}:" in prompt
 
@@ -82,14 +82,14 @@ def test_memory_schema_has_no_identity_and_matches_prompt_categories():
     ("get_memory_details", {"ids": [1], "user_id": "forged"}),
 ])
 async def test_invalid_memory_arguments_are_rejected_before_execution(name, args):
-    assert await execute_tool(name, json.dumps(args), workspace="/unused") == {
+    assert await execute_tool(name, json.dumps(args), workspace="/unused", user_configs={"enable_memory": "1"}) == {
         "error_code": "INVALID_ARGUMENTS", "result": {},
     }
 
 
 @pytest.mark.anyio
 async def test_memory_requires_trusted_context():
-    assert await execute_tool("write_memory", json.dumps(write_args()), workspace="/unused") == {
+    assert await execute_tool("write_memory", json.dumps(write_args()), workspace="/unused", user_configs={"enable_memory": "1"}) == {
         "error_code": "TOOL_CONTEXT_UNAVAILABLE", "result": {},
     }
 
@@ -136,18 +136,18 @@ async def test_reads_are_user_scoped_ordered_and_complete(repository, conversati
     foreign = await repository.write_memory(user_id=other_user, **write_args(category="profile", detail="private"))
     context = ToolContext(user, repository)
     result = await execute_tool("list_memory_abstracts", json.dumps({"categories": ["project", "profile", "profile"]}),
-                                workspace="/unused", context=context)
+                                workspace="/unused", user_configs={"enable_memory": "1"}, context=context)
     assert result == {"error_code": None, "result": {"memory_abstracts": [
         {key: memory[key] for key in ("category", "id", "abstract")} for memory in (second, third, first)
     ]}}
     details = await execute_tool("get_memory_details", json.dumps({"ids": [third["id"], first["id"], third["id"]]}),
-                                workspace="/unused", context=context)
+                                workspace="/unused", user_configs={"enable_memory": "1"}, context=context)
     assert details == {"error_code": None, "result": {"memory_list": [
         {key: memory[key] for key in ("category", "id", "detail")} for memory in (third, first)
     ]}}
     for unavailable in (foreign["id"], 2**31 - 1):
         result = await execute_tool("get_memory_details", json.dumps({"ids": [first["id"], unavailable]}),
-                                    workspace="/unused", context=context)
+                                    workspace="/unused", user_configs={"enable_memory": "1"}, context=context)
         assert result == {"error_code": "MEMORY_UNAVAILABLE", "result": {}}
     assert await repository.list_memory_abstracts(user_id=user, categories=["workflow"]) == []
 
@@ -158,7 +158,7 @@ async def test_replacement_reclassifies_and_merge_deduplicates_ids(repository, c
     context = ToolContext(user, repository)
     async def write(**changes):
         response = await execute_tool("write_memory", json.dumps(write_args(**changes)),
-                                      workspace="/unused", context=context)
+                                      workspace="/unused", user_configs={"enable_memory": "1"}, context=context)
         assert response["error_code"] is None
         return response["result"]
 
@@ -190,7 +190,7 @@ async def test_invalid_merge_changes_nothing(repository, conversation, target):
         bad_id = old["id"]
     before = await memories(repository)
     result = await execute_tool("write_memory", json.dumps(write_args(merge_ids=[owned["id"], bad_id])),
-                                workspace="/unused", context=ToolContext(user, repository))
+                                workspace="/unused", user_configs={"enable_memory": "1"}, context=ToolContext(user, repository))
     assert result == {"error_code": "MEMORY_UNAVAILABLE", "result": {}}
     assert await memories(repository) == before
 
@@ -208,7 +208,7 @@ async def test_failure_after_delete_rolls_back_new_memory_and_old_deletions(repo
     event.listen(repository.db.engine.sync_engine, "after_cursor_execute", fail)
     try:
         result = await execute_tool("write_memory", json.dumps(write_args(merge_ids=[old["id"]])),
-                                    workspace="/unused", context=ToolContext(user, repository))
+                                    workspace="/unused", user_configs={"enable_memory": "1"}, context=ToolContext(user, repository))
     finally:
         event.remove(repository.db.engine.sync_engine, "after_cursor_execute", fail)
     assert result == {"error_code": "MEMORY_STORAGE_FAILED", "result": {}}
@@ -233,6 +233,7 @@ async def test_concurrent_overlapping_merges_have_one_winner(repository, convers
 
 @pytest.mark.anyio
 async def test_graph_reads_updates_and_reuses_memory_across_sessions(repository, conversation):
+    await repository.update_user_config(conversation["user_id"], "enable_memory", "1")
     old = await repository.write_memory(user_id=conversation["user_id"], **write_args())
     events, captured = MemoryEvents(), []
     streams = [ModelStream([response]) for response in [
@@ -269,6 +270,7 @@ async def test_graph_reads_updates_and_reuses_memory_across_sessions(repository,
 @pytest.mark.anyio
 @pytest.mark.parametrize("failure", ["database", "event"])
 async def test_committed_memory_survives_message_or_event_failure(repository, conversation, failure):
+    await repository.update_user_config(conversation["user_id"], "enable_memory", "1")
     def fail(mapper, connection, message):
         if message.role == "tool":
             raise IntegrityError("forced failure", {}, RuntimeError("test"))

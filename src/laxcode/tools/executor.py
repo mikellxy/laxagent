@@ -3,7 +3,7 @@ import inspect
 import json
 
 from laxcode.tools.errors import ToolError
-from laxcode.tools.registry import TOOLS
+from laxcode.tools.registry import available_tools
 from laxcode.tools.context import ToolContext
 from laxcode.memory import MemoryUnavailableError
 from laxcode.storage.database import DatabaseError
@@ -26,8 +26,9 @@ async def run_sync_tool(execute, target, args):
             raise asyncio.CancelledError
 
 
-async def execute_tool(name: str, arguments: str, *, workspace: str, context: ToolContext | None = None) -> dict:
-    tool = TOOLS.get(name)
+async def execute_tool(name: str, arguments: str, *, workspace: str, context: ToolContext | None = None,
+                       user_configs: dict[str, str] | None = None) -> dict:
+    tool = available_tools(user_configs).get(name)
     if tool is None:
         return {"error_code": "UNKNOWN_TOOL", "result": {}}
     try:

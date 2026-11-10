@@ -17,3 +17,7 @@ export interface StreamEvent {
   channel?: 'text' | 'summary'
 }
 export interface LoginResponse { access_token: string; token_type: string; expires_in: number; initial_session_id: number | null }
+
+export interface UserConfigs { configs: Record<string, string> }
+export interface MemoryItem { id: number; abstract: string; detail: string }
+export interface Memories { categories: { category: string; label: string; items: MemoryItem[] }[] }

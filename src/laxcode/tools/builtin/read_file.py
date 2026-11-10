@@ -7,6 +7,7 @@ from pathlib import Path
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from laxcode.tools.context import ToolContext
 from laxcode.tools.errors import ToolError
 
 MAX_LINES = 2000
@@ -47,9 +48,9 @@ def open_workspace_file(workspace: str, path: str):
         os.close(directory)
 
 
-def read_file(workspace: str, args: ReadFileArgs) -> dict:
+def read_file(context: ToolContext, args: ReadFileArgs) -> dict:
     try:
-        with open_workspace_file(workspace, args.path) as file:
+        with open_workspace_file(context.workspace, args.path) as file:
             for _ in range(args.start_line_no - 1):
                 while True:
                     chunk = file.readline(8192)

@@ -5,7 +5,7 @@ from typing import Literal
 import httpx2
 from openai import APIError, AsyncOpenAI
 
-from laxcode.models.errors import ModelError
+from laxcode.run_errors import make_run_error
 
 
 @dataclass(frozen=True)
@@ -20,7 +20,7 @@ class ModelEvent:
 
 def completed_content(response: dict) -> str:
     if response.get("status") != "completed":
-        raise ModelError("Invalid completed response")
+        raise make_run_error("invalid_completed_response")
     parts = []
     found_message = False
     for item in response["output"]:
@@ -30,7 +30,7 @@ def completed_content(response: dict) -> str:
             found_message = True
             continue
         if item["type"] != "message" or item["role"] != "assistant":
-            raise ModelError("Unsupported model output")
+            raise make_run_error("unsupported_model_output")
         found_message = True
         for part in item["content"]:
             if part["type"] == "output_text":
@@ -38,9 +38,9 @@ def completed_content(response: dict) -> str:
             elif part["type"] == "refusal":
                 parts.append(part["refusal"])
             else:
-                raise ModelError("Unsupported assistant content")
+                raise make_run_error("unsupported_assistant_content")
     if not found_message:
-        raise ModelError("Completed response contains no assistant message")
+        raise make_run_error("missing_assistant_message")
     return "".join(parts)
 
 
@@ -53,7 +53,7 @@ def completed_tool_calls(response: dict) -> list[dict]:
         call = {key: item[key] for key in ("call_id", "name", "arguments")}
         if (not all(isinstance(value, str) for value in call.values())
                 or not call["call_id"] or not call["name"] or call["call_id"] in ids):
-            raise ModelError("Invalid tool call")
+            raise make_run_error("invalid_tool_call")
         ids.add(call["call_id"])
         calls.append(call)
     return calls
@@ -106,7 +106,7 @@ def messages_to_input(messages: list[dict]) -> list[dict]:
 
 def append_model_response(model_input: list[dict], event: ModelEvent) -> list[dict]:
     if event.type != "completed" or event.output is None:
-        raise ModelError("Expected completed model event with output")
+        raise make_run_error("missing_completed_model_output")
     return [*model_input, *event.output]
 
 
@@ -134,7 +134,7 @@ async def stream_response(
                         started = True
                 elif kind in ("response.output_item.added", "response.output_item.done"):
                     if event["item"]["type"] not in ("message", "reasoning", "function_call"):
-                        raise ModelError("Unsupported model output")
+                        raise make_run_error("unsupported_model_output")
                 elif kind == "response.output_text.delta":
                     yield ModelEvent("text_delta", text=delta_text(event))
                 elif kind in ("response.reasoning_text.delta", "response.reasoning_summary_text.delta"):
@@ -152,20 +152,22 @@ async def stream_response(
                 elif kind == "response.incomplete":
                     details = event["response"].get("incomplete_details") or {}
                     reason = details.get("reason")
-                    if reason not in ("max_output_tokens", "content_filter"):
-                        reason = "unspecified"
-                    raise ModelError(f"Model response incomplete: {reason}", incomplete=True)
+                    if reason == "max_output_tokens":
+                        raise make_run_error("model_incomplete_max_output_tokens")
+                    if reason == "content_filter":
+                        raise make_run_error("model_incomplete_content_filter")
+                    raise make_run_error("model_incomplete_unspecified")
                 elif kind in ("response.failed", "error"):
-                    raise ModelError("Model stream failed")
-        raise ModelError("Model stream ended without response.completed")
+                    raise make_run_error("model_stream_failed")
+        raise make_run_error("model_stream_ended")
     except (APIError, httpx2.HTTPError):
-        raise ModelError("Model request failed") from None
+        raise make_run_error("model_request_failed") from None
     except (KeyError, TypeError, ValueError, AttributeError):
-        raise ModelError("Invalid model stream") from None
+        raise make_run_error("invalid_model_stream") from None
 
 
 def delta_text(event: dict) -> str:
     text = event["delta"]
     if not isinstance(text, str):
-        raise ModelError("Invalid model stream")
+        raise make_run_error("invalid_model_stream")
     return text

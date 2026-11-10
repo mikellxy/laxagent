@@ -5,11 +5,12 @@ import pytest
 
 from laxcode.tools.builtin.read_file import MAX_BYTES, ReadFileArgs, ReadFileError, read_file
 from laxcode.tools.executor import execute_tool
+from tool_helpers import tool_context
 from laxcode.tools.results import format_result
 
 
 def read(workspace, path="text.txt", line=1, byte=1, lines=2000):
-    return read_file(str(workspace), ReadFileArgs(
+    return read_file(tool_context(workspace), ReadFileArgs(
         path=path, start_line_no=line, start_byte_no=byte, total_lines=lines,
     ))
 
@@ -90,11 +91,11 @@ def test_workspace_boundary_and_special_files(tmp_path):
 @pytest.mark.anyio
 async def test_executor_errors_and_guidance(tmp_path):
     args = {"path": "missing", "start_line_no": 1, "start_byte_no": 1, "total_lines": 1}
-    result = await execute_tool("read_file", json.dumps(args), workspace=str(tmp_path))
+    result = await execute_tool("read_file", json.dumps(args), context=tool_context(tmp_path))
     assert result == {"error_code": "FILE_NOT_FOUND", "result": {}}
     assert format_result(result).startswith("文件不存在")
     assert "FILE_NOT_FOUND" in format_result(result)
     for invalid in ["{", "[]", json.dumps({**args, "start_byte_no": True}), json.dumps({**args, "extra": 1})]:
-        result = await execute_tool("read_file", invalid, workspace=str(tmp_path))
+        result = await execute_tool("read_file", invalid, context=tool_context(tmp_path))
         assert result["error_code"] == "INVALID_ARGUMENTS"
-    assert (await execute_tool("missing", "{}", workspace=str(tmp_path)))["error_code"] == "UNKNOWN_TOOL"
+    assert (await execute_tool("missing", "{}", context=tool_context(tmp_path)))["error_code"] == "UNKNOWN_TOOL"

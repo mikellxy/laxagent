@@ -10,6 +10,7 @@ from laxcode.agent.graph import build_graph
 from laxcode.context.prompts import system_prompt
 from laxcode.memory import MEMORY_CATEGORY_LABELS, MemoryUnavailableError
 from laxcode.storage.database import DatabaseError
+from laxcode.run_errors import RunError
 from laxcode.storage.models import UserConfig
 from laxcode.tools.context import ToolContext
 from laxcode.tools.executor import execute_tool
@@ -122,8 +123,8 @@ async def test_disabled_definitions_prompt_and_forged_calls(configs, repository,
     assert not MEMORY_TOOLS.intersection(t['name'] for t in tool_definitions(configs))
     assert '长期记忆' not in system_prompt('/workspace', configs)
     for name in MEMORY_TOOLS:
-        result = await execute_tool(name, '{}', workspace='/unused', user_configs=configs,
-                                    context=ToolContext(conversation['user_id'], repository))
+        result = await execute_tool(name, '{}', user_configs=configs,
+                                    context=ToolContext(conversation['user_id'], repository, workspace='/unused'))
         assert result == {'error_code': 'UNKNOWN_TOOL', 'result': {}}
     assert await repository.list_memories(conversation['user_id']) == []
 
@@ -190,7 +191,7 @@ async def test_config_read_failure_fails_run_before_model(repository, conversati
     monkeypatch.setattr(repository, 'get_user_configs', fail)
     captured, events = [], MemoryEvents()
     async with client_for(ModelStream([completed()]), captured) as client:
-        with pytest.raises(DatabaseError):
+        with pytest.raises(RunError, match="Run data operation failed"):
             await run_agent(build_graph(), state(conversation), AgentContext(client, events, repository))
     assert captured == []
     assert events.items[-1]['content'] == {'status': 'failed'}

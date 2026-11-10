@@ -2,6 +2,7 @@ import asyncio
 import logging
 from weakref import WeakValueDictionary
 
+from laxcode.run_errors import make_run_error
 from laxcode.runtime.events import EventStoreError, make_event
 from laxcode.runtime.runner import fail_run, run_agent
 from laxcode.storage.database import DatabaseError
@@ -64,7 +65,7 @@ class TaskManager:
             task.add_done_callback(self.consume)
             return run
         except BaseException:
-            await fail_run(run.id, self.context, "Run submission failed")
+            await fail_run(run.id, self.context, make_run_error("run_submission_failed"))
             raise
 
     async def control(self, operation, *args):
@@ -136,4 +137,4 @@ class TaskManager:
         await asyncio.gather(*(task for _, task in active), return_exceptions=True)
         for run_id, _ in active:
             # Covers a task cancelled before its coroutine entered run_agent.
-            await fail_run(run_id, self.context, "Execution cancelled", cancelled=True)
+            await fail_run(run_id, self.context, make_run_error("execution_cancelled"), cancelled=True)

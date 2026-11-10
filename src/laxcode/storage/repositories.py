@@ -3,6 +3,7 @@ from uuid import uuid4
 from sqlalchemy import delete, func, select, update
 from sqlalchemy.dialects.postgresql import insert
 
+from laxcode.run_errors import RunError, make_run_error, registered_run_error
 from laxcode.storage.database import Database, DatabaseError
 from laxcode.storage.models import Memory, Message, Project, Run, Session, SessionMessage, User, UserConfig
 from laxcode.memory import MemoryCategory, MemoryUnavailableError
@@ -166,18 +167,19 @@ class Repository:
             ).values(status="running", started_at=func.now()).returning(Run))
         return run
 
-    async def finish_run(self, run_id: int, *, error: str | None = None, cancelled=False) -> bool:
+    async def finish_run(self, run_id: int, *, error: RunError | None = None, cancelled=False) -> bool:
+        message = str(registered_run_error(error)) if error is not None else None
         async with self.db.transaction() as transaction:
             result = await transaction.execute(update(Run).where(
                 Run.id == run_id, Run.status.in_(["waiting", "running"]),
             ).values(status="cancelled" if cancelled else "failed" if error is not None else "success",
-                     finished_at=func.now(), error=error))
+                     finished_at=func.now(), error=message))
         return result.rowcount == 1
 
     async def fail_interrupted_runs(self):
         async with self.db.transaction() as transaction:
             await transaction.execute(update(Run).where(Run.status.in_(["waiting", "running"])).values(
-                status="failed", finished_at=func.now(), error="Service execution interrupted",
+                status="failed", finished_at=func.now(), error=str(make_run_error("service_execution_interrupted")),
             ))
 
     async def create_user(self, user_id: str) -> User:

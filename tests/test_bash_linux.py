@@ -16,6 +16,7 @@ import pytest
 
 from laxcode.sandbox import bubblewrap as backend
 from laxcode.tools.executor import execute_tool
+from tool_helpers import tool_context
 
 pytestmark = [pytest.mark.sandbox_linux, pytest.mark.anyio]
 
@@ -34,7 +35,7 @@ def area():
 
 async def run(workspace, command, timeout=None):
     return await execute_tool("bash", json.dumps({"command": command, "timeout_seconds": timeout}),
-                              workspace=str(workspace))
+                              context=tool_context(workspace))
 
 
 async def wait_file(path):
@@ -257,7 +258,9 @@ async def test_parent_crash_cleans_sandbox(area):
     token = "laxcode-" + uuid4().hex
     command = f"touch ready; setsid bash -c 'trap \"\" TERM; while :; do sleep 1; done' {token} & wait"
     code = ("import asyncio,sys; from laxcode.tools.builtin.bash import BashArgs,bash; "
-            "asyncio.run(bash(sys.argv[1],BashArgs(command=sys.argv[2],timeout_seconds=None)))")
+            "from unittest.mock import Mock; from laxcode.tools.context import ToolContext; "
+            "asyncio.run(bash(ToolContext('test-user',Mock(),sys.argv[1]),"
+            "BashArgs(command=sys.argv[2],timeout_seconds=None)))")
     worker = await asyncio.create_subprocess_exec(sys.executable, "-c", code, str(area[1]), command,
                                                    stdout=asyncio.subprocess.DEVNULL, stderr=asyncio.subprocess.DEVNULL)
     try:

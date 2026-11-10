@@ -96,6 +96,7 @@ async def test_protocol_events_and_authoritative_completed_text():
 @pytest.mark.parametrize("upstream,incomplete", [
     ([], False),
     ([{"type": "response.incomplete", "response": {"incomplete_details": {"reason": "max_output_tokens"}}}], True),
+    ([{"type": "response.incomplete", "response": {"incomplete_details": {"reason": "content_filter"}}}], True),
     ([{"type": "response.incomplete", "response": {"incomplete_details": {"reason": "secret-key"}}}], True),
     ([{"type": "response.failed", "response": {"error": {"message": "secret-key"}}}], False),
     ([{"type": "response.output_text.delta", "delta": None}], False),

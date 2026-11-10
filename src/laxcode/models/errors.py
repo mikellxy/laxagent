@@ -1,4 +1,4 @@
-class ModelError(Exception):
-    def __init__(self, message: str, *, incomplete=False):
-        super().__init__(message)
-        self.incomplete = incomplete
+"""Compatibility import for model callers; definitions live in the run catalog."""
+from laxcode.run_errors import ModelError
+
+__all__ = ["ModelError"]

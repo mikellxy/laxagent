@@ -12,10 +12,9 @@ from laxcode.agent.context import AgentContext
 from laxcode.agent.graph import build_graph
 from laxcode.models.responses import messages_to_input
 from laxcode.models.errors import ModelError
-from laxcode.runtime.events import EventStoreError
+from laxcode.run_errors import RunError
 from laxcode.runtime.task_manager import TaskManager
 from storage_helpers import run_agent
-from laxcode.storage.database import DatabaseError
 from laxcode.storage.models import SessionMessage
 from model_helpers import ModelStream, client_for, completed
 from storage_helpers import message_snapshot
@@ -190,7 +189,8 @@ async def test_written_file_survives_result_persistence_or_event_failure(reposit
         event.listen(SessionMessage, "before_insert", fail)
     try:
         async with client_for(ModelStream([response]), []) as client:
-            with pytest.raises(DatabaseError if failure == "database" else EventStoreError):
+            message = "Run data operation failed" if failure == "database" else "Event storage unavailable"
+            with pytest.raises(RunError, match=message):
                 await run_agent(build_graph(), state(conversation), AgentContext(client, events, repository))
     finally:
         if failure == "database":
@@ -222,7 +222,7 @@ async def test_tool_error_is_persisted_and_other_calls_continue(repository, conv
 async def test_tool_publish_failure_stops_without_second_call(repository, conversation, fail_at, expected_count):
     events, captured = MemoryEvents(fail_at), []
     async with client_for(ModelStream([tool_response()]), captured) as client:
-        with pytest.raises(EventStoreError):
+        with pytest.raises(RunError, match="Event storage unavailable"):
             await run_agent(build_graph(), state(conversation), AgentContext(client, events, repository))
     next_seq, tables = await message_snapshot(repository, conversation["session_id"])
     assert tables[0] == tables[1] and len(tables[0]) == expected_count
@@ -240,7 +240,7 @@ async def test_tool_transaction_failure_rolls_back_and_never_emits_end(repositor
     events = MemoryEvents()
     try:
         async with client_for(ModelStream([tool_response()]), []) as client:
-            with pytest.raises(DatabaseError):
+            with pytest.raises(RunError, match="Run data operation failed"):
                 await run_agent(build_graph(), state(conversation), AgentContext(client, events, repository))
     finally:
         event.remove(SessionMessage, "before_insert", fail)

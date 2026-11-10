@@ -9,7 +9,7 @@ from laxcode import layout
 from laxcode.context.prompts import system_prompt
 from laxcode.agent.context import AgentContext
 from laxcode.agent.state import AgentState
-from laxcode.models.errors import ModelError
+from laxcode.run_errors import make_run_error
 from laxcode.models.responses import messages_to_input
 
 
@@ -48,7 +48,7 @@ def initialize_workspace(state: AgentState) -> str:
             _ensure_directory(Path.home(), path)
         return str(workspace)
     except (OSError, ValueError):
-        raise ModelError("Workspace initialization failed") from None
+        raise make_run_error("workspace_initialization_failed") from None
 
 
 async def prepare(state: AgentState, runtime: Runtime[AgentContext]):

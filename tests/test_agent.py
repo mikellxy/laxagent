@@ -11,9 +11,9 @@ from laxcode.agent.context import AgentContext
 from laxcode.agent.graph import build_graph
 from laxcode.context.prompts import system_prompt
 from laxcode.models.errors import ModelError
+from laxcode.run_errors import RunError
 from laxcode.runtime.events import EventStoreError
 from storage_helpers import run_agent
-from laxcode.storage.database import DatabaseError
 from laxcode.storage.models import Message
 from model_helpers import ModelStream, client_for, completed
 from storage_helpers import message_snapshot
@@ -139,7 +139,7 @@ async def test_publish_failure_closes_model_stream_without_success(fail_at, repo
     stream = ModelStream([{"type": "response.output_text.delta", "delta": "partial"}, completed()])
     events = MemoryEvents(fail_at=fail_at)
     async with client_for(stream, []) as client:
-        with pytest.raises(EventStoreError):
+        with pytest.raises(RunError, match="Event storage unavailable"):
             await run_agent(build_graph(), state(conversation), AgentContext(client, events, repository))
     assert stream.closed
     assert not any(e["type"] == "message_end" for e in events.items)
@@ -178,7 +178,7 @@ async def test_assistant_database_failure_never_publishes_message_end(repository
     events = MemoryEvents()
     try:
         async with client_for(stream, []) as client:
-            with pytest.raises(DatabaseError):
+            with pytest.raises(RunError, match="Run data operation failed"):
                 await run_agent(build_graph(), state(conversation), AgentContext(client, events, repository))
     finally:
         event.remove(Message, "before_insert", fail_assistant)

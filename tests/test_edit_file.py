@@ -9,6 +9,7 @@ import pytest
 
 from laxcode.tools.builtin.edit_file import EditFileArgs, EditFileError, TextEdit, edit_file
 from laxcode.tools.executor import execute_tool
+from tool_helpers import tool_context
 from laxcode.tools.registry import TOOLS, tool_definitions
 from laxcode.tools.results import format_result
 
@@ -17,7 +18,7 @@ filesystem = importlib.import_module("laxcode.tools.workspace")
 
 
 def edit(workspace, pairs, path="text.txt"):
-    return edit_file(str(workspace), EditFileArgs(
+    return edit_file(tool_context(workspace), EditFileArgs(
         path=path, edits=[TextEdit(old_text=old, new_text=new) for old, new in pairs],
     ))
 
@@ -215,18 +216,18 @@ async def test_strict_arguments_errors_and_tool_definition(tmp_path):
                  {"old_text": "old", "new_text": "x", "extra": 1}]:
         invalid.append(json.dumps({**args, "edits": [item]}))
     for arguments in invalid:
-        assert await execute_tool("edit_file", arguments, workspace=str(tmp_path)) == {
+        assert await execute_tool("edit_file", arguments, context=tool_context(tmp_path)) == {
             "error_code": "INVALID_ARGUMENTS", "result": {},
         }
     for item, code in [({"old_text": "old", "new_text": "\ud800"}, "NOT_UTF8_TEXT"),
                        ({"old_text": "old", "new_text": "\x00"}, "NOT_UTF8_TEXT"),
                        ({"old_text": "o\x00ld", "new_text": "x"}, "NOT_UTF8_TEXT"),
                        ({"old_text": "missing", "new_text": "x"}, "EDIT_NOT_FOUND")]:
-        result = await execute_tool("edit_file", json.dumps({**args, "edits": [item]}), workspace=str(tmp_path))
+        result = await execute_tool("edit_file", json.dumps({**args, "edits": [item]}), context=tool_context(tmp_path))
         assert result == {"error_code": code, "result": {}}
         assert not format_result(result).startswith("{")
     assert target.read_bytes() == b"old"
-    assert await execute_tool("edit_file", json.dumps(args), workspace=str(tmp_path)) == {
+    assert await execute_tool("edit_file", json.dumps(args), context=tool_context(tmp_path)) == {
         "error_code": None, "result": {"path": "text.txt", "edits_applied": 1, "bytes_written": 3},
     }
     definitions = {item["name"]: item for item in tool_definitions({"enable_memory": "1"})}

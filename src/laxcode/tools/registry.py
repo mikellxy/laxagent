@@ -19,7 +19,6 @@ from laxcode.tools.builtin.memory import (
 class Tool:
     schema: type[BaseModel]
     execute: Callable
-    requires_context: bool = False
 
 
 TOOLS = {
@@ -27,9 +26,9 @@ TOOLS = {
     "write_file": Tool(WriteFileArgs, write_file),
     "edit_file": Tool(EditFileArgs, edit_file),
     "bash": Tool(BashArgs, bash),
-    "write_memory": Tool(WriteMemoryArgs, write_memory, requires_context=True),
-    "list_memory_abstracts": Tool(ListMemoryAbstractsArgs, list_memory_abstracts, requires_context=True),
-    "get_memory_details": Tool(GetMemoryDetailsArgs, get_memory_details, requires_context=True),
+    "write_memory": Tool(WriteMemoryArgs, write_memory),
+    "list_memory_abstracts": Tool(ListMemoryAbstractsArgs, list_memory_abstracts),
+    "get_memory_details": Tool(GetMemoryDetailsArgs, get_memory_details),
 }
 
 

@@ -11,12 +11,13 @@ from laxcode.agent.context import AgentContext
 from laxcode.agent.graph import build_graph
 from laxcode.context.prompts import system_prompt
 from laxcode.memory import MEMORY_CATEGORY_DESCRIPTIONS, MemoryCategory, MemoryUnavailableError
-from laxcode.runtime.events import EventStoreError
+from laxcode.run_errors import RunError
 from laxcode.storage.database import DatabaseError
 from laxcode.storage.models import Memory, SessionMessage
 from laxcode.tools.context import ToolContext
 from laxcode.tools.executor import execute_tool
 from laxcode.tools.registry import tool_definitions
+from tool_helpers import tool_context
 from model_helpers import ModelStream, client_for, completed
 from storage_helpers import message_snapshot, run_agent
 from test_agent import MemoryEvents, state
@@ -82,15 +83,8 @@ def test_memory_schema_has_no_identity_and_matches_prompt_categories():
     ("get_memory_details", {"ids": [1], "user_id": "forged"}),
 ])
 async def test_invalid_memory_arguments_are_rejected_before_execution(name, args):
-    assert await execute_tool(name, json.dumps(args), workspace="/unused", user_configs={"enable_memory": "1"}) == {
+    assert await execute_tool(name, json.dumps(args), context=tool_context("/unused"), user_configs={"enable_memory": "1"}) == {
         "error_code": "INVALID_ARGUMENTS", "result": {},
-    }
-
-
-@pytest.mark.anyio
-async def test_memory_requires_trusted_context():
-    assert await execute_tool("write_memory", json.dumps(write_args()), workspace="/unused", user_configs={"enable_memory": "1"}) == {
-        "error_code": "TOOL_CONTEXT_UNAVAILABLE", "result": {},
     }
 
 
@@ -134,20 +128,20 @@ async def test_reads_are_user_scoped_ordered_and_complete(repository, conversati
     second = await repository.write_memory(user_id=user, **write_args(category="profile"))
     third = await repository.write_memory(user_id=user, **write_args(category="profile", abstract="其他背景"))
     foreign = await repository.write_memory(user_id=other_user, **write_args(category="profile", detail="private"))
-    context = ToolContext(user, repository)
+    context = ToolContext(user, repository, workspace="/unused")
     result = await execute_tool("list_memory_abstracts", json.dumps({"categories": ["project", "profile", "profile"]}),
-                                workspace="/unused", user_configs={"enable_memory": "1"}, context=context)
+                                user_configs={"enable_memory": "1"}, context=context)
     assert result == {"error_code": None, "result": {"memory_abstracts": [
         {key: memory[key] for key in ("category", "id", "abstract")} for memory in (second, third, first)
     ]}}
     details = await execute_tool("get_memory_details", json.dumps({"ids": [third["id"], first["id"], third["id"]]}),
-                                workspace="/unused", user_configs={"enable_memory": "1"}, context=context)
+                                user_configs={"enable_memory": "1"}, context=context)
     assert details == {"error_code": None, "result": {"memory_list": [
         {key: memory[key] for key in ("category", "id", "detail")} for memory in (third, first)
     ]}}
     for unavailable in (foreign["id"], 2**31 - 1):
         result = await execute_tool("get_memory_details", json.dumps({"ids": [first["id"], unavailable]}),
-                                    workspace="/unused", user_configs={"enable_memory": "1"}, context=context)
+                                    user_configs={"enable_memory": "1"}, context=context)
         assert result == {"error_code": "MEMORY_UNAVAILABLE", "result": {}}
     assert await repository.list_memory_abstracts(user_id=user, categories=["workflow"]) == []
 
@@ -155,10 +149,10 @@ async def test_reads_are_user_scoped_ordered_and_complete(repository, conversati
 @pytest.mark.anyio
 async def test_replacement_reclassifies_and_merge_deduplicates_ids(repository, conversation):
     user = conversation["user_id"]
-    context = ToolContext(user, repository)
+    context = ToolContext(user, repository, workspace="/unused")
     async def write(**changes):
         response = await execute_tool("write_memory", json.dumps(write_args(**changes)),
-                                      workspace="/unused", user_configs={"enable_memory": "1"}, context=context)
+                                      user_configs={"enable_memory": "1"}, context=context)
         assert response["error_code"] is None
         return response["result"]
 
@@ -190,7 +184,7 @@ async def test_invalid_merge_changes_nothing(repository, conversation, target):
         bad_id = old["id"]
     before = await memories(repository)
     result = await execute_tool("write_memory", json.dumps(write_args(merge_ids=[owned["id"], bad_id])),
-                                workspace="/unused", user_configs={"enable_memory": "1"}, context=ToolContext(user, repository))
+                                user_configs={"enable_memory": "1"}, context=ToolContext(user, repository, workspace="/unused"))
     assert result == {"error_code": "MEMORY_UNAVAILABLE", "result": {}}
     assert await memories(repository) == before
 
@@ -208,7 +202,7 @@ async def test_failure_after_delete_rolls_back_new_memory_and_old_deletions(repo
     event.listen(repository.db.engine.sync_engine, "after_cursor_execute", fail)
     try:
         result = await execute_tool("write_memory", json.dumps(write_args(merge_ids=[old["id"]])),
-                                    workspace="/unused", user_configs={"enable_memory": "1"}, context=ToolContext(user, repository))
+                                    user_configs={"enable_memory": "1"}, context=ToolContext(user, repository, workspace="/unused"))
     finally:
         event.remove(repository.db.engine.sync_engine, "after_cursor_execute", fail)
     assert result == {"error_code": "MEMORY_STORAGE_FAILED", "result": {}}
@@ -281,7 +275,8 @@ async def test_committed_memory_survives_message_or_event_failure(repository, co
     captured = []
     try:
         async with client_for(ModelStream([tool_response("write_memory", write_args())]), captured) as client:
-            with pytest.raises(DatabaseError if failure == "database" else EventStoreError):
+            message = "Run data operation failed" if failure == "database" else "Event storage unavailable"
+            with pytest.raises(RunError, match=message):
                 await run_agent(build_graph(), state(conversation), AgentContext(client, events, repository))
     finally:
         if failure == "database":

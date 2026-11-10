@@ -9,3 +9,4 @@ class ToolContext:
 
     user_id: str
     repository: Repository
+    workspace: str

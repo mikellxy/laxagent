@@ -18,6 +18,7 @@ from laxcode.runtime.events import EventStore, EventStoreError
 from laxcode.runtime.runner import run_agent
 from laxcode.runtime.task_manager import TaskManager
 from laxcode.storage.database import DatabaseError
+from laxcode.run_errors import RunError
 from laxcode.storage.models import Project, Run, User
 from model_helpers import ModelStream, client_for, completed
 from storage_helpers import message_snapshot
@@ -193,7 +194,7 @@ async def test_ownership_checks_on_chat_query_events_and_worker(chat_api):
         project = await tx.get(Project, h.conversation["project_id"])
         project.user_id = other
     assert (await h.api.post(chat_path(h), json=payload())).status_code == 404
-    with pytest.raises(DatabaseError):
+    with pytest.raises(RunError, match="Run data operation failed"):
         await run_agent(h.graph, run.id, h.context)
     async with h.context.repository.db.transaction() as tx:
         assert (await tx.get(Run, run.id)).status == "failed"

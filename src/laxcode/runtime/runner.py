@@ -8,7 +8,7 @@ from langgraph.errors import GraphRecursionError
 
 from laxcode.agent.context import AgentContext
 from laxcode.agent.state import AgentState
-from laxcode.models.errors import ModelError
+from laxcode.run_errors import RunError, make_run_error, registered_run_error
 from laxcode.runtime.events import EventStoreError, make_event
 from laxcode.storage.database import DatabaseError
 
@@ -26,8 +26,23 @@ async def drain(task):
     return task.result()
 
 
-async def fail_run(run_id: int, context: AgentContext, error: str, *, incomplete=False, cancelled=False):
+def classify_run_error(exc: Exception) -> RunError:
+    """The single boundary mapping execution failures to the public run catalog."""
+    if isinstance(exc, RunError):
+        return registered_run_error(exc)
+    if isinstance(exc, GraphRecursionError):
+        return make_run_error("graph_step_limit_reached")
+    if isinstance(exc, DatabaseError):
+        return make_run_error("run_storage_failed")
+    if isinstance(exc, EventStoreError):
+        return make_run_error("run_event_failed")
+    return make_run_error("agent_execution_failed")
+
+
+async def fail_run(run_id: int, context: AgentContext, error: RunError, *, cancelled=False):
     """Best-effort bounded cleanup; never replace the original execution error."""
+    error = registered_run_error(error)
+    message, incomplete = str(error), error.incomplete
     async def finish():
         with anyio.move_on_after(5, shield=True):
             try:
@@ -40,10 +55,10 @@ async def fail_run(run_id: int, context: AgentContext, error: str, *, incomplete
             try:
                 if not cancelled:
                     await context.events.publish(make_event(
-                        run_id, "response_incomplete" if incomplete else "error", {}, error=error,
+                        run_id, "response_incomplete" if incomplete else "error", {}, error=message,
                     ))
                 status = "cancelled" if cancelled else "incomplete" if incomplete else "failed"
-                await context.events.publish(make_event(run_id, "sse_end", {"status": status}, error=error))
+                await context.events.publish(make_event(run_id, "sse_end", {"status": status}, error=message))
             except EventStoreError:
                 logger.warning("Could not publish failure for run %s", run_id)
     await drain(asyncio.create_task(finish()))
@@ -87,17 +102,11 @@ async def run_agent(graph, run_id: int, context: AgentContext, *,
     except asyncio.CancelledError:
         # User cancellation is terminalized by the manager after this worker fully exits.
         if not user_cancelled():
-            await fail_run(run_id, context, "Execution cancelled", cancelled=True)
+            await fail_run(run_id, context, make_run_error("execution_cancelled"), cancelled=True)
         raise
     except Exception as exc:
-        if isinstance(exc, GraphRecursionError):
-            error = ModelError("Agent graph step limit reached")
-        elif isinstance(exc, (ModelError, DatabaseError, EventStoreError)):
-            error = exc
-        else:
-            error = ModelError("Agent execution failed")
-        await fail_run(run_id, context, str(error),
-                       incomplete=isinstance(error, ModelError) and error.incomplete)
-        raise error from None
+        error = classify_run_error(exc)
+        await fail_run(run_id, context, error)
+        raise error from exc
 
     return result

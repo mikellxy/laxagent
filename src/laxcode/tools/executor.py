@@ -9,10 +9,10 @@ from laxcode.memory import MemoryUnavailableError
 from laxcode.storage.database import DatabaseError
 
 
-async def run_sync_tool(execute, target, args):
+async def run_sync_tool(execute, context: ToolContext, args):
     # asyncio cancellation cannot stop a file-operation thread. Drain it before
     # allowing the run to finish, while preserving cancellation over its result.
-    worker = asyncio.create_task(asyncio.to_thread(execute, target, args))
+    worker = asyncio.create_task(asyncio.to_thread(execute, context, args))
     interrupted = False
     try:
         while not worker.done():
@@ -26,7 +26,7 @@ async def run_sync_tool(execute, target, args):
             raise asyncio.CancelledError
 
 
-async def execute_tool(name: str, arguments: str, *, workspace: str, context: ToolContext | None = None,
+async def execute_tool(name: str, arguments: str, *, context: ToolContext,
                        user_configs: dict[str, str] | None = None) -> dict:
     tool = available_tools(user_configs).get(name)
     if tool is None:
@@ -36,13 +36,10 @@ async def execute_tool(name: str, arguments: str, *, workspace: str, context: To
     except ValueError:
         return {"error_code": "INVALID_ARGUMENTS", "result": {}}
     try:
-        if tool.requires_context and context is None:
-            raise ToolError("TOOL_CONTEXT_UNAVAILABLE")
-        target = context if tool.requires_context else workspace
         if inspect.iscoroutinefunction(tool.execute):
-            result = await tool.execute(target, args)
+            result = await tool.execute(context, args)
         else:
-            result = await run_sync_tool(tool.execute, target, args)
+            result = await run_sync_tool(tool.execute, context, args)
         return {"error_code": None, "result": result}
     except MemoryUnavailableError:
         return {"error_code": "MEMORY_UNAVAILABLE", "result": {}}

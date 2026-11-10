@@ -11,6 +11,7 @@ import pytest
 
 from laxcode.sandbox.bubblewrap import OUTPUT_HALF, OutputBuffer, SandboxError, _StatusPipe
 from laxcode.tools.executor import execute_tool
+from tool_helpers import tool_context
 from laxcode.tools.registry import tool_definitions
 
 tool = importlib.import_module("laxcode.tools.builtin.bash")
@@ -127,9 +128,9 @@ async def test_bash_schema_and_async_dispatch(tmp_path, monkeypatch):
                     json.dumps({"command": "", "timeout_seconds": None}),
                     json.dumps({"command": "a\x00b", "timeout_seconds": None}),
                     json.dumps({"command": "pwd", "timeout_seconds": None, "cwd": "/"})]:
-        assert (await execute_tool("bash", invalid, workspace=str(tmp_path)))["error_code"] == "INVALID_ARGUMENTS"
+        assert (await execute_tool("bash", invalid, context=tool_context(tmp_path)))["error_code"] == "INVALID_ARGUMENTS"
     assert not called
-    result = await execute_tool("bash", '{"command":"pwd","timeout_seconds":null}', workspace=str(tmp_path))
+    result = await execute_tool("bash", '{"command":"pwd","timeout_seconds":null}', context=tool_context(tmp_path))
     assert result == {"error_code": None, "result": expected}
     assert len(called) == 1
     assert called[0][:3] == (str(tmp_path), "pwd", 120)
@@ -147,7 +148,7 @@ async def test_timeout_keeps_partial_output(tmp_path, monkeypatch):
 
     monkeypatch.setattr(tool, "run_bash", timeout)
     args = '{"command":"sleep 5","timeout_seconds":1}'
-    result = await execute_tool("bash", args, workspace=str(tmp_path))
+    result = await execute_tool("bash", args, context=tool_context(tmp_path))
     assert result == {"error_code": "BASH_TIMEOUT", "result": {"stdout": "partial", "timed_out": True}}
 
 
@@ -172,7 +173,7 @@ async def test_cancellation_waits_for_thread_cleanup(tmp_path, monkeypatch, fail
 
     monkeypatch.setattr(tool, "run_bash", run)
     task = asyncio.create_task(execute_tool("bash", '{"command":"true","timeout_seconds":null}',
-                                            workspace=str(tmp_path)))
+                                            context=tool_context(tmp_path)))
     try:
         await asyncio.wait_for(started.wait(), 2)
         task.cancel()
@@ -193,6 +194,6 @@ async def test_cancellation_waits_for_thread_cleanup(tmp_path, monkeypatch, fail
 @pytest.mark.anyio
 async def test_no_host_fallback(tmp_path, monkeypatch):
     monkeypatch.setattr(backend, "sys", SimpleNamespace(platform="darwin"))
-    result = await execute_tool("bash", '{"command":"touch leaked","timeout_seconds":null}', workspace=str(tmp_path))
+    result = await execute_tool("bash", '{"command":"touch leaked","timeout_seconds":null}', context=tool_context(tmp_path))
     assert result == {"error_code": "SANDBOX_UNAVAILABLE", "result": {}}
     assert not (tmp_path / "leaked").exists()

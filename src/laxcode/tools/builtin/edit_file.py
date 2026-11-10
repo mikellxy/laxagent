@@ -3,6 +3,7 @@ from dataclasses import dataclass
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from laxcode.tools.context import ToolContext
 from laxcode.tools.errors import ToolError
 from laxcode.tools.workspace import (
     atomic_replace, encode_text, file_error_code, file_path, open_parent, read_bytes,
@@ -106,12 +107,12 @@ def _apply_matches(content: bytes, matches: list[_Match]) -> bytes:
     return content
 
 
-def edit_file(workspace: str, args: EditFileArgs) -> dict:
+def edit_file(context: ToolContext, args: EditFileArgs) -> dict:
     failure = "READ_FAILED"
     try:
         relative = file_path(args.path)
         edits = [(encode_text(edit.old_text), encode_text(edit.new_text)) for edit in args.edits]
-        with open_parent(workspace, relative) as directory:
+        with open_parent(context.workspace, relative) as directory:
             original = read_bytes(directory, relative.name)
             try:
                 original.decode("utf-8")

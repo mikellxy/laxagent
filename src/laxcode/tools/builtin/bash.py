@@ -4,6 +4,7 @@ from threading import Event
 from pydantic import BaseModel, ConfigDict, Field
 
 from laxcode.sandbox.bubblewrap import SandboxError, run_bash
+from laxcode.tools.context import ToolContext
 from laxcode.tools.errors import ToolError
 
 
@@ -14,10 +15,10 @@ class BashArgs(BaseModel):
     timeout_seconds: int | None = Field(ge=1, le=300, description="Time limit in seconds; null uses 120 seconds.")
 
 
-async def bash(workspace: str, args: BashArgs) -> dict:
+async def bash(context: ToolContext, args: BashArgs) -> dict:
     stop_event = Event()
     worker = asyncio.create_task(asyncio.to_thread(
-        run_bash, workspace, args.command, args.timeout_seconds or 120, stop_event=stop_event,
+        run_bash, context.workspace, args.command, args.timeout_seconds or 120, stop_event=stop_event,
     ))
     interrupted = False
     try:

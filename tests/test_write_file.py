@@ -9,6 +9,7 @@ import pytest
 from laxcode.tools.builtin.read_file import ReadFileArgs, read_file
 from laxcode.tools.builtin.write_file import WriteFileArgs, WriteFileError, write_file
 from laxcode.tools.executor import execute_tool
+from tool_helpers import tool_context
 from laxcode.tools.registry import TOOLS, tool_definitions
 from laxcode.tools.results import format_result
 
@@ -16,7 +17,7 @@ module = importlib.import_module("laxcode.tools.workspace")
 
 
 def write(workspace, path="text.txt", content="中文🙂\r\nsecond\nlast"):
-    return write_file(str(workspace), WriteFileArgs(path=path, content=content))
+    return write_file(tool_context(workspace), WriteFileArgs(path=path, content=content))
 
 
 def test_create_overwrite_empty_and_read_back(tmp_path):
@@ -24,7 +25,7 @@ def test_create_overwrite_empty_and_read_back(tmp_path):
         result = write(tmp_path, "./sub//nested/text.txt", content)
         assert result == {"path": "sub/nested/text.txt", "bytes_written": len(content.encode())}
         assert (tmp_path / result["path"]).read_bytes() == content.encode()
-        assert read_file(str(tmp_path), ReadFileArgs(
+        assert read_file(tool_context(tmp_path), ReadFileArgs(
             path=result["path"], start_line_no=1, start_byte_no=1, total_lines=2000,
         ))["text"] == content
     assert sorted(p.name for p in (tmp_path / "sub/nested").iterdir()) == ["text.txt"]
@@ -178,15 +179,15 @@ async def test_executor_validation_results_and_guidance(tmp_path, monkeypatch):
                     json.dumps({**args, "path": ""}), json.dumps({**args, "content": True}),
                     json.dumps({**args, "path": 1}), json.dumps({**args, "path": "sub/\ud800"}),
                     json.dumps({**args, "extra": 1})]:
-        assert await execute_tool("write_file", invalid, workspace=str(tmp_path)) == {
+        assert await execute_tool("write_file", invalid, context=tool_context(tmp_path)) == {
             "error_code": "INVALID_ARGUMENTS", "result": {},
         }
     assert list(tmp_path.iterdir()) == before
-    result = await execute_tool("write_file", json.dumps(args), workspace=str(tmp_path))
+    result = await execute_tool("write_file", json.dumps(args), context=tool_context(tmp_path))
     assert result == {"error_code": None, "result": {"path": "file", "bytes_written": 5}}
     for arguments, code in [({**args, "path": "../outside"}, "INVALID_PATH"),
                             ({**args, "content": "\ud800"}, "NOT_UTF8_TEXT")]:
-        result = await execute_tool("write_file", json.dumps(arguments), workspace=str(tmp_path))
+        result = await execute_tool("write_file", json.dumps(arguments), context=tool_context(tmp_path))
         assert result == {"error_code": code, "result": {}}
         assert not format_result(result).startswith("{")
 
@@ -194,7 +195,7 @@ async def test_executor_validation_results_and_guidance(tmp_path, monkeypatch):
         raise PermissionError(errno.EACCES, "private host path")
 
     monkeypatch.setattr(module.os, "replace", deny)
-    result = await execute_tool("write_file", json.dumps(args), workspace=str(tmp_path))
+    result = await execute_tool("write_file", json.dumps(args), context=tool_context(tmp_path))
     assert result == {"error_code": "ACCESS_DENIED", "result": {}}
     assert "private host path" not in format_result(result)
 

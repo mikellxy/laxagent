@@ -1,5 +1,6 @@
 from pydantic import BaseModel, ConfigDict, Field
 
+from laxcode.tools.context import ToolContext
 from laxcode.tools.errors import ToolError
 from laxcode.tools.workspace import atomic_replace, encode_text, file_error_code, file_path, open_parent
 
@@ -15,11 +16,11 @@ class WriteFileError(ToolError):
     pass
 
 
-def write_file(workspace: str, args: WriteFileArgs) -> dict:
+def write_file(context: ToolContext, args: WriteFileArgs) -> dict:
     try:
         relative = file_path(args.path)
         content = encode_text(args.content)
-        with open_parent(workspace, relative, create=True) as directory:
+        with open_parent(context.workspace, relative, create=True) as directory:
             atomic_replace(directory, relative.name, content)
         return {"path": relative.as_posix(), "bytes_written": len(content)}
     except ToolError as exc:

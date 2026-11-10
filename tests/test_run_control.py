@@ -8,6 +8,7 @@ from sqlalchemy import select
 from laxcode.storage.database import DatabaseError
 from laxcode.storage.models import Message, Run, Session, SessionMessage
 from laxcode.tools.executor import run_sync_tool
+from tool_helpers import tool_context
 from model_helpers import ModelStream, client_for, completed
 from storage_helpers import message_snapshot
 from test_chat import chat_api, chat_path, payload, wait_run
@@ -214,7 +215,7 @@ async def test_sync_tool_cancellation_waits_for_thread_even_on_repeated_cancel()
         assert release.wait(5)
         finished.set()
         return 'done'
-    task = asyncio.create_task(run_sync_tool(work, None, None))
+    task = asyncio.create_task(run_sync_tool(work, tool_context("/unused"), None))
     try:
         async with asyncio.timeout(2):
             while not started.is_set():

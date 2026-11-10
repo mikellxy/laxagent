@@ -4,7 +4,7 @@ from langgraph.runtime import Runtime
 
 from laxcode.agent.context import AgentContext
 from laxcode.agent.state import AgentState
-from laxcode.models.errors import ModelError
+from laxcode.run_errors import make_run_error
 from laxcode.models.responses import append_model_response, append_tool_message, append_reasoning, completed_reasoning, stream_response
 from laxcode.runtime.events import make_event
 from laxcode.tools.executor import execute_tool
@@ -49,14 +49,16 @@ async def call_model(state: AgentState, runtime: Runtime[AgentContext]):
                 return {"messages": [*state["messages"], message], "next_msg_seq": next_seq,
                         "pending_tool_calls": calls,
                         "model_input": append_model_response(state["model_input"], event)}
-    raise ModelError("Model stream ended without response.completed")
+    raise make_run_error("model_stream_ended")
 
 
 async def tool_node(state: AgentState, runtime: Runtime[AgentContext]):
     next_seq = state["next_msg_seq"]
     messages = list(state["messages"])
     model_input = state["model_input"]
-    tool_context = ToolContext(user_id=state["user_id"], repository=runtime.context.repository)
+    tool_context = ToolContext(
+        user_id=state["user_id"], repository=runtime.context.repository, workspace=state["workspace"],
+    )
     for call in state["pending_tool_calls"]:
         msg_seq = next_seq
         details = {"tool_call_id": call["call_id"], "tool_name": call["name"]}
@@ -64,7 +66,7 @@ async def tool_node(state: AgentState, runtime: Runtime[AgentContext]):
             state["run_id"], "tool_start", {**details, "arguments": call["arguments"]},
             role="tool", msg_seq=msg_seq,
         ))
-        result = await execute_tool(call["name"], call["arguments"], workspace=state["workspace"],
+        result = await execute_tool(call["name"], call["arguments"],
                                     context=tool_context, user_configs=state.get("user_configs"))
         content = format_result(result)
         metadata = {**details, "tool_call": call}

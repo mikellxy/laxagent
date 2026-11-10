@@ -10,7 +10,8 @@ from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.exc import IntegrityError
 
 from laxcode.agent.context import AgentContext
-from laxcode.agent.nodes.preparation import prepare, system_prompt
+from laxcode.agent.nodes.preparation import prepare
+from laxcode.context.prompts import system_prompt
 from laxcode.layout import get_project_workdir
 from laxcode.api.app import create_app
 from laxcode.storage.database import Database, DatabaseError
@@ -23,7 +24,7 @@ async def test_migration_has_no_foreign_keys_and_nullable_tool_columns(repositor
     def check(connection):
         schema = inspect(connection)
         assert set(schema.get_table_names()) == {
-            "users", "projects", "sessions", "messages", "session_messages", "runs", "alembic_version",
+            "users", "projects", "sessions", "messages", "session_messages", "runs", "memories", "alembic_version",
         }
         for table in schema.get_table_names():
             assert schema.get_foreign_keys(table) == []

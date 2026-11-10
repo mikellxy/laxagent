@@ -8,6 +8,7 @@ from laxcode.models.errors import ModelError
 from laxcode.models.responses import append_model_response, append_tool_message, stream_response
 from laxcode.runtime.events import make_event
 from laxcode.tools.executor import execute_tool
+from laxcode.tools.context import ToolContext
 from laxcode.tools.registry import tool_definitions
 from laxcode.tools.results import format_result
 
@@ -51,6 +52,7 @@ async def tool_node(state: AgentState, runtime: Runtime[AgentContext]):
     next_seq = state["next_msg_seq"]
     messages = list(state["messages"])
     model_input = state["model_input"]
+    tool_context = ToolContext(user_id=state["user_id"], repository=runtime.context.repository)
     for call in state["pending_tool_calls"]:
         msg_seq = next_seq
         details = {"tool_call_id": call["call_id"], "tool_name": call["name"]}
@@ -58,7 +60,7 @@ async def tool_node(state: AgentState, runtime: Runtime[AgentContext]):
             state["run_id"], "tool_start", {**details, "arguments": call["arguments"]},
             role="tool", msg_seq=msg_seq,
         ))
-        result = await execute_tool(call["name"], call["arguments"], workspace=state["workspace"])
+        result = await execute_tool(call["name"], call["arguments"], workspace=state["workspace"], context=tool_context)
         content = format_result(result)
         metadata = {**details, "tool_call": call}
         next_seq, _ = await runtime.context.repository.append_message(

@@ -4,6 +4,8 @@ from sqlalchemy import CheckConstraint, DateTime, Identity, Index, Integer, Stri
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
+from laxcode.memory import MEMORY_CATEGORY_DESCRIPTIONS
+
 
 class Base(DeclarativeBase):
     pass
@@ -14,6 +16,25 @@ class User(Base):
 
     id: Mapped[int] = mapped_column(Integer, Identity(always=True), primary_key=True)
     user_id: Mapped[str] = mapped_column(String(36), unique=True)
+
+
+class Memory(Base):
+    __tablename__ = "memories"
+    __table_args__ = (
+        CheckConstraint(
+            "category IN (" + ", ".join(repr(category) for category in MEMORY_CATEGORY_DESCRIPTIONS) + ")",
+            name="ck_memories_category",
+        ),
+        CheckConstraint("abstract ~ '[^[:space:]]'", name="ck_memories_abstract_not_blank"),
+        CheckConstraint("detail ~ '[^[:space:]]'", name="ck_memories_detail_not_blank"),
+        Index("ix_memories_user_id_category_id", "user_id", "category", "id"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, Identity(always=True), primary_key=True)
+    user_id: Mapped[str] = mapped_column(String(36))
+    abstract: Mapped[str] = mapped_column(Text)
+    detail: Mapped[str] = mapped_column(Text)
+    category: Mapped[str] = mapped_column(String(32))
 
 
 class Project(Base):

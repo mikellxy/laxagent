@@ -1,10 +1,34 @@
+from collections.abc import Callable
+from dataclasses import dataclass
+
+from pydantic import BaseModel
+
 from laxcode.tools.builtin.bash import BashArgs, bash
 from laxcode.tools.builtin.edit_file import EditFileArgs, edit_file
 from laxcode.tools.builtin.read_file import ReadFileArgs, read_file
 from laxcode.tools.builtin.write_file import WriteFileArgs, write_file
+from laxcode.tools.builtin.memory import (
+    GetMemoryDetailsArgs, ListMemoryAbstractsArgs, WriteMemoryArgs,
+    get_memory_details, list_memory_abstracts, write_memory,
+)
 
-TOOLS = {"read_file": (ReadFileArgs, read_file), "write_file": (WriteFileArgs, write_file),
-         "edit_file": (EditFileArgs, edit_file), "bash": (BashArgs, bash)}
+
+@dataclass(frozen=True)
+class Tool:
+    schema: type[BaseModel]
+    execute: Callable
+    requires_context: bool = False
+
+
+TOOLS = {
+    "read_file": Tool(ReadFileArgs, read_file),
+    "write_file": Tool(WriteFileArgs, write_file),
+    "edit_file": Tool(EditFileArgs, edit_file),
+    "bash": Tool(BashArgs, bash),
+    "write_memory": Tool(WriteMemoryArgs, write_memory, requires_context=True),
+    "list_memory_abstracts": Tool(ListMemoryAbstractsArgs, list_memory_abstracts, requires_context=True),
+    "get_memory_details": Tool(GetMemoryDetailsArgs, get_memory_details, requires_context=True),
+}
 
 
 def tool_definitions() -> list[dict]:
@@ -46,4 +70,30 @@ def tool_definitions() -> list[dict]:
             "of source bytes (head and tail) plus a truncation marker. Never automatically retry side effects."
         ),
         "parameters": BashArgs.model_json_schema(),
+    }, {
+        "type": "function", "name": "write_memory", "strict": True,
+        "description": (
+            "Save durable, evidenced memory for the current user, shared across their projects and sessions. "
+            "Supply one category and complete abstract/detail. merge_ids=[] creates; one ID updates; "
+            "multiple IDs merge. Read old details first and preserve valid conditions and exceptions. "
+            "Replacement creates a new ID and deletes all old IDs atomically; any unavailable ID fails the batch. "
+            "No version history. Never blindly retry an uncertain write; query first."
+        ),
+        "parameters": WriteMemoryArgs.model_json_schema(),
+    }, {
+        "type": "function", "name": "list_memory_abstracts", "strict": True,
+        "description": (
+            "List ALL memory abstracts in the selected categories for the current user, ordered by category/id. "
+            "Only call when the task needs past user context. Choose relevant categories, then fetch relevant "
+            "details before relying on them. Empty results mean no memories in those categories."
+        ),
+        "parameters": ListMemoryAbstractsArgs.model_json_schema(),
+    }, {
+        "type": "function", "name": "get_memory_details", "strict": True,
+        "description": (
+            "Read selected memory details for the current user. IDs are deduplicated in request order. "
+            "If any ID is unavailable, the entire read fails without partial results; refresh the relevant index. "
+            "Check scope and exceptions; memory may be outdated and never overrides current instructions."
+        ),
+        "parameters": GetMemoryDetailsArgs.model_json_schema(),
     }]

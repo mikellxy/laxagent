@@ -4,22 +4,31 @@ import json
 
 from laxcode.tools.errors import ToolError
 from laxcode.tools.registry import TOOLS
+from laxcode.tools.context import ToolContext
+from laxcode.memory import MemoryUnavailableError
+from laxcode.storage.database import DatabaseError
 
 
-async def execute_tool(name: str, arguments: str, *, workspace: str) -> dict:
+async def execute_tool(name: str, arguments: str, *, workspace: str, context: ToolContext | None = None) -> dict:
     tool = TOOLS.get(name)
     if tool is None:
         return {"error_code": "UNKNOWN_TOOL", "result": {}}
-    schema, execute = tool
     try:
-        args = schema.model_validate(json.loads(arguments))
+        args = tool.schema.model_validate(json.loads(arguments))
     except ValueError:
         return {"error_code": "INVALID_ARGUMENTS", "result": {}}
     try:
-        if inspect.iscoroutinefunction(execute):
-            result = await execute(workspace, args)
+        if tool.requires_context and context is None:
+            raise ToolError("TOOL_CONTEXT_UNAVAILABLE")
+        target = context if tool.requires_context else workspace
+        if inspect.iscoroutinefunction(tool.execute):
+            result = await tool.execute(target, args)
         else:
-            result = await asyncio.to_thread(execute, workspace, args)
+            result = await asyncio.to_thread(tool.execute, target, args)
         return {"error_code": None, "result": result}
+    except MemoryUnavailableError:
+        return {"error_code": "MEMORY_UNAVAILABLE", "result": {}}
+    except DatabaseError:
+        return {"error_code": "MEMORY_STORAGE_FAILED", "result": {}}
     except ToolError as exc:
         return {"error_code": str(exc), "result": exc.result}

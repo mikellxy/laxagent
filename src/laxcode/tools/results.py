@@ -1,6 +1,9 @@
 import json
 
 ERROR_GUIDANCE = {
+    "MEMORY_UNAVAILABLE": "目标记忆不可用，可能已被替换；本批未执行，请重新查询相关分类的摘要。",
+    "MEMORY_STORAGE_FAILED": "记忆存储操作未能确认成功；请先查询核实状态，不要盲目重试写入。",
+    "TOOL_CONTEXT_UNAVAILABLE": "工具所需的可信运行上下文不可用，不能通过模型参数补充用户身份。",
     "SANDBOX_UNAVAILABLE": "Bash 沙箱不可用，需要 Linux 和可执行的 /usr/bin/bwrap；不会退回宿主执行。",
     "SANDBOX_INVALID_WORKSPACE": "Bash workspace 无效，请检查项目工作目录及其路径边界。",
     "SANDBOX_START_FAILED": "Bash 沙箱启动失败，请检查系统依赖、user namespace 和 AppArmor 配置。",

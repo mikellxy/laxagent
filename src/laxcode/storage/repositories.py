@@ -1,15 +1,53 @@
 from uuid import uuid4
 
-from sqlalchemy import func, select, update
+from sqlalchemy import delete, func, select, update
 from sqlalchemy.dialects.postgresql import insert
 
 from laxcode.storage.database import Database, DatabaseError
-from laxcode.storage.models import Message, Project, Run, Session, SessionMessage, User
+from laxcode.storage.models import Memory, Message, Project, Run, Session, SessionMessage, User
+from laxcode.memory import MemoryCategory, MemoryUnavailableError
 
 
 class Repository:
     def __init__(self, db: Database):
         self.db = db
+
+    async def write_memory(self, *, user_id: str, abstract: str, detail: str,
+                           category: MemoryCategory, merge_ids: list[int]) -> dict:
+        ids = sorted(set(merge_ids))
+        async with self.db.transaction() as transaction:
+            if ids:
+                locked = list(await transaction.scalars(select(Memory.id).where(
+                    Memory.user_id == user_id, Memory.id.in_(ids),
+                ).order_by(Memory.id).with_for_update()))
+                if locked != ids:
+                    raise MemoryUnavailableError()
+            memory = Memory(user_id=user_id, abstract=abstract, detail=detail, category=category)
+            transaction.add(memory)
+            await transaction.flush()
+            if ids:
+                await transaction.execute(delete(Memory).where(Memory.user_id == user_id, Memory.id.in_(ids)))
+            result = {"id": memory.id, "category": memory.category,
+                      "abstract": memory.abstract, "detail": memory.detail}
+        return result
+
+    async def list_memory_abstracts(self, *, user_id: str, categories: list[MemoryCategory]) -> list[dict]:
+        async with self.db.transaction() as transaction:
+            rows = (await transaction.execute(select(Memory.category, Memory.id, Memory.abstract).where(
+                Memory.user_id == user_id, Memory.category.in_(set(categories)),
+            ).order_by(Memory.category, Memory.id))).mappings()
+            return [dict(row) for row in rows]
+
+    async def get_memory_details(self, *, user_id: str, ids: list[int]) -> list[dict]:
+        unique_ids = list(dict.fromkeys(ids))
+        async with self.db.transaction() as transaction:
+            rows = (await transaction.execute(select(Memory.category, Memory.id, Memory.detail).where(
+                Memory.user_id == user_id, Memory.id.in_(unique_ids),
+            ))).mappings()
+            by_id = {row["id"]: dict(row) for row in rows}
+            if len(by_id) != len(unique_ids):
+                raise MemoryUnavailableError()
+            return [by_id[memory_id] for memory_id in unique_ids]
 
     async def user_exists(self, user_id: str) -> bool:
         async with self.db.transaction() as transaction:

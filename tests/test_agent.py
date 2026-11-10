@@ -9,7 +9,7 @@ from sqlalchemy.exc import IntegrityError
 
 from laxcode.agent.context import AgentContext
 from laxcode.agent.graph import build_graph
-from laxcode.agent.nodes.preparation import system_prompt
+from laxcode.context.prompts import system_prompt
 from laxcode.models.errors import ModelError
 from laxcode.runtime.events import EventStoreError
 from storage_helpers import run_agent

@@ -1,6 +1,7 @@
 import json
 
 ERROR_GUIDANCE = {
+    "TOOL_STATE_UNCERTAIN": "异常中断，工具执行状态未知，请先检查工作区状态，不要盲目重试",
     "MEMORY_UNAVAILABLE": "目标记忆不可用，可能已被替换；本批未执行，请重新查询相关分类的摘要。",
     "MEMORY_STORAGE_FAILED": "记忆存储操作未能确认成功；请先查询核实状态，不要盲目重试写入。",
     "SANDBOX_UNAVAILABLE": "Bash 沙箱不可用，需要 Linux 和可执行的 /usr/bin/bwrap；不会退回宿主执行。",

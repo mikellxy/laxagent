@@ -2,9 +2,10 @@ from datetime import datetime
 from typing import Literal
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, computed_field, field_validator
 
 from laxcode.memory import MemoryCategory
+from laxcode.run_errors import failure_description
 
 
 class UserConfigRequest(BaseModel):
@@ -58,6 +59,12 @@ class SubmittedRunResponse(BaseModel):
     run_id: int
     session_id: int
     status: Literal["waiting"]
+    resume_time: int
+
+
+class ResumeRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+    resume_time: int = Field(ge=0)
 
 
 class RunResponse(BaseModel):
@@ -70,6 +77,13 @@ class RunResponse(BaseModel):
     started_at: datetime | None
     finished_at: datetime | None
     error: str | None
+    error_code: str | None
+    resume_time: int
+
+    @computed_field
+    @property
+    def error_desc(self) -> str | None:
+        return failure_description(self.error_code, self.error) if self.status == "failed" else None
 
 
 class UserIdRequest(BaseModel):

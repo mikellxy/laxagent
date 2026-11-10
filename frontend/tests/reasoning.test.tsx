@@ -9,11 +9,12 @@ import type { Message, Run, StreamEvent } from '../src/api/types'
 afterEach(() => { cleanup(); vi.restoreAllMocks() })
 
 function setup(initial: Message[], status: Run['status'] = 'running', hasMore = false) {
-  const state = { messages: initial, status, hasMore }
+  const state = { messages: initial, status, hasMore, resume_time: 0, error_desc: status === 'failed' ? '模型回答意外中断，请重试。' : null }
   let receive: (event: StreamEvent) => void = () => {}
   vi.spyOn(api, 'detail').mockImplementation(async () => ({ id: 1, user_id: 'owner', name: 'chat', project_id: 1,
     next_msg_seq: (state.messages.at(-1)?.seq ?? 0) + 1,
-    latest_run: { run_id: 10, session_id: 1, status: state.status, model: 'p:m', error: null } }))
+    latest_run: { run_id: 10, session_id: 1, status: state.status, model: 'p:m', error: null, error_code: null,
+      error_desc: state.error_desc, resume_time: state.resume_time } }))
   vi.spyOn(api, 'messages').mockImplementation(async (_id, before) => ({
     items: state.messages.filter(message => before === undefined || message.seq < before), has_more: state.hasMore,
     next_before_seq: state.hasMore ? state.messages[0].seq : null,
@@ -30,6 +31,22 @@ function setup(initial: Message[], status: Run['status'] = 'running', hasMore = 
   }
   return { state, event, user: userEvent.setup() }
 }
+
+it.each(['failed', 'cancelled'] as const)('shows the %s resume action and preserves the draft', async status => {
+  const h = setup([{ seq: 1, role: 'user', content: 'question' }], status)
+  h.state.error_desc = '模型回答意外中断，请重试。'
+  const resume = vi.spyOn(api, 'resumeRun').mockImplementation(async () => {
+    h.state.status = 'running'; h.state.resume_time = 1
+    return { run_id: 10, session_id: 1, status: 'waiting', resume_time: 1 }
+  })
+  const action = await screen.findByRole('button', { name: status === 'failed' ? '重试' : '继续' })
+  expect(screen.getByRole('status')).toHaveTextContent(status === 'failed' ? '模型回答意外中断，请重试。' : '已取消')
+  await h.user.type(screen.getByRole('textbox', { name: '消息输入' }), '保留草稿')
+  await h.user.click(action)
+  await waitFor(() => expect(resume).toHaveBeenCalledExactlyOnceWith(10, 0, expect.any(AbortSignal)))
+  expect(screen.getByRole('textbox', { name: '消息输入' })).toHaveValue('保留草稿')
+  await waitFor(() => expect(screen.queryByRole('button', { name: status === 'failed' ? '重试' : '继续' })).toBeNull())
+})
 
 it('updates collapsed work previews only at line boundaries and hides them on expansion or completion', async () => {
   const h = setup([{ seq: 1, role: 'user', content: 'question' }])

@@ -2,7 +2,7 @@ import { api } from '../../api/resources'
 import { ApiError, messageOf } from '../../api/errors'
 import type { Message, ReasoningPart, Run, SessionDetail, StreamEvent } from '../../api/types'
 
-export type Transport = Pick<typeof api, 'detail' | 'messages' | 'chat' | 'stream' | 'cancelRun'>
+export type Transport = Pick<typeof api, 'detail' | 'messages' | 'chat' | 'stream' | 'cancelRun' | 'resumeRun'>
 export interface PendingMessage { content: string; afterSeq: number; runId: number | null; failed: boolean }
 export interface Activity { firstSeq: number; thinkingSeq: number | null; toolSeq: number | null }
 export interface ConversationSnapshot {
@@ -10,8 +10,10 @@ export interface ConversationSnapshot {
   busy: boolean; ready: boolean; syncing: boolean; loadingOlder: boolean; hasMore: boolean; cancelling: boolean
   error: string | null; missing: boolean
   activity: Activity | null
+  resuming: boolean
 }
 const active = (run: Run | null | undefined) => run?.status === 'waiting' || run?.status === 'running'
+const attempt = (run: Run | null | undefined) => run ? `${run.run_id}:${run.resume_time}` : null
 
 /** One selected session owns one stream; durable rows and transient chunks never share storage. */
 export class Conversation {
@@ -24,6 +26,7 @@ export class Conversation {
   private ready = false
   private submitting = false
   private cancelling = false
+  private resuming = false
   private syncFailed = false
   private syncing = false
   private loadingOlder = false
@@ -35,13 +38,13 @@ export class Conversation {
   private syncFlight: Promise<void> | null = null
   private buffered: StreamEvent[] = []
   private reconnectWanted = false
-  private checkedRun: number | null = null
+  private checkedRun: string | null = null
   private activity: Activity | null = null
   private retry: ReturnType<typeof setTimeout> | null = null
   private retryDelay = 500
   private listeners = new Set<() => void>()
   private snapshot: ConversationSnapshot = { messages: [], pending: null, detail: null, busy: false, ready: false,
-    syncing: false, loadingOlder: false, hasMore: false, error: null, missing: false, cancelling: false, activity: null }
+    syncing: false, loadingOlder: false, hasMore: false, error: null, missing: false, cancelling: false, resuming: false, activity: null }
 
   constructor(readonly sessionId: number, private transport: Transport = api) {}
   subscribe = (listener: () => void) => { this.listeners.add(listener); return () => { this.listeners.delete(listener) } }
@@ -51,10 +54,11 @@ export class Conversation {
     const messages = new Map([...this.history, ...this.live])
     this.snapshot = {
       messages: [...messages.values()].sort((a, b) => a.seq - b.seq), pending: this.pending ? { ...this.pending } : null,
-      detail: this.detail, busy: this.submitting || this.cancelling || active(this.detail?.latest_run), ready: this.ready,
-      cancelling: this.cancelling,
+      detail: this.detail, busy: this.submitting || this.cancelling || this.resuming || active(this.detail?.latest_run), ready: this.ready,
+      cancelling: this.cancelling, resuming: this.resuming,
       activity: active(this.detail?.latest_run) && this.activity ? { ...this.activity } : null,
-      syncing: this.syncing, loadingOlder: this.loadingOlder, hasMore: this.hasMore, error: this.error ?? (this.pending?.failed ? "消息提交失败" : null), missing: this.missing,
+      syncing: this.syncing, loadingOlder: this.loadingOlder, hasMore: this.hasMore,
+      error: this.error ?? (this.pending?.failed && this.detail?.latest_run?.status !== 'failed' ? "消息提交失败" : null), missing: this.missing,
     }
     this.listeners.forEach(listener => listener())
   }
@@ -89,14 +93,18 @@ export class Conversation {
         for (const row of rows) this.history.set(row.seq, row)
         if (previousOldest === null || (rows.length && Math.min(...rows.map(m => m.seq)) <= previousOldest)) this.hasMore = page.has_more
         this.boundary = boundary // Only advance after ALL required page reads succeeded.
+        if (attempt(detail.latest_run) !== attempt(this.detail?.latest_run)) {
+          // Another tab may resume the same run during an ordinary history read.
+          this.reconnectWanted = true; this.streamAbort?.abort(); this.buffered = []; this.checkedRun = null
+        }
         for (const seq of this.live.keys()) if (seq <= boundary || this.reconnectWanted || !active(detail.latest_run)) this.live.delete(seq)
         this.syncFailed = false
-        if (detail.latest_run?.run_id !== this.detail?.latest_run?.run_id || !active(detail.latest_run)) this.activity = null
+        if (attempt(detail.latest_run) !== attempt(this.detail?.latest_run) || !active(detail.latest_run)) this.activity = null
         if (this.activity) {
           if (this.activity.thinkingSeq !== null && this.activity.thinkingSeq <= boundary) this.activity.thinkingSeq = null
           if (this.activity.toolSeq !== null && this.activity.toolSeq <= boundary) this.activity.toolSeq = null
         }
-        this.detail = detail; this.ready = true; this.error = detail.latest_run?.error ?? null
+        this.detail = detail; this.ready = true; this.error = null
         this.reconcilePending()
         if (this.pending && detail.latest_run?.status === 'failed') this.pending.failed = true
         if (detail.latest_run?.status === 'cancelled') this.pending = null
@@ -132,16 +140,16 @@ export class Conversation {
     const abort = new AbortController()
     this.streamAbort = abort
     void this.transport.stream(run.run_id, event => {
-      if (this.disposed || abort.signal.aborted || event.run_id !== run.run_id) return
+      if (this.disposed || abort.signal.aborted || event.run_id !== run.run_id || (event.resume_time ?? 0) !== run.resume_time) return
       this.retryDelay = 500
       // The first model/tool event proves preparation has progressed; read the user row once.
-      if (event.msg_seq !== null && this.checkedRun !== run.run_id) {
-        this.checkedRun = run.run_id
+      if (event.msg_seq !== null && this.checkedRun !== attempt(run)) {
+        this.checkedRun = attempt(run)
         void this.refresh(false)
       }
       if (this.syncing) this.buffered.push(event)
       else this.apply(event)
-    }, abort.signal).catch(error => {
+    }, abort.signal, run.resume_time).catch(error => {
       if (this.disposed || abort.signal.aborted) return
       this.error = messageOf(error); this.emit(); this.scheduleReconnect()
     })
@@ -152,6 +160,8 @@ export class Conversation {
     this.retryDelay = Math.min(this.retryDelay * 2, 5000)
   }
   private apply(event: StreamEvent) {
+    const run = this.detail?.latest_run
+    if (!run || event.run_id !== run.run_id || (event.resume_time ?? 0) !== run.resume_time) return
     if (event.type === 'sse_end') { void this.refresh(true); return }
     if (event.type === 'error' || event.type === 'response_incomplete') {
       this.activity = null
@@ -211,7 +221,7 @@ export class Conversation {
   }
 
   send = async (content: string, model: string): Promise<boolean> => {
-    if (this.disposed || !this.ready || this.submitting || this.cancelling || active(this.detail?.latest_run) || !content.trim()) return false
+    if (this.disposed || !this.ready || this.submitting || this.cancelling || this.resuming || active(this.detail?.latest_run) || !content.trim()) return false
     this.submitting = true; this.error = null; this.emit()
     try {
       // Establish a fresh lower bound so repeated text cannot match old historical prompts.
@@ -225,7 +235,7 @@ export class Conversation {
       if (this.disposed) return false
       if (this.pending) this.pending.runId = submitted.run_id
       this.activity = null
-      this.detail = { ...this.detail!, latest_run: { run_id: submitted.run_id, session_id: this.sessionId, status: 'waiting', model, error: null } }
+      this.detail = { ...this.detail!, latest_run: { ...submitted, model, error: null, error_code: null, error_desc: null } }
       this.checkedRun = null
       this.connect() // 202 guarantees the stream exists, not that the user message has committed.
       return true
@@ -240,9 +250,33 @@ export class Conversation {
     } finally { this.submitting = false; this.emit() }
   }
 
+  resume = async (): Promise<void> => {
+    const run = this.detail?.latest_run
+    if (this.disposed || !this.ready || this.submitting || this.cancelling || this.resuming || !run ||
+        !['failed', 'cancelled'].includes(run.status)) return
+    this.resuming = true; this.error = null; this.emit()
+    try {
+      if (this.syncFlight) await this.syncFlight
+      if (this.disposed) return
+      const submitted = await this.transport.resumeRun(run.run_id, run.resume_time, this.lifetime.signal)
+      if (this.syncFlight) await this.syncFlight
+      if (this.disposed) return
+      this.streamAbort?.abort(); this.buffered = []; this.live.clear(); this.activity = null; this.checkedRun = null
+      if (this.pending) this.pending.failed = false
+      this.detail = { ...this.detail!, latest_run: { ...run, ...submitted, error: null, error_code: null, error_desc: null } }
+      await this.refresh(true)
+    } catch (error) {
+      if (!this.disposed) {
+        // Reconcile an accepted POST with a lost response; never resubmit automatically.
+        await this.refresh(true)
+        if (!this.disposed) this.error = messageOf(error)
+      }
+    } finally { this.resuming = false; this.emit() }
+  }
+
   cancel = async (): Promise<void> => {
     const run = this.detail?.latest_run
-    if (this.disposed || this.cancelling || !run || !active(run)) return
+    if (this.disposed || this.cancelling || this.resuming || !run || !active(run)) return
     this.cancelling = true; this.error = null; this.emit()
     try {
       const ended = await this.transport.cancelRun(run.run_id, this.lifetime.signal)

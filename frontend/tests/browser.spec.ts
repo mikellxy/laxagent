@@ -59,10 +59,15 @@ async function mockAPI(page: Page) {
       }
       return reply(state.sessions.filter(s => s.project_id === id))
     }
-    const runRoute = path.match(/^\/runs\/(\d+)\/(cancel|events)$/)
+    const runRoute = path.match(/^\/runs\/(\d+)\/(cancel|resume|events)$/)
     if (runRoute) {
       const id = Number(runRoute[1]), run = state.runs.get(id)
       if (!run) return reply({ detail: 'Not found' }, 404)
+      if (runRoute[2] === 'resume') {
+        if (!['failed', 'cancelled'].includes(run.status) || body.resume_time !== run.resume_time) return reply({ detail: '状态已变化' }, 409)
+        run.status = 'running'; run.resume_time++; run.error = run.error_code = run.error_desc = null
+        return reply({ run_id: id, session_id: run.session_id, status: 'waiting', resume_time: run.resume_time }, 202)
+      }
       if (runRoute[2] === 'cancel') {
         if (state.cancelFailures-- > 0) return reply({ detail: '取消失败，请重试' }, 503)
         run.status = 'cancelled'
@@ -72,7 +77,7 @@ async function mockAPI(page: Page) {
       if (run.status === 'running' || run.status === 'waiting') await new Promise<void>(resolve => {
         state.streams.set(id, [...(state.streams.get(id) ?? []), resolve])
       })
-      const event = { run_id: id, msg_seq: null, type: 'sse_end', role: 'system', error: null, content: { status: run.status } }
+      const event = { run_id: id, resume_time: run.resume_time, msg_seq: null, type: 'sse_end', role: 'system', error: null, content: { status: run.status } }
       return route.fulfill({ contentType: 'text/event-stream', body: `event: sse_end\ndata: ${JSON.stringify(event)}\n\n` })
     }
     const session = path.match(/^\/sessions\/(\d+)(\/messages|\/chat)?$/)
@@ -97,10 +102,10 @@ async function mockAPI(page: Page) {
         return reply({ items, has_more: eligible.length > items.length, next_before_seq: eligible.length > items.length ? items[0].seq : null })
       }
       if (session[2] === '/chat') {
-        const run: Run = { run_id: state.runs.size + 10, session_id: id, status: 'running', model: body.model, error: null }
+        const run: Run = { run_id: state.runs.size + 10, session_id: id, status: 'running', model: body.model, error: null, error_code: null, error_desc: null, resume_time: 0 }
         state.runs.set(run.run_id, run)
         messages.push({ role: 'user', seq: (messages.at(-1)?.seq ?? 0) + 1, content: body.user_query })
-        return reply({ run_id: run.run_id, session_id: id, status: 'waiting' }, 202)
+        return reply({ run_id: run.run_id, session_id: id, status: 'waiting', resume_time: 0 }, 202)
       }
       return reply({ ...item, next_msg_seq: (messages.at(-1)?.seq ?? 0) + 1, latest_run: [...state.runs.values()].filter(r => r.session_id === id).at(-1) ?? null })
     }
@@ -194,7 +199,7 @@ test('streams nested reasoning disclosures and preserves expansion when history 
   await page.addInitScript(() => {
     const original = window.fetch.bind(window)
     window.fetch = (input, init) => {
-      if (String(input).match(/\/runs\/\d+\/events$/)) {
+      if (String(input).match(/\/runs\/\d+\/events(?:\?|$)/)) {
         return Promise.resolve(new Response(new ReadableStream({ start(controller) {
           ;(window as any).reasoningEvent = (event: unknown) => controller.enqueue(new TextEncoder().encode(`data: ${JSON.stringify(event)}\n\n`))
           init?.signal?.addEventListener('abort', () => { try { controller.close() } catch { /* Already cancelled */ } })
@@ -436,4 +441,35 @@ test('memory management remains available without a session and supports load re
   state.memories = [{ id: 8, category: 'workflow', abstract: '操作方法', detail: '操作方法详情' }]
   await drawer.getByRole('button', { name: '刷新', exact: true }).click()
   await expect(drawer.getByRole('button', { name: '记忆 8 摘要', exact: true })).toBeVisible()
+})
+
+test('resumes cancelled and failed runs with the same id and keeps the composer draft', async ({ page }) => {
+  const state = await mockAPI(page)
+  await page.goto('/')
+  await page.getByRole('button', { name: '以游客登录' }).click()
+  const input = page.getByRole('textbox', { name: '消息输入' })
+  await input.fill('需要继续的任务')
+  await page.getByRole('button', { name: '发送消息', exact: true }).click()
+  await page.getByRole('button', { name: '取消生成', exact: true }).click()
+  await expect(page.getByRole('button', { name: '继续', exact: true })).toBeVisible()
+  await expect(page.getByRole('status')).toHaveText('已取消')
+  await input.fill('继续编辑草稿')
+  await page.getByRole('button', { name: '继续', exact: true }).click()
+  await expect(page.getByRole('button', { name: '取消生成', exact: true })).toBeVisible()
+  await expect(input).toHaveValue('继续编辑草稿')
+  expect(state.runs.get(10)?.resume_time).toBe(1)
+  await page.getByRole('button', { name: '取消生成', exact: true }).click()
+  await expect(page.getByRole('button', { name: '继续', exact: true })).toBeVisible()
+  Object.assign(state.runs.get(10)!, { status: 'failed', error: 'Model stream ended without response.completed',
+    error_code: 'model_stream_ended', error_desc: '模型回答意外中断，请重试。' })
+  await page.reload()
+  await expect(page.getByRole('button', { name: '重试', exact: true })).toBeVisible()
+  await expect(page.getByRole('status')).toHaveText('模型回答意外中断，请重试。')
+  await expect(page.getByText('Model stream ended without response.completed', { exact: true })).toHaveCount(0)
+  await page.screenshot({ path: 'test-results/resume-failed.png', fullPage: true })
+  await page.getByRole('button', { name: '重试', exact: true }).click()
+  await expect(page.getByRole('button', { name: '取消生成', exact: true })).toBeVisible()
+  expect(state.runs.get(10)?.resume_time).toBe(2)
+  expect(state.posts.filter(post => post.path === '/runs/10/resume').map(post => post.body)).toEqual([{ resume_time: 0 }, { resume_time: 1 }])
+  expect(state.messages.get(1)?.filter(message => message.role === 'user')).toHaveLength(1)
 })

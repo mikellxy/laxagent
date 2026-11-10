@@ -23,10 +23,12 @@ from storage_helpers import message_snapshot
 async def test_migration_has_no_foreign_keys_and_nullable_tool_columns(repository):
     def check(connection):
         schema = inspect(connection)
-        assert set(schema.get_table_names()) == {
+        business_tables = {
             "users", "projects", "sessions", "messages", "session_messages", "runs", "memories", "user_configs", "alembic_version",
         }
-        for table in schema.get_table_names():
+        assert business_tables <= set(schema.get_table_names())
+        assert all(table.startswith('checkpoint') for table in set(schema.get_table_names()) - business_tables)
+        for table in business_tables:
             assert schema.get_foreign_keys(table) == []
         for table in ("messages", "session_messages"):
             columns = {c["name"]: c for c in schema.get_columns(table)}
@@ -123,7 +125,7 @@ async def test_preparation_orders_context_and_hides_database_fields(repository, 
         session = await transaction.get(Session, conversation["session_id"])
         session.next_msg_seq = 3
     result = await prepare(
-        {**conversation, "user_query": "third", "next_msg_seq": 1, "messages": []},
+        {**conversation, "user_query": "third", "next_msg_seq": 3, "messages": []},
         Runtime(context=AgentContext(None, None, repository)),
     )
     assert result["workspace"] == str(get_project_workdir(conversation["user_id"], conversation["project_id"]))

@@ -34,9 +34,10 @@ async def chat_api(repository, conversation, config_data, monkeypatch):
     async with EventStore.connect(config.nats.url) as events, client_for(ModelStream([completed()]), captured) as client:
         create = events.create_run
 
-        async def tracked_create(run_id):
-            await create(run_id)
-            created.append(run_id)
+        async def tracked_create(run_id, **kwargs):
+            await create(run_id, **kwargs)
+            if run_id not in created:
+                created.append(run_id)
 
         monkeypatch.setattr(events, "create_run", tracked_create)
         context = AgentContext(client, events, repository)
@@ -84,7 +85,7 @@ async def test_chat_snapshots_model_checkpoint_and_sse_replay(chat_api):
     result = await h.api.post(chat_path(h), json=payload())
     assert result.status_code == 202, result.text
     run_id = result.json()["run_id"]
-    assert result.json() == {"run_id": run_id, "session_id": h.conversation["session_id"], "status": "waiting"}
+    assert result.json() == {"run_id": run_id, "session_id": h.conversation["session_id"], "status": "waiting", "resume_time": 0}
     # The stream exists before the response is sent, even if the worker has not started.
     await h.context.events.js.stream_info(h.context.events.stream_name(run_id))
     summary = await wait_run(h, run_id)

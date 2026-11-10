@@ -3,7 +3,9 @@ export interface Session extends Project { project_id: number; next_msg_seq: num
 export interface Run {
   run_id: number; session_id: number; status: 'waiting' | 'running' | 'success' | 'failed' | 'cancelled'
   model: string; error: string | null
+  resume_time: number; error_code: string | null; error_desc: string | null
 }
+export interface SubmittedRun { run_id: number; session_id: number; status: 'waiting'; resume_time: number }
 export interface SessionDetail extends Session { latest_run: Run | null }
 export interface ReasoningPart { channel: 'text' | 'summary'; text: string }
 export interface TextMessage { seq: number; role: 'user' | 'assistant'; content: string; reasoning?: ReasoningPart[] }
@@ -15,6 +17,7 @@ export interface StreamEvent {
   run_id: number; msg_seq: number | null; type: string; role: string; error: string | null
   content: string | Record<string, unknown>
   channel?: 'text' | 'summary'
+  resume_time?: number
 }
 export interface LoginResponse { access_token: string; token_type: string; expires_in: number; initial_session_id: number | null }
 

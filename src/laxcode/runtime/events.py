@@ -14,6 +14,7 @@ from nats.js.errors import NotFoundError
 
 class Event(TypedDict):
     run_id: int
+    resume_time: int
     msg_seq: int | None
     role: Literal["assistant", "system", "tool"]
     type: str
@@ -22,9 +23,9 @@ class Event(TypedDict):
 
 
 def make_event(run_id: int, kind: str, content: str | dict, *,
-               msg_seq: int | None = None, error: str | None = None,
+               msg_seq: int | None = None, error: str | None = None, resume_time: int = 0,
                role: Literal["assistant", "system", "tool"] | None = None, **extra) -> Event:
-    return {"run_id": run_id, "msg_seq": msg_seq,
+    return {"run_id": run_id, "resume_time": resume_time, "msg_seq": msg_seq,
             "role": role or ("assistant" if msg_seq is not None else "system"),
             "type": kind, "error": error, "content": content, **extra}
 
@@ -71,7 +72,7 @@ class EventStore:
     def subject(run_id: int) -> str:
         return f"laxcode.runs.{run_id}.events"
 
-    async def create_run(self, run_id: int):
+    async def create_run(self, run_id: int, *, exist_ok: bool = False):
         # The application runs a single worker; serialize existence-check + create.
         async with self._create_lock:
             try:
@@ -84,7 +85,8 @@ class EventStore:
                         num_replicas=1,
                     )
                 else:
-                    raise EventStoreError("Run already exists", 409)
+                    if not exist_ok:
+                        raise EventStoreError("Run already exists", 409)
             except nats.errors.Error:
                 raise EventStoreError() from None
 
@@ -135,13 +137,13 @@ def encode_sse(event: Event, sequence: int | None = None) -> bytes:
             f"data: {json.dumps(event, ensure_ascii=False)}\n\n").encode()
 
 
-async def stream_events(sub, run_id: int, *, heartbeat=15, idle_timeout=330) -> AsyncIterator[bytes]:
+async def stream_events(sub, run_id: int, *, resume_time=0, heartbeat=15, idle_timeout=330) -> AsyncIterator[bytes]:
     loop = asyncio.get_running_loop()
     last_event = loop.time()
     while True:
         remaining = idle_timeout - (loop.time() - last_event)
         if remaining <= 0:
-            yield encode_sse(make_event(run_id, "error", {}, error="Event consumption timed out"))
+            yield encode_sse(make_event(run_id, "error", {}, error="Event consumption timed out", resume_time=resume_time))
             return
         try:
             messages = await sub.fetch(batch=1, timeout=min(heartbeat, remaining))
@@ -149,14 +151,17 @@ async def stream_events(sub, run_id: int, *, heartbeat=15, idle_timeout=330) -> 
             yield b": heartbeat\n\n"
             continue
         except nats.errors.Error:
-            yield encode_sse(make_event(run_id, "error", {}, error="Event storage unavailable"))
+            yield encode_sse(make_event(run_id, "error", {}, error="Event storage unavailable", resume_time=resume_time))
             return
         for message in messages:
             try:
                 event = json.loads(message.data)
+                # Filter before forwarding terminal events or unfinished chunks.
+                if event.get("resume_time", 0) != resume_time:
+                    continue
                 payload = encode_sse(event, message.metadata.sequence.stream)
             except (ValueError, KeyError, TypeError):
-                yield encode_sse(make_event(run_id, "error", {}, error="Invalid stored event"))
+                yield encode_sse(make_event(run_id, "error", {}, error="Invalid stored event", resume_time=resume_time))
                 return
             last_event = loop.time()
             yield payload

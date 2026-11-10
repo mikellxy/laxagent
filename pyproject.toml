@@ -8,6 +8,7 @@ dependencies = [
     "fastapi>=0.121,<1",
     "httpx2[socks]>=2.16.0",
     "langgraph>=1.2.20",
+    "langgraph-checkpoint-postgres>=3,<4",
     "nats-py>=2.16.0",
     "openai>=3.46.0",
     "psycopg[binary]>=3,<4",

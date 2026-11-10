@@ -1,10 +1,13 @@
 import asyncio
 import logging
 from collections.abc import Callable
+from dataclasses import replace
 from math import inf
 
 import anyio
 from langgraph.errors import GraphRecursionError
+from langgraph.types import Command
+from psycopg import Error as PsycopgError
 
 from laxcode.agent.context import AgentContext
 from laxcode.agent.state import AgentState
@@ -32,7 +35,7 @@ def classify_run_error(exc: Exception) -> RunError:
         return registered_run_error(exc)
     if isinstance(exc, GraphRecursionError):
         return make_run_error("graph_step_limit_reached")
-    if isinstance(exc, DatabaseError):
+    if isinstance(exc, (DatabaseError, PsycopgError)):
         return make_run_error("run_storage_failed")
     if isinstance(exc, EventStoreError):
         return make_run_error("run_event_failed")
@@ -46,7 +49,7 @@ async def fail_run(run_id: int, context: AgentContext, error: RunError, *, cance
     async def finish():
         with anyio.move_on_after(5, shield=True):
             try:
-                changed = await context.repository.finish_run(run_id, error=error)
+                changed = await context.repository.finish_run(run_id, error=error, resume_time=context.resume_time)
             except DatabaseError:
                 logger.error("Could not persist failed run %s", run_id)
                 return
@@ -56,9 +59,11 @@ async def fail_run(run_id: int, context: AgentContext, error: RunError, *, cance
                 if not cancelled:
                     await context.events.publish(make_event(
                         run_id, "response_incomplete" if incomplete else "error", {}, error=message,
+                        resume_time=context.resume_time,
                     ))
                 status = "cancelled" if cancelled else "incomplete" if incomplete else "failed"
-                await context.events.publish(make_event(run_id, "sse_end", {"status": status}, error=message))
+                await context.events.publish(make_event(run_id, "sse_end", {"status": status}, error=message,
+                                                        resume_time=context.resume_time))
             except EventStoreError:
                 logger.warning("Could not publish failure for run %s", run_id)
     await drain(asyncio.create_task(finish()))
@@ -66,10 +71,11 @@ async def fail_run(run_id: int, context: AgentContext, error: RunError, *, cance
 
 async def complete_run(run_id: int, context: AgentContext):
     async def finish():
-        changed = await context.repository.finish_run(run_id)
+        changed = await context.repository.finish_run(run_id, resume_time=context.resume_time)
         if changed:
             try:
-                await context.events.publish(make_event(run_id, "sse_end", {"status": "completed"}))
+                await context.events.publish(make_event(run_id, "sse_end", {"status": "completed"},
+                                                        resume_time=context.resume_time))
             except EventStoreError:
                 logger.warning("Run %s succeeded but its completion event could not be published", run_id)
 
@@ -84,20 +90,26 @@ async def run_agent(graph, run_id: int, context: AgentContext, *,
         run = await context.repository.claim_run(run_id)
         if run is None:
             return None
+        context = replace(context, resume_time=run.resume_time)
         # Recheck ownership after dispatch; API validation is not execution authorization.
         await context.repository.get_run(run_id, run.user_id)
-        user_configs = await context.repository.get_user_configs(run.user_id)
-        state: AgentState = {
-            "user_configs": user_configs,
-            "user_id": run.user_id, "project_id": run.project_id, "session_id": run.session_id,
-            "run_id": run.id, "user_query": run.user_query, "model": run.model,
-            "messages": [], "model_input": [], "pending_tool_calls": [],
-        }
+        if run.resume_time:
+            state = Command(update={"tool_node_state_uncertain": True})
+        else:
+            user_configs = await context.repository.get_user_configs(run.user_id)
+            session, _ = await context.repository.session_detail(run.user_id, run.session_id)
+            state = {
+                "user_configs": user_configs,
+                "user_id": run.user_id, "project_id": run.project_id, "session_id": run.session_id,
+                "run_id": run.id, "user_query": run.user_query, "model": run.model,
+                "messages": [], "model_input": [], "pending_tool_calls": [],
+                "next_msg_seq": session.next_msg_seq, "tool_node_state_uncertain": False,
+            }
         # LangGraph rejects -1; infinity disables its step cutoff without a finite substitute.
         recursion_limit = inf if context.recursion_limit == -1 else context.recursion_limit
         result = await graph.ainvoke(state, config={
             "recursion_limit": recursion_limit, "configurable": {"thread_id": run.thread_id},
-        }, context=context)
+        }, context=context, durability="sync" if getattr(graph, "checkpointer", None) else None)
         await complete_run(run_id, context)
     except asyncio.CancelledError:
         # User cancellation is terminalized by the manager after this worker fully exits.

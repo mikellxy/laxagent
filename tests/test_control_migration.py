@@ -28,4 +28,4 @@ async def test_control_migration_roundtrip_preserves_records(repository, convers
         await asyncio.to_thread(command.upgrade, config, 'head')
     async with repository.db.transaction() as tx:
         assert await tx.scalar(text('SELECT deleted_at FROM sessions WHERE id = :id'), {'id': conversation['session_id']}) is None
-        assert await tx.scalar(text('SELECT version_num FROM alembic_version')) == '0006'
+        assert await tx.scalar(text('SELECT version_num FROM alembic_version')) == '0007'

@@ -3,7 +3,7 @@ from pathlib import Path
 
 from fastapi import FastAPI
 from fastapi.responses import JSONResponse
-from langgraph.checkpoint.memory import InMemorySaver
+from psycopg import Error as PsycopgError
 
 from laxcode.agent.context import AgentContext
 from laxcode.agent.graph import build_graph
@@ -21,6 +21,7 @@ from laxcode.runtime.events import EventStore, EventStoreError
 from laxcode.runtime.task_manager import TaskManager
 from laxcode.storage.database import Database, DatabaseError
 from laxcode.storage.repositories import Repository
+from laxcode.storage.checkpoints import open_checkpointer
 
 
 def create_app(config: AppConfig | None = None) -> FastAPI:
@@ -31,13 +32,14 @@ def create_app(config: AppConfig | None = None) -> FastAPI:
             return
         async with AsyncExitStack() as stack:
             db = await stack.enter_async_context(Database.open(config.database))
+            checkpointer = await stack.enter_async_context(open_checkpointer(config.database))
             events = await stack.enter_async_context(EventStore.connect(config.nats.url))
             client = await stack.enter_async_context(create_client(config.llm_router.port))
             app.state.agent_context = AgentContext(
                 client, events, Repository(db), recursion_limit=config.recursion_limit,
             )
             await app.state.agent_context.repository.fail_interrupted_runs()
-            app.state.graph = build_graph(checkpointer=InMemorySaver())
+            app.state.graph = build_graph(checkpointer=checkpointer)
             app.state.task_manager = TaskManager(app.state.graph, app.state.agent_context)
             try:
                 yield
@@ -57,6 +59,10 @@ def create_app(config: AppConfig | None = None) -> FastAPI:
     @app.exception_handler(EventStoreError)
     async def database_error(request, exc):
         return JSONResponse({"detail": {"error": str(exc)}}, status_code=exc.status)
+
+    @app.exception_handler(PsycopgError)
+    async def checkpoint_error(request, exc):
+        return JSONResponse({"detail": {"error": "Database unavailable"}}, status_code=503)
 
     if config is not None and config.frontend is not None:
         app.mount("/", frontend_files(Path(config.frontend.dist_dir)))

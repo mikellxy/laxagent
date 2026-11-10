@@ -129,3 +129,14 @@ def registered_run_error(error: RunError) -> RunError:
     """Rebuild from the catalog so ad-hoc messages/metadata never reach users."""
     code = error.code if isinstance(error, RunError) else None
     return make_run_error(code if code in RUN_FAILURES else "agent_execution_failed")
+
+
+def failure_description(code: str | None, message: str | None) -> str:
+    """Legacy text matching is display-only, never a resume eligibility check."""
+    if code in RUN_FAILURES:
+        return RUN_FAILURES[code]["desc"]
+    if code is None and message is not None:
+        for definition in RUN_FAILURES.values():
+            if definition["message"] == message:
+                return definition["desc"]
+    return RUN_FAILURES["agent_execution_failed"]["desc"]

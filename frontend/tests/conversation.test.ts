@@ -6,14 +6,15 @@ import type { Message, MessagePage, TextMessage, Run, SessionDetail, StreamEvent
 const user = (seq: number, content = `user ${seq}`): Message => ({ seq, role: 'user', content })
 const assistant = (seq: number, content: string): TextMessage => ({ seq, role: 'assistant', content })
 const page = (items: Message[], has_more = false): MessagePage => ({ items, has_more, next_before_seq: has_more ? items[0].seq : null })
-const run = (status: Run['status'] = 'running'): Run => ({ run_id: 10, session_id: 1, model: 'p:m', status, error: null })
+const run = (status: Run['status'] = 'running'): Run => ({ run_id: 10, session_id: 1, model: 'p:m', status, error: null, error_code: null, error_desc: null, resume_time: 0 })
 const detail = (next_msg_seq = 2, latest_run: Run | null = run()): SessionDetail => ({ id: 1, user_id: 'owner', name: 'session', project_id: 1, next_msg_seq, latest_run })
 function deferred<T>() { let resolve!: (value: T) => void, reject!: (error: unknown) => void; const promise = new Promise<T>((a, b) => { resolve = a; reject = b }); return { promise, resolve, reject } }
 function harness(initial = detail(), rows: Message[] = [user(1)]) {
   let receive: (event: StreamEvent) => void = () => {}
   const transport: Transport = {
     detail: vi.fn().mockResolvedValue(initial), messages: vi.fn().mockResolvedValue(page(rows)),
-    chat: vi.fn().mockResolvedValue({ run_id: 10, status: 'waiting' }),
+    chat: vi.fn().mockResolvedValue({ run_id: 10, session_id: 1, status: 'waiting', resume_time: 0 }),
+    resumeRun: vi.fn().mockResolvedValue({ run_id: 10, session_id: 1, status: 'waiting', resume_time: 1 }),
     cancelRun: vi.fn().mockResolvedValue(run('cancelled')),
     stream: vi.fn((_id, callback, signal) => {
       receive = callback
@@ -144,7 +145,7 @@ describe('conversation synchronization', () => {
     await h.controller.refresh(); await h.controller.send('hello', 'p:m')
     vi.mocked(h.transport.detail).mockResolvedValue(detail(1, { ...run('failed'), error: 'Workspace initialization failed' }))
     h.event('sse_end', null, {})
-    await waitFor(() => expect(h.controller.getSnapshot().error).toBe('Workspace initialization failed'))
+    await waitFor(() => expect(h.controller.getSnapshot().detail?.latest_run?.error).toBe('Workspace initialization failed'))
     expect(h.controller.getSnapshot().pending?.failed).toBe(true)
     expect(h.controller.getSnapshot().messages).toEqual([])
     h.controller.dispose()
@@ -247,5 +248,69 @@ it('does a fresh read when cancellation races an older detail snapshot', async (
   await refresh; await cancel
   expect(h.controller.getSnapshot().detail?.latest_run?.status).toBe('cancelled')
   expect(h.controller.getSnapshot().busy).toBe(false)
+  h.controller.dispose()
+})
+
+it.each(['failed', 'cancelled'] as const)('resumes %s once, preserves history and filters previous attempt events', async status => {
+  const h = harness()
+  await h.controller.refresh()
+  const oldCallback = vi.mocked(h.transport.stream).mock.calls[0][1]
+  h.event('message_chunk', 2, 'old partial')
+  await waitFor(() => expect(h.controller.getSnapshot().syncing).toBe(false))
+  vi.mocked(h.transport.detail).mockResolvedValue(detail(2, run(status)))
+  await h.controller.refresh()
+  const response = deferred<{ run_id: number; session_id: number; status: 'waiting'; resume_time: number }>()
+  vi.mocked(h.transport.resumeRun).mockReturnValue(response.promise)
+  const pending = h.controller.resume()
+  await h.controller.resume()
+  expect(h.transport.resumeRun).toHaveBeenCalledExactlyOnceWith(10, 0, expect.any(AbortSignal))
+  expect(h.controller.getSnapshot()).toMatchObject({ busy: true, resuming: true })
+  expect(await h.controller.send('not yet', 'p:m')).toBe(false)
+  vi.mocked(h.transport.detail).mockResolvedValue(detail(2, { ...run(), resume_time: 1 }))
+  response.resolve({ run_id: 10, session_id: 1, status: 'waiting', resume_time: 1 })
+  await pending
+  const callback = vi.mocked(h.transport.stream).mock.calls.at(-1)![1]
+  const event: StreamEvent = { run_id: 10, msg_seq: 2, type: 'message_chunk', content: 'old', role: 'assistant', error: null, resume_time: 0 }
+  oldCallback(event); callback(event)
+  expect(h.controller.getSnapshot().messages).toEqual([user(1)])
+  callback({ ...event, resume_time: 1, content: 'new' })
+  await waitFor(() => expect(h.controller.getSnapshot().messages.at(-1)).toEqual(assistant(2, 'new')))
+  expect(h.transport.stream).toHaveBeenLastCalledWith(10, expect.any(Function), expect.any(AbortSignal), 1)
+  expect(h.transport.chat).not.toHaveBeenCalled()
+  h.controller.dispose()
+})
+
+it('reconciles a lost resume response without posting again', async () => {
+  const h = harness(detail(2, run('failed')))
+  await h.controller.refresh()
+  vi.mocked(h.transport.resumeRun).mockRejectedValue(new Error('response lost'))
+  vi.mocked(h.transport.detail).mockResolvedValue(detail(2, { ...run(), resume_time: 1 }))
+  await h.controller.resume()
+  expect(h.controller.getSnapshot()).toMatchObject({ busy: true, resuming: false, error: 'response lost' })
+  expect(h.transport.resumeRun).toHaveBeenCalledOnce()
+  expect(h.transport.stream).toHaveBeenLastCalledWith(10, expect.any(Function), expect.any(AbortSignal), 1)
+  h.controller.dispose()
+})
+
+it('shows a rejected resume reason and keeps the run available', async () => {
+  const h = harness(detail(2, run('cancelled')))
+  await h.controller.refresh()
+  vi.mocked(h.transport.resumeRun).mockRejectedValue(new Error('恢复点不存在或已失效'))
+  await h.controller.resume()
+  expect(h.controller.getSnapshot()).toMatchObject({ busy: false, resuming: false, error: '恢复点不存在或已失效' })
+  expect(h.controller.getSnapshot().detail?.latest_run?.status).toBe('cancelled')
+  expect(h.transport.stream).not.toHaveBeenCalled()
+  h.controller.dispose()
+})
+
+it('switches attempts when a background read observes another tab resuming', async () => {
+  const h = harness()
+  await h.controller.refresh()
+  h.event('message_chunk', 2, 'discard this attempt')
+  await waitFor(() => expect(h.controller.getSnapshot().syncing).toBe(false))
+  vi.mocked(h.transport.detail).mockResolvedValue(detail(2, { ...run(), resume_time: 1 }))
+  await h.controller.refresh(false)
+  expect(h.controller.getSnapshot().messages).toEqual([user(1)])
+  expect(h.transport.stream).toHaveBeenLastCalledWith(10, expect.any(Function), expect.any(AbortSignal), 1)
   h.controller.dispose()
 })

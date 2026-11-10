@@ -3,6 +3,7 @@ from types import SimpleNamespace
 
 import pytest
 from langgraph.errors import GraphRecursionError
+from psycopg import OperationalError
 
 from laxcode.agent.context import AgentContext
 from laxcode.models.errors import ModelError
@@ -62,6 +63,7 @@ def test_registered_error_uses_catalog_payload_not_mutable_exception_fields():
 
 
 FAILURES = [
+    (OperationalError("checkpoint-secret-key"), "run_storage_failed"),
     (DatabaseError("secret-key"), "run_storage_failed"),
     (DatabaseError("Session not found", 404), "run_storage_failed"),
     (DatabaseError("Session message sequence changed", 409), "run_storage_failed"),

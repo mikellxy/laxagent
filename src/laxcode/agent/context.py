@@ -12,3 +12,4 @@ class AgentContext:
     events: EventStore
     repository: Repository
     recursion_limit: int = -1
+    resume_time: int = 0

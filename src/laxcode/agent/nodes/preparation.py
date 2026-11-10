@@ -56,6 +56,7 @@ async def prepare(state: AgentState, runtime: Runtime[AgentContext]):
     next_seq, messages = await runtime.context.repository.append_message(
         user_id=state["user_id"], project_id=state["project_id"], session_id=state["session_id"],
         role="user", content=state["user_query"], load_context=True,
+        expected_seq=state.get("next_msg_seq"), replay_safe=True,
     )
     messages = [{"role": "system", "content": system_prompt(workspace, state.get("user_configs"))}, *messages]
     return {

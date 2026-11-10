@@ -1,5 +1,6 @@
 import asyncio
 import logging
+from dataclasses import replace
 from weakref import WeakValueDictionary
 
 from laxcode.run_errors import make_run_error
@@ -17,6 +18,7 @@ class TaskManager:
         self.graph = graph
         self.context = context
         self.tasks: dict[int, asyncio.Task] = {}
+        self.task_attempts: dict[int, int] = {}
         self.submissions: set[asyncio.Task] = set()
         self.controls: set[asyncio.Task] = set()
         self.locks: WeakValueDictionary[int, asyncio.Lock] = WeakValueDictionary()
@@ -56,17 +58,54 @@ class TaskManager:
             await self.context.events.create_run(run.id)
             if self.closing:
                 raise DatabaseError("Agent runtime is shutting down")
-            task = asyncio.create_task(run_agent(
-                self.graph, run.id, self.context,
-                user_cancelled=lambda: run.id in self.user_cancellations,
-            ), name=f"run-{run.id}")
-            self.tasks[run.id] = task
-            task.add_done_callback(lambda completed: self.tasks.pop(run.id, None))
-            task.add_done_callback(self.consume)
+            self._dispatch(run)
             return run
         except BaseException:
             await fail_run(run.id, self.context, make_run_error("run_submission_failed"))
             raise
+
+    def _dispatch(self, run):
+        task = asyncio.create_task(run_agent(
+            self.graph, run.id, replace(self.context, resume_time=run.resume_time),
+            user_cancelled=lambda: run.id in self.user_cancellations,
+        ), name=f"run-{run.id}-{run.resume_time}")
+        self.tasks[run.id] = task
+        self.task_attempts[run.id] = run.resume_time
+        def remove(completed):
+            if self.tasks.get(run.id) is completed:
+                self.tasks.pop(run.id)
+                self.task_attempts.pop(run.id)
+        task.add_done_callback(remove)
+        task.add_done_callback(self.consume)
+
+    async def resume(self, user_id: str, run_id: int, resume_time: int):
+        return await self.control(self._resume, user_id, run_id, resume_time)
+
+    async def _resume(self, user_id, run_id, resume_time):
+        repository = self.context.repository
+        run = await repository.get_run(run_id, user_id)
+        async with self.session_lock(run.session_id):
+            run = await repository.get_run(run_id, user_id)
+            _, latest = await repository.session_detail(user_id, run.session_id)
+            if latest is None or latest.id != run.id or run.status not in ("failed", "cancelled") or run.resume_time != resume_time:
+                raise DatabaseError("任务状态已变化，请刷新后重试", 409)
+            task = self.tasks.get(run_id)
+            if task is not None:
+                await asyncio.gather(task, return_exceptions=True)
+            snapshot = await self.graph.aget_state({"configurable": {"thread_id": run.thread_id}})
+            if not snapshot.values or snapshot.values.get("run_id") != run.id:
+                raise DatabaseError("恢复点不存在或已失效，请发送新消息重新开始", 409)
+            if self.closing:
+                raise DatabaseError("Agent runtime is shutting down")
+            await self.context.events.create_run(run.id, exist_ok=True)
+            run = await repository.resume_run(user_id, run_id, resume_time)
+            try:
+                self._dispatch(run)
+            except BaseException:
+                await fail_run(run.id, replace(self.context, resume_time=run.resume_time),
+                               make_run_error("run_submission_failed"))
+                raise
+            return run
 
     async def control(self, operation, *args):
         if self.closing:
@@ -99,10 +138,11 @@ class TaskManager:
                 if run.status in ("waiting", "running") and not task.done() and not task.cancelling():
                     task.cancel()
                 await asyncio.gather(task, return_exceptions=True)
-            changed = await self.context.repository.finish_run(run.id, cancelled=True)
+            changed = await self.context.repository.finish_run(run.id, cancelled=True, resume_time=run.resume_time)
             if changed:
                 try:
-                    await self.context.events.publish(make_event(run.id, "sse_end", {"status": "cancelled"}))
+                    await self.context.events.publish(make_event(run.id, "sse_end", {"status": "cancelled"},
+                                                                resume_time=run.resume_time))
                 except EventStoreError:
                     logger.warning("Could not publish cancellation for run %s", run.id)
         finally:
@@ -132,9 +172,11 @@ class TaskManager:
         if self.controls:
             await asyncio.gather(*self.controls, return_exceptions=True)
         active = list(self.tasks.items())
+        attempts = dict(self.task_attempts)
         for _, task in active:
             task.cancel()
         await asyncio.gather(*(task for _, task in active), return_exceptions=True)
         for run_id, _ in active:
             # Covers a task cancelled before its coroutine entered run_agent.
-            await fail_run(run_id, self.context, make_run_error("execution_cancelled"), cancelled=True)
+            await fail_run(run_id, replace(self.context, resume_time=attempts[run_id]),
+                           make_run_error("execution_cancelled"), cancelled=True)

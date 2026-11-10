@@ -75,6 +75,7 @@ class Session(Base):
 class Run(Base):
     __tablename__ = "runs"
     __table_args__ = (
+        CheckConstraint("resume_time >= 0", name="ck_runs_resume_time"),
         CheckConstraint("status IN ('waiting', 'running', 'success', 'failed', 'cancelled')", name="ck_runs_status"),
         CheckConstraint("context_limit > 0 AND output_limit > 0 AND output_limit <= context_limit",
                         name="ck_runs_limits"),
@@ -97,6 +98,8 @@ class Run(Base):
     started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     error: Mapped[str | None] = mapped_column(Text)
+    error_code: Mapped[str | None] = mapped_column(Text)
+    resume_time: Mapped[int] = mapped_column(Integer, server_default=text("0"))
 
 
 class MessageColumns:

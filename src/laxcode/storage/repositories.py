@@ -167,19 +167,44 @@ class Repository:
             ).values(status="running", started_at=func.now()).returning(Run))
         return run
 
-    async def finish_run(self, run_id: int, *, error: RunError | None = None, cancelled=False) -> bool:
-        message = str(registered_run_error(error)) if error is not None else None
+    async def resume_run(self, user_id: str, run_id: int, resume_time: int) -> Run:
         async with self.db.transaction() as transaction:
-            result = await transaction.execute(update(Run).where(
-                Run.id == run_id, Run.status.in_(["waiting", "running"]),
-            ).values(status="cancelled" if cancelled else "failed" if error is not None else "success",
-                     finished_at=func.now(), error=message))
+            run = await transaction.get(Run, run_id)
+            if run is None or run.user_id != user_id:
+                raise DatabaseError("Run not found", 404)
+            session = await transaction.scalar(self.owned_session(user_id, run.session_id).with_for_update(of=Session))
+            if session is None or session.project_id != run.project_id:
+                raise DatabaseError("Run not found", 404)
+            # Refresh after locking the session, which also serializes chat submission.
+            await transaction.refresh(run)
+            latest_id = await transaction.scalar(select(func.max(Run.id)).where(Run.session_id == session.id))
+            if latest_id != run.id or run.status not in ("failed", "cancelled") or run.resume_time != resume_time:
+                raise DatabaseError("任务状态已变化，请刷新后重试", 409)
+            run.status = "waiting"
+            run.resume_time += 1
+            run.error = run.error_code = None
+            run.started_at = run.finished_at = None
+            await transaction.flush()
+        return run
+
+    async def finish_run(self, run_id: int, *, error: RunError | None = None, cancelled=False,
+                         resume_time: int | None = None) -> bool:
+        error = registered_run_error(error) if error is not None else None
+        statement = update(Run).where(Run.id == run_id, Run.status.in_(["waiting", "running"]))
+        if resume_time is not None:
+            statement = statement.where(Run.resume_time == resume_time)
+        async with self.db.transaction() as transaction:
+            result = await transaction.execute(statement.values(
+                status="cancelled" if cancelled else "failed" if error is not None else "success",
+                finished_at=func.now(), error=str(error) if error else None, error_code=error.code if error else None,
+            ))
         return result.rowcount == 1
 
     async def fail_interrupted_runs(self):
         async with self.db.transaction() as transaction:
             await transaction.execute(update(Run).where(Run.status.in_(["waiting", "running"])).values(
                 status="failed", finished_at=func.now(), error=str(make_run_error("service_execution_interrupted")),
+                error_code="service_execution_interrupted",
             ))
 
     async def create_user(self, user_id: str) -> User:
@@ -285,6 +310,7 @@ class Repository:
         tool_call_id: str | None = None, tool_name: str | None = None,
         tool_call: dict | list[dict] | None = None,
         reasoning: list[dict] | None = None,
+        replay_safe: bool = False,
     ) -> tuple[int, list[dict]]:
         async with self.db.transaction() as transaction:
             session = await transaction.scalar(select(Session).where(
@@ -300,14 +326,25 @@ class Repository:
             if owner is None:
                 raise DatabaseError("Project not found", 404)
             seq = session.next_msg_seq
-            if expected_seq is not None and expected_seq != seq:
+            replay = replay_safe and expected_seq is not None and expected_seq < seq
+            if replay:
+                seq = expected_seq
+            elif expected_seq is not None and expected_seq != seq:
                 raise DatabaseError("Session message sequence changed", 409)
             values = dict(seq=seq, session_id=session_id, role=role, content=content,
                           tool_call_id=tool_call_id, tool_name=tool_name, tool_call=tool_call,
                           reasoning=reasoning)
-            transaction.add_all([Message(**values), SessionMessage(**values)])
-            session.next_msg_seq = seq + 1
-            await transaction.flush()
+            if replay:
+                for table in (Message, SessionMessage):
+                    existing = await transaction.scalar(select(table).where(
+                        table.session_id == session_id, table.seq == seq,
+                    ))
+                    if existing is None or any(getattr(existing, key) != value for key, value in values.items()):
+                        raise DatabaseError("Session message replay mismatch", 409)
+            else:
+                transaction.add_all([Message(**values), SessionMessage(**values)])
+                session.next_msg_seq = seq + 1
+                await transaction.flush()
             messages = []
             if load_context:
                 rows = (await transaction.execute(select(

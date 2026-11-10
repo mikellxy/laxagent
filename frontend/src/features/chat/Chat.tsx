@@ -165,6 +165,8 @@ export function Chat({ owner, sessionId, onMissing }: { owner: string; sessionId
     const submitted = draft
     if (await conversation.send(submitted, model)) setDraft(current => current === submitted ? '' : current)
   }
+  const latestRun = snapshot.detail?.latest_run
+  const canResume = latestRun?.status === 'failed' || latestRun?.status === 'cancelled'
   const rows: { key: string; seq: number; members: string; node: React.ReactNode }[] = groupTimeline(snapshot.messages, snapshot.pending ? null : snapshot.activity).map(row => ({
     key: row.key, seq: row.seq, members: row.kind === 'work' ? row.items.map(item => `process:${item.message.seq}`).join(',') : `message:${row.seq}`,
     node: row.kind === 'work' ? <WorkCard group={row} fold={fold} /> : <MessageCard message={row.message} />,
@@ -190,7 +192,13 @@ export function Chat({ owner, sessionId, onMissing }: { owner: string; sessionId
     <div className={styles.footer}>
       {!following && <button className={styles.latest} onClick={() => { anchor.current = null; setFollow(true); moveScroll(el => { el.scrollTop = el.scrollHeight }) }}><ArrowDown size={14} />回到最新</button>}
       {(snapshot.error || catalog.error) && <div className="error" role="alert">{snapshot.error ?? messageOf(catalog.error)}</div>}
-      {!snapshot.error && !snapshot.busy && snapshot.detail?.latest_run?.status === 'cancelled' && <div role="status" className={styles.cancelled}>已取消</div>}
+      {canResume && <div className={styles.resume}>
+        <button type="button" disabled={snapshot.busy || !snapshot.ready} onClick={() => void conversation.resume()}>
+          {snapshot.resuming && <LoaderCircle size={13} className="spin" />}
+          {latestRun.status === 'failed' ? '重试' : '继续'}
+        </button>
+        <span role="status">{latestRun.status === 'failed' ? latestRun.error_desc ?? '任务执行失败，请重试。' : '已取消'}</span>
+      </div>}
       <div className={styles.composer}>
         <textarea ref={textarea} aria-label="消息输入" value={draft} rows={2} onChange={e => setDraft(e.target.value)}
           onKeyDown={event => {

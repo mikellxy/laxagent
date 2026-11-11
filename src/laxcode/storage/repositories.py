@@ -199,17 +199,22 @@ class Repository:
         return run
 
     async def finish_run(self, run_id: int, *, error: RunError | None = None, cancelled=False,
-                         resume_time: int | None = None) -> bool:
+                         resume_time: int = 0) -> tuple[Run, bool]:
+        """Commit one attempt's terminal state and snapshot under the same row lock."""
         error = registered_run_error(error) if error is not None else None
-        statement = update(Run).where(Run.id == run_id, Run.status.in_(["waiting", "running"]))
-        if resume_time is not None:
-            statement = statement.where(Run.resume_time == resume_time)
         async with self.db.transaction() as transaction:
-            result = await transaction.execute(statement.values(
-                status="cancelled" if cancelled else "failed" if error is not None else "success",
-                finished_at=func.now(), error=str(error) if error else None, error_code=error.code if error else None,
-            ))
-        return result.rowcount == 1
+            run = await transaction.scalar(select(Run).where(Run.id == run_id).with_for_update())
+            if run is None or run.resume_time != resume_time:
+                raise DatabaseError("任务执行次数已变化，请刷新后重试", 409)
+            changed = run.status in ("waiting", "running")
+            if changed:
+                run.status = "cancelled" if cancelled else "failed" if error is not None else "success"
+                run.finished_at = func.now()
+                run.error = str(error) if error else None
+                run.error_code = error.code if error else None
+                await transaction.flush()
+                await transaction.refresh(run)
+        return run, changed
 
     async def request_cancellation(self, user_id: str, run_id: int, resume_time: int) -> Run:
         """Fix intent to one attempt; never cancel a concurrently resumed execution."""
@@ -226,21 +231,6 @@ class Repository:
                 await transaction.flush()
                 await transaction.refresh(run)
         return run
-
-    async def finish_cancellation(self, run_id: int, resume_time: int) -> tuple[Run, bool]:
-        """Only the local executor calls this, after its worker has fully exited."""
-        async with self.db.transaction() as transaction:
-            run = await transaction.scalar(select(Run).where(Run.id == run_id).with_for_update())
-            if run is None or run.resume_time != resume_time:
-                raise DatabaseError("任务执行次数已变化，请刷新后重试", 409)
-            changed = run.status in ("waiting", "running")
-            if changed:
-                run.status = "cancelled"
-                run.finished_at = func.now()
-                run.error = run.error_code = None
-                await transaction.flush()
-                await transaction.refresh(run)
-        return run, changed
 
     async def create_user(self, user_id: str) -> User:
         async with self.db.transaction() as transaction:

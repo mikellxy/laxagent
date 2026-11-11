@@ -68,15 +68,15 @@ async def test_remote_control_waits_for_owner_cleanup_and_coalesces_duplicates(c
             await asyncio.sleep(.05)
             assert all(not task.done() for task in tasks)
             assert (await remote.get(f'/api/v1/runs/{run_id}')).json()['status'] == 'running'
-            assert not manager.tasks
-            assert h.manager.tasks[run_id].cancelling() == 1
+            assert not manager.executions
+            assert h.manager.executions[run_id, 0].task.cancelling() == 1
         finally:
             release.set()
         responses = await asyncio.gather(*tasks)
         assert all(r.status_code == 200 and r.json()['status'] == 'cancelled' for r in responses[:3])
         if action == 'delete':
             assert responses[-1].status_code == 204
-        assert not h.manager.tasks
+        assert not h.manager.executions
 
 
 @pytest.mark.anyio
@@ -121,7 +121,7 @@ async def test_remote_cancel_during_commit_to_dispatch_gap(chat_api, monkeypatch
                     await asyncio.sleep(.01)
             # Deliver the command while neither manager has a task.
             await asyncio.sleep(.05)
-            assert run_id not in h.manager.tasks and not manager.tasks
+            assert (run_id, 0) not in h.manager.executions and not manager.executions
         finally:
             release.set()
         assert (await submitting).status_code == 202
@@ -139,16 +139,16 @@ async def test_remote_failure_reply_is_prompt_safe_and_retryable(chat_api, monke
         async with second_api(h) as (remote, manager):
             run_id = (await h.api.post(chat_path(h), json=payload())).json()['run_id']
             await asyncio.wait_for(entered.wait(), 2)
-            finish = h.context.repository.finish_cancellation
-            async def broken(*args):
+            finish = h.context.repository.finish_run
+            async def broken(*args, **kwargs):
                 raise DatabaseError('credential-secret')
-            monkeypatch.setattr(h.context.repository, 'finish_cancellation', broken)
+            monkeypatch.setattr(h.context.repository, 'finish_run', broken)
             async with asyncio.timeout(1):
                 result = await remote.post(f'/api/v1/runs/{run_id}/cancel')
             assert result.status_code == 503
             assert '取消收尾状态保存失败' in result.text and 'credential-secret' not in result.text
             assert (await remote.get(f'/api/v1/runs/{run_id}')).json()['status'] == 'running'
-            monkeypatch.setattr(h.context.repository, 'finish_cancellation', finish)
+            monkeypatch.setattr(h.context.repository, 'finish_run', finish)
             assert (await remote.post(f'/api/v1/runs/{run_id}/cancel')).json()['status'] == 'cancelled'
 
 
@@ -170,7 +170,7 @@ async def test_old_commands_and_results_do_not_cancel_resumed_attempt(chat_api):
             await asyncio.sleep(.05)
             current = await h.context.repository.get_run(run_id, old.user_id)
             assert current.resume_time == 1 and current.cancel_requested_at is None and current.status == 'running'
-            assert not h.manager.tasks[run_id].cancelling()
+            assert not h.manager.executions[run_id, 1].task.cancelling()
             assert await h.context.repository.claim_run(run_id, 0) is None
             result = await remote.post(f'/api/v1/runs/{run_id}/cancel')
             assert result.json()['status'] == 'cancelled' and result.json()['resume_time'] == 1

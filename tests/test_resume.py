@@ -168,7 +168,7 @@ async def test_missing_checkpoint_rejected_without_mutation(chat_api):
     run = await h.context.repository.create_run(user_id=h.conversation['user_id'], session_id=h.conversation['session_id'],
         user_query='hello', model='example:model-name', context_limit=100, output_limit=10)
     await h.context.events.create_run(run.id)
-    await h.context.repository.finish_cancellation(run.id, run.resume_time)
+    await h.context.repository.finish_run(run.id, resume_time=run.resume_time, cancelled=True)
     response = await resume(h, run.id)
     assert response.status_code == 409 and '恢复点' in response.text
     current = (await h.api.get(f'/api/v1/runs/{run.id}')).json()

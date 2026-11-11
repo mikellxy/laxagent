@@ -74,8 +74,9 @@ async def wait_run(h, run_id):
             assert result.status_code == 200, result.text
             if result.json()["status"] in ("success", "failed"):
                 # Terminal DB commit precedes terminal SSE publication.
-                if run_id in h.manager.tasks:
-                    await asyncio.gather(h.manager.tasks[run_id], return_exceptions=True)
+                execution = h.manager.executions.get((run_id, result.json()["resume_time"]))
+                if execution is not None:
+                    await asyncio.gather(execution.task, return_exceptions=True)
                 return result.json()
             await asyncio.sleep(0.01)
 
@@ -320,7 +321,7 @@ async def test_failed_terminal_commit_does_not_emit_success(chat_api, monkeypatc
     response = await h.api.post(chat_path(h), json=payload())
     run_id = response.json()["run_id"]
     async with asyncio.timeout(5):
-        while h.manager.tasks:
+        while h.manager.executions:
             await asyncio.sleep(0.01)
     run = await h.context.repository.get_run(run_id, h.conversation["user_id"])
     assert run.status == "running" and run.finished_at is None
@@ -350,4 +351,4 @@ async def test_shutdown_during_submission_marks_it_failed(chat_api, monkeypatch)
     async with h.context.repository.db.transaction() as tx:
         run = await tx.scalar(select(Run))
         assert run.status == "failed"
-    assert not h.captured and not h.manager.tasks
+    assert not h.captured and not h.manager.executions

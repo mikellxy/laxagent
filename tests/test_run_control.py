@@ -30,7 +30,7 @@ async def test_cancel_preserves_history_events_and_allows_next_run(chat_api):
         assert all(r.status_code == 200 and r.json()['status'] == 'cancelled' for r in responses)
         assert responses[0].json()['error'] is None
         assert responses[0].json()['finished_at']
-        assert stream.closed and run_id not in h.manager.tasks
+        assert stream.closed and (run_id, 0) not in h.manager.executions
         replay = await h.api.get(f'/api/v1/runs/{run_id}/events')
         assert replay.text.count('event: sse_end') == 1
         assert '"status": "cancelled"' in replay.text
@@ -127,7 +127,7 @@ async def test_delete_waits_for_submission_and_survives_request_disconnect(chat_
     assert (await submitting).status_code == 202
     await asyncio.wait_for(asyncio.gather(*h.manager.controls), 5)
     assert (await h.api.get(f"/api/v1/sessions/{h.conversation['session_id']}")).status_code == 404
-    assert not h.manager.tasks
+    assert not h.manager.executions
 
 
 @pytest.mark.anyio
@@ -154,12 +154,12 @@ async def test_cancellation_drains_cleanup_once_before_delete_and_shutdown(chat_
     closing = asyncio.create_task(h.manager.close())
     await asyncio.sleep(0)
     assert not cancel.done() and not deleting.done() and not closing.done()
-    assert h.manager.tasks[run_id].cancelling() == 1
+    assert h.manager.executions[run_id, 0].task.cancelling() == 1
     release.set()
     assert (await cancel).json()['status'] == 'cancelled'
     assert (await deleting).status_code == 204
     await closing
-    assert not h.manager.tasks
+    assert not h.manager.executions
 
 
 @pytest.mark.anyio
@@ -169,7 +169,7 @@ async def test_natural_completion_wins_cancel_without_losing_end_event(chat_api,
     entered, release = asyncio.Event(), asyncio.Event()
     finish = h.context.repository.finish_run
     async def blocked_finish(run_id, **kwargs):
-        if 'cancelled' not in kwargs:
+        if not kwargs.get('cancelled'):
             entered.set()
             await release.wait()
         return await finish(run_id, **kwargs)
@@ -183,7 +183,7 @@ async def test_natural_completion_wins_cancel_without_losing_end_event(chat_api,
     await asyncio.wait_for(entered.wait(), 2)
     cancel = asyncio.create_task(h.api.post(f'/api/v1/runs/{run_id}/cancel'))
     async with asyncio.timeout(2):
-        while not h.manager.tasks[run_id].cancelling():
+        while not h.manager.executions[run_id, 0].task.cancelling():
             await asyncio.sleep(0)
     release.set()
     assert (await cancel).json()['status'] == outcome
@@ -200,14 +200,14 @@ async def test_delete_does_not_hide_session_on_terminal_commit_failure(chat_api,
         h.context.client = client
         run_id = (await h.api.post(chat_path(h), json=payload())).json()['run_id']
         await asyncio.wait_for(entered.wait(), 2)
-        finish = h.context.repository.finish_cancellation
+        finish = h.context.repository.finish_run
         async def unavailable(*args, **kwargs):
             raise DatabaseError()
-        monkeypatch.setattr(h.context.repository, 'finish_cancellation', unavailable)
+        monkeypatch.setattr(h.context.repository, 'finish_run', unavailable)
         path = f"/api/v1/sessions/{h.conversation['session_id']}"
         assert (await h.api.delete(path)).status_code == 503
         assert (await h.api.get(path)).status_code == 200
-        monkeypatch.setattr(h.context.repository, 'finish_cancellation', finish)
+        monkeypatch.setattr(h.context.repository, 'finish_run', finish)
         assert (await h.api.delete(path)).status_code == 204
         async with h.context.repository.db.transaction() as tx:
             assert (await tx.get(Run, run_id)).status == 'cancelled'

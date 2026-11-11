@@ -73,7 +73,8 @@ class EventStore:
         return f"laxcode.runs.{run_id}.events"
 
     async def create_run(self, run_id: int, *, exist_ok: bool = False):
-        # The application runs a single worker; serialize existence-check + create.
+        # Serialize local duplicate creation. Identical add_stream calls are idempotent
+        # across processes (concurrent resume prepares the same existing stream).
         async with self._create_lock:
             try:
                 try:

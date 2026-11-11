@@ -1,41 +1,42 @@
 import asyncio
 import logging
 from dataclasses import replace
-from weakref import WeakValueDictionary
 
 from laxcode.run_errors import make_run_error
+from laxcode.runtime.cancellation import CancellationBus, CancelCommand, CancelResult, RunSnapshot
 from laxcode.runtime.events import EventStoreError, make_event
-from laxcode.runtime.runner import fail_run, run_agent
+from laxcode.runtime.runner import classify_run_error, fail_run, run_agent
 from laxcode.storage.database import DatabaseError
 
 logger = logging.getLogger(__name__)
+ACTIVE = ("waiting", "running")
 
 
 class TaskManager:
-    """Application-owned submissions and executions, all on the API event loop."""
+    """Own local execution handles; coordinate admission and cancellation externally."""
 
-    def __init__(self, graph, context):
+    def __init__(self, graph, context, *, cancel_timeout=30):
         self.graph = graph
         self.context = context
+        self.cancel_timeout = cancel_timeout
+        self.cancellation = CancellationBus(context.events)
         self.tasks: dict[int, asyncio.Task] = {}
         self.task_attempts: dict[int, int] = {}
+        self.workers: dict[asyncio.Task, object] = {}
         self.submissions: set[asyncio.Task] = set()
         self.controls: set[asyncio.Task] = set()
-        self.locks: WeakValueDictionary[int, asyncio.Lock] = WeakValueDictionary()
-        self.user_cancellations: set[int] = set()
+        self.cancel_jobs: dict[tuple[int, int], asyncio.Task] = {}
+        self.user_cancellations: set[tuple[int, int]] = set()
         self.closing = False
+        self._listener = None
 
-    def session_lock(self, session_id):
-        lock = self.locks.get(session_id)
-        if lock is None:
-            lock = asyncio.Lock()
-            self.locks[session_id] = lock
-        return lock
+    async def start(self):
+        self._listener = self.cancellation.listen(self._accept_cancel)
+        await self._listener.__aenter__()
 
     @staticmethod
     def consume(task):
         if not task.cancelled() and task.exception() is not None:
-            # Exception payloads may include upstream secrets; runner persists a safe reason.
             logger.warning("Background task failed (%s)", type(task.exception()).__name__)
 
     async def submit(self, **values):
@@ -45,14 +46,9 @@ class TaskManager:
         self.submissions.add(task)
         task.add_done_callback(self.submissions.discard)
         task.add_done_callback(self.consume)
-        # A disconnected request cannot strand a committed waiting run between DB and NATS.
         return await asyncio.shield(task)
 
     async def _submit(self, values):
-        async with self.session_lock(values["session_id"]):
-            return await self._start(values)
-
-    async def _start(self, values):
         run = await self.context.repository.create_run(**values)
         try:
             await self.context.events.create_run(run.id)
@@ -64,19 +60,56 @@ class TaskManager:
             await fail_run(run.id, self.context, make_run_error("run_submission_failed"))
             raise
 
+    def _remove_worker(self, run, task):
+        self.workers.pop(task, None)
+        if self.tasks.get(run.id) is task:
+            self.tasks.pop(run.id)
+            self.task_attempts.pop(run.id)
+
     def _dispatch(self, run):
-        task = asyncio.create_task(run_agent(
-            self.graph, run.id, replace(self.context, resume_time=run.resume_time),
-            user_cancelled=lambda: run.id in self.user_cancellations,
-        ), name=f"run-{run.id}-{run.resume_time}")
+        task = asyncio.create_task(self._execute(run), name=f"run-{run.id}-{run.resume_time}")
         self.tasks[run.id] = task
         self.task_attempts[run.id] = run.resume_time
+        self.workers[task] = run
+
         def remove(completed):
-            if self.tasks.get(run.id) is completed:
-                self.tasks.pop(run.id)
-                self.task_attempts.pop(run.id)
+            # Retain a stopped handle if committing cancellation failed, so a retry can finish it.
+            if (run.id, run.resume_time) not in self.user_cancellations:
+                self._remove_worker(run, completed)
         task.add_done_callback(remove)
         task.add_done_callback(self.consume)
+
+    async def _execute(self, run):
+        key = (run.id, run.resume_time)
+        context = replace(self.context, resume_time=run.resume_time)
+        try:
+            current = await context.repository.get_run(run.id, run.user_id)
+            if current.resume_time != run.resume_time or current.status not in ACTIVE:
+                return
+            # One startup check closes the commit-to-dispatch gap; there is no periodic scan.
+            if current.cancel_requested_at is not None:
+                self._accept_cancel(CancelCommand(run_id=run.id, resume_time=run.resume_time))
+                return
+            await run_agent(self.graph, run.id, context, user_cancelled=lambda: key in self.user_cancellations)
+        except asyncio.CancelledError:
+            if key not in self.user_cancellations:
+                await fail_run(run.id, context, make_run_error("execution_cancelled"), cancelled=True)
+            raise
+        except Exception as exc:
+            await fail_run(run.id, context, classify_run_error(exc))
+            raise
+        finally:
+            # Natural completion can win before the broadcast is consumed. Notify existing
+            # waiters if intent was recorded; they subscribed before committing that intent.
+            if key not in self.user_cancellations:
+                try:
+                    current = await context.repository.get_run(run.id, run.user_id)
+                    if (current.resume_time == run.resume_time and current.status not in ACTIVE
+                            and current.cancel_requested_at is not None):
+                        await self._reply(CancelResult(run_id=run.id, resume_time=run.resume_time,
+                                                       run=RunSnapshot.model_validate(current)))
+                except DatabaseError:
+                    logger.warning("Could not read terminal cancellation result for run %s", run.id)
 
     async def resume(self, user_id: str, run_id: int, resume_time: int):
         return await self.control(self._resume, user_id, run_id, resume_time)
@@ -84,28 +117,24 @@ class TaskManager:
     async def _resume(self, user_id, run_id, resume_time):
         repository = self.context.repository
         run = await repository.get_run(run_id, user_id)
-        async with self.session_lock(run.session_id):
-            run = await repository.get_run(run_id, user_id)
-            _, latest = await repository.session_detail(user_id, run.session_id)
-            if latest is None or latest.id != run.id or run.status not in ("failed", "cancelled") or run.resume_time != resume_time:
-                raise DatabaseError("任务状态已变化，请刷新后重试", 409)
-            task = self.tasks.get(run_id)
-            if task is not None:
-                await asyncio.gather(task, return_exceptions=True)
-            snapshot = await self.graph.aget_state({"configurable": {"thread_id": run.thread_id}})
-            if not snapshot.values or snapshot.values.get("run_id") != run.id:
-                raise DatabaseError("恢复点不存在或已失效，请发送新消息重新开始", 409)
-            if self.closing:
-                raise DatabaseError("Agent runtime is shutting down")
-            await self.context.events.create_run(run.id, exist_ok=True)
-            run = await repository.resume_run(user_id, run_id, resume_time)
-            try:
-                self._dispatch(run)
-            except BaseException:
-                await fail_run(run.id, replace(self.context, resume_time=run.resume_time),
-                               make_run_error("run_submission_failed"))
-                raise
-            return run
+        _, latest = await repository.session_detail(user_id, run.session_id)
+        if latest is None or latest.id != run.id or run.status not in ("failed", "cancelled") or run.resume_time != resume_time:
+            raise DatabaseError("任务状态已变化，请刷新后重试", 409)
+        snapshot = await self.graph.aget_state({"configurable": {"thread_id": run.thread_id}})
+        if not snapshot.values or snapshot.values.get("run_id") != run.id:
+            raise DatabaseError("恢复点不存在或已失效，请发送新消息重新开始", 409)
+        if self.closing:
+            raise DatabaseError("Agent runtime is shutting down")
+        await self.context.events.create_run(run.id, exist_ok=True)
+        # The repository repeats admission checks inside the session row lock.
+        run = await repository.resume_run(user_id, run_id, resume_time)
+        try:
+            self._dispatch(run)
+        except BaseException:
+            await fail_run(run.id, replace(self.context, resume_time=run.resume_time),
+                           make_run_error("run_submission_failed"))
+            raise
+        return run
 
     async def control(self, operation, *args):
         if self.closing:
@@ -120,63 +149,108 @@ class TaskManager:
         return await self.control(self._cancel, user_id, run_id)
 
     async def _cancel(self, user_id, run_id):
-        repository = self.context.repository
-        run = await repository.get_run(run_id, user_id)
-        async with self.session_lock(run.session_id):
-            # Deletion may have completed while this operation waited for the lock.
-            run = await repository.get_run(run_id, user_id)
-            await self._stop(run)
-            return await repository.get_run(run_id, user_id)
+        run = await self.context.repository.get_run(run_id, user_id)
+        return await self._request_cancel(run)
 
-    async def _stop(self, run):
-        task = self.tasks.get(run.id)
-        self.user_cancellations.add(run.id)
+    async def _request_cancel(self, run):
+        if run.status not in ACTIVE:
+            return RunSnapshot.model_validate(run)
+        command = CancelCommand(run_id=run.id, resume_time=run.resume_time)
         try:
-            if task is not None:
-                # A terminal worker may still be publishing its final event: drain it
-                # without interrupting. Session serialization prevents repeated cancel().
-                if run.status in ("waiting", "running") and not task.done() and not task.cancelling():
-                    task.cancel()
-                await asyncio.gather(task, return_exceptions=True)
-            changed = await self.context.repository.finish_run(run.id, cancelled=True, resume_time=run.resume_time)
+            async with asyncio.timeout(self.cancel_timeout):
+                async with self.cancellation.results(run.id, run.resume_time) as sub:
+                    current = await self.context.repository.request_cancellation(run.user_id, run.id, run.resume_time)
+                    if current.status not in ACTIVE:
+                        return RunSnapshot.model_validate(current)
+                    await self.cancellation.request(command)
+                    return await self.cancellation.wait_result(sub, command)
+        except TimeoutError:
+            raise EventStoreError("取消确认等待超时；已提交的取消意图会保留，请刷新状态或重试", 504) from None
+
+    def _accept_cancel(self, command):
+        key = (command.run_id, command.resume_time)
+        if self.task_attempts.get(command.run_id) != command.resume_time or key in self.cancel_jobs:
+            return
+        task = self.tasks.get(command.run_id)
+        if task is None:
+            return
+        run = self.workers[task]
+        self.user_cancellations.add(key)
+        job = asyncio.create_task(self._stop_local(run, task), name=f"cancel-{run.id}-{run.resume_time}")
+        self.cancel_jobs[key] = job
+        job.add_done_callback(lambda done: self.cancel_jobs.pop(key, None))
+        job.add_done_callback(self.consume)
+
+    async def _reply(self, result):
+        try:
+            await self.cancellation.reply(result)
+        except EventStoreError:
+            logger.warning("Could not publish cancellation result for run %s", result.run_id)
+
+    async def _stop_local(self, run, task):
+        key = (run.id, run.resume_time)
+        try:
+            if not task.done() and not task.cancelling():
+                task.cancel()
+            await asyncio.gather(task, return_exceptions=True)
+            current, changed = await self.context.repository.finish_cancellation(*key)
+            snapshot = RunSnapshot.model_validate(current)
+            self.user_cancellations.discard(key)
+            self._remove_worker(run, task)
             if changed:
                 try:
                     await self.context.events.publish(make_event(run.id, "sse_end", {"status": "cancelled"},
                                                                 resume_time=run.resume_time))
                 except EventStoreError:
-                    logger.warning("Could not publish cancellation for run %s", run.id)
-        finally:
-            self.user_cancellations.discard(run.id)
+                    logger.warning("Could not publish cancellation SSE for run %s", run.id)
+            await self._reply(CancelResult(run_id=run.id, resume_time=run.resume_time, run=snapshot))
+        except Exception as exc:
+            # This is a control failure, not a run failure. Never leak exception payloads.
+            logger.warning("Cancellation failed for run %s (%s)", run.id, type(exc).__name__)
+            conflict = isinstance(exc, DatabaseError) and exc.status == 409
+            if conflict:
+                self.user_cancellations.discard(key)
+                self._remove_worker(run, task)
+            await self._reply(CancelResult(run_id=run.id, resume_time=run.resume_time,
+                status=409 if conflict else 503,
+                error=("任务执行次数已变化，请刷新状态" if conflict else
+                       "取消收尾状态保存失败，请重试" if isinstance(exc, DatabaseError) else
+                       "取消收尾失败，请重试")))
 
     async def delete_session(self, user_id: str, session_id: int):
         return await self.control(self._delete_session, user_id, session_id)
 
     async def _delete_session(self, user_id, session_id):
         repository = self.context.repository
-        async with self.session_lock(session_id):
-            session = await repository.session_for_deletion(user_id, session_id)
-            if session.deleted_at is not None:
-                return
-            # Also drain a just-finished worker before making its session inaccessible.
-            _, latest = await repository.session_detail(user_id, session_id)
-            if latest is not None:
-                await self._stop(latest)
-            await repository.delete_session(user_id, session_id)
+        session = await repository.session_for_deletion(user_id, session_id)
+        if session.deleted_at is not None:
+            return
+        _, latest = await repository.session_detail(user_id, session_id)
+        if latest is not None:
+            await self._request_cancel(latest)
+        # A new run may have won admission while we waited. Return 409, never chase it.
+        await repository.delete_session(user_id, session_id)
 
     async def close(self):
         self.closing = True
-        # Let submission commits resolve before cancelling executions so every accepted run
-        # is accounted for. Submissions only do DB/NATS setup, never model work.
         if self.submissions:
             await asyncio.gather(*self.submissions, return_exceptions=True)
         if self.controls:
             await asyncio.gather(*self.controls, return_exceptions=True)
-        active = list(self.tasks.items())
-        attempts = dict(self.task_attempts)
-        for _, task in active:
-            task.cancel()
-        await asyncio.gather(*(task for _, task in active), return_exceptions=True)
-        for run_id, _ in active:
-            # Covers a task cancelled before its coroutine entered run_agent.
-            await fail_run(run_id, replace(self.context, resume_time=attempts[run_id]),
-                           make_run_error("execution_cancelled"), cancelled=True)
+        if self.cancel_jobs:
+            await asyncio.gather(*self.cancel_jobs.values(), return_exceptions=True)
+        active = list(self.workers.items())
+        for task, _ in active:
+            if not task.done() and not task.cancelling():
+                task.cancel()
+        await asyncio.gather(*(task for task, _ in active), return_exceptions=True)
+        for task, run in active:
+            if (run.id, run.resume_time) not in self.user_cancellations:
+                await fail_run(run.id, replace(self.context, resume_time=run.resume_time),
+                               make_run_error("execution_cancelled"), cancelled=True)
+            self._remove_worker(run, task)
+        if self._listener is not None:
+            await self._listener.__aexit__(None, None, None)
+            self._listener = None
+        if self.cancel_jobs:
+            await asyncio.gather(*self.cancel_jobs.values(), return_exceptions=True)

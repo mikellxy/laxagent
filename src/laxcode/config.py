@@ -40,6 +40,7 @@ class FrontendConfig(ConfigModel):
 class AppConfig(ConfigModel):
     _builtin_skills_dir: Path = PrivateAttr(default_factory=lambda: Path("config/builtin_skills").resolve())
     recursion_limit: Literal[-1] | Annotated[int, Field(gt=0)] = -1
+    cancel_timeout_seconds: float = Field(default=30, gt=0, allow_inf_nan=False)
     llm: LLMConfig
     api_server: ServerConfig
     llm_router: ServerConfig

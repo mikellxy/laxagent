@@ -3,7 +3,7 @@ from uuid import uuid4
 from sqlalchemy import delete, func, select, update
 from sqlalchemy.dialects.postgresql import insert
 
-from laxcode.run_errors import RunError, make_run_error, registered_run_error
+from laxcode.run_errors import RunError, registered_run_error
 from laxcode.storage.database import Database, DatabaseError
 from laxcode.storage.models import Memory, Message, Project, Run, Session, SessionMessage, User, UserConfig
 from laxcode.memory import MemoryCategory, MemoryUnavailableError
@@ -143,6 +143,7 @@ class Repository:
             session = await transaction.scalar(self.owned_session(user_id, session_id).with_for_update(of=Session))
             if session is None:
                 raise DatabaseError("Session not found", 404)
+            await self.check_no_active_run(transaction, session.id)
             run = Run(user_id=user_id, session_id=session.id, project_id=session.project_id,
                       user_query=user_query, model=model, context_limit=context_limit,
                       output_limit=output_limit, thread_id=str(uuid4()))
@@ -160,10 +161,18 @@ class Repository:
                 raise DatabaseError("Run not found", 404)
         return run
 
-    async def claim_run(self, run_id: int) -> Run | None:
+    @staticmethod
+    async def check_no_active_run(transaction, session_id: int):
+        # Call only while holding the session row lock, in the admitting transaction.
+        if await transaction.scalar(select(Run.id).where(
+            Run.session_id == session_id, Run.status.in_(["waiting", "running"]),
+        )) is not None:
+            raise DatabaseError("Session still has an active run", 409)
+
+    async def claim_run(self, run_id: int, resume_time: int = 0) -> Run | None:
         async with self.db.transaction() as transaction:
             run = await transaction.scalar(update(Run).where(
-                Run.id == run_id, Run.status == "waiting",
+                Run.id == run_id, Run.status == "waiting", Run.resume_time == resume_time,
             ).values(status="running", started_at=func.now()).returning(Run))
         return run
 
@@ -180,10 +189,12 @@ class Repository:
             latest_id = await transaction.scalar(select(func.max(Run.id)).where(Run.session_id == session.id))
             if latest_id != run.id or run.status not in ("failed", "cancelled") or run.resume_time != resume_time:
                 raise DatabaseError("任务状态已变化，请刷新后重试", 409)
+            await self.check_no_active_run(transaction, session.id)
             run.status = "waiting"
             run.resume_time += 1
             run.error = run.error_code = None
             run.started_at = run.finished_at = None
+            run.cancel_requested_at = None
             await transaction.flush()
         return run
 
@@ -200,12 +211,36 @@ class Repository:
             ))
         return result.rowcount == 1
 
-    async def fail_interrupted_runs(self):
+    async def request_cancellation(self, user_id: str, run_id: int, resume_time: int) -> Run:
+        """Fix intent to one attempt; never cancel a concurrently resumed execution."""
         async with self.db.transaction() as transaction:
-            await transaction.execute(update(Run).where(Run.status.in_(["waiting", "running"])).values(
-                status="failed", finished_at=func.now(), error=str(make_run_error("service_execution_interrupted")),
-                error_code="service_execution_interrupted",
-            ))
+            run = await transaction.scalar(select(Run).where(Run.id == run_id).with_for_update())
+            if run is None or run.user_id != user_id:
+                raise DatabaseError("Run not found", 404)
+            if await transaction.scalar(self.owned_session(user_id, run.session_id)) is None:
+                raise DatabaseError("Run not found", 404)
+            if run.resume_time != resume_time:
+                raise DatabaseError("任务执行次数已变化，请刷新后重试", 409)
+            if run.status in ("waiting", "running"):
+                run.cancel_requested_at = run.cancel_requested_at or func.now()
+                await transaction.flush()
+                await transaction.refresh(run)
+        return run
+
+    async def finish_cancellation(self, run_id: int, resume_time: int) -> tuple[Run, bool]:
+        """Only the local executor calls this, after its worker has fully exited."""
+        async with self.db.transaction() as transaction:
+            run = await transaction.scalar(select(Run).where(Run.id == run_id).with_for_update())
+            if run is None or run.resume_time != resume_time:
+                raise DatabaseError("任务执行次数已变化，请刷新后重试", 409)
+            changed = run.status in ("waiting", "running")
+            if changed:
+                run.status = "cancelled"
+                run.finished_at = func.now()
+                run.error = run.error_code = None
+                await transaction.flush()
+                await transaction.refresh(run)
+        return run, changed
 
     async def create_user(self, user_id: str) -> User:
         async with self.db.transaction() as transaction:

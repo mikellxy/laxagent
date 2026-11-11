@@ -86,3 +86,34 @@ async def test_consumer_error_is_sanitized():
     output = b"".join([chunk async for chunk in stream_events(FailedSubscription(), 1)])
     assert b"Event storage unavailable" in output
     assert b"secret-key" not in output
+
+
+@pytest.mark.anyio
+async def test_cancellation_consumers_broadcast_new_messages_and_cleanup(run_store):
+    from laxcode.runtime.cancellation import CancellationBus, CancelCommand
+    from nats.js import api
+    store, run_id = run_store
+    bus = CancellationBus(store)
+    # Multiple API instances initialize the same stream definitions concurrently.
+    await asyncio.gather(bus.initialize(), CancellationBus(store).initialize())
+    command = CancelCommand(run_id=run_id, resume_time=0)
+    await bus.request(command)
+    subject = bus.attempt_subject(bus.COMMAND_SUBJECT, run_id, 0)
+    async with bus.subscribe(bus.COMMAND_STREAM, subject, commands=True) as first, \
+            bus.subscribe(bus.COMMAND_STREAM, subject, commands=True) as second:
+        with pytest.raises(nats.errors.TimeoutError):
+            await first.fetch(timeout=.05)
+        await bus.request(command)
+        for sub in (first, second):
+            message = (await sub.fetch(timeout=1))[0]
+            assert CancelCommand.model_validate_json(message.data) == command
+            await message.ack()
+    assert (await bus.js.stream_info(bus.COMMAND_STREAM)).state.consumer_count == 0
+    assert (await bus.js.stream_info(bus.COMMAND_STREAM)).config.retention == api.RetentionPolicy.LIMITS
+    # A result published before a new waiter is installed is deliberately not replayed.
+    result_subject = bus.attempt_subject(bus.RESULT_SUBJECT, run_id, 0)
+    await bus.js.publish(result_subject, b'{}', stream=bus.RESULT_STREAM)
+    async with bus.results(run_id, 0) as sub:
+        with pytest.raises(nats.errors.TimeoutError):
+            await sub.fetch(timeout=.05)
+    assert (await bus.js.stream_info(bus.RESULT_STREAM)).state.consumer_count == 0

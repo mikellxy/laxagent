@@ -100,6 +100,7 @@ class Run(Base):
     error: Mapped[str | None] = mapped_column(Text)
     error_code: Mapped[str | None] = mapped_column(Text)
     resume_time: Mapped[int] = mapped_column(Integer, server_default=text("0"))
+    cancel_requested_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
 
 class MessageColumns:

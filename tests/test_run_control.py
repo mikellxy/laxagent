@@ -46,9 +46,15 @@ async def test_cancel_preserves_history_events_and_allows_next_run(chat_api):
 @pytest.mark.anyio
 async def test_cancel_before_worker_starts(chat_api):
     h = chat_api
-    run = await h.manager._submit(dict(user_id=h.conversation['user_id'], session_id=h.conversation['session_id'],
-        user_query='hello', model='example:model-name', context_limit=100, output_limit=10))
-    await h.manager._stop(run)
+    run = await h.context.repository.create_run(user_id=h.conversation['user_id'], session_id=h.conversation['session_id'],
+        user_query='hello', model='example:model-name', context_limit=100, output_limit=10)
+    await h.context.events.create_run(run.id)
+    await h.context.repository.request_cancellation(run.user_id, run.id, run.resume_time)
+    async with h.manager.cancellation.results(run.id, run.resume_time) as sub:
+        from laxcode.runtime.cancellation import CancelCommand
+        h.manager._dispatch(run)
+        async with asyncio.timeout(3):
+            await h.manager.cancellation.wait_result(sub, CancelCommand(run_id=run.id, resume_time=0))
     result = await h.context.repository.get_run(run.id, run.user_id)
     assert result.status == 'cancelled' and result.started_at is None
     assert not h.captured
@@ -194,14 +200,14 @@ async def test_delete_does_not_hide_session_on_terminal_commit_failure(chat_api,
         h.context.client = client
         run_id = (await h.api.post(chat_path(h), json=payload())).json()['run_id']
         await asyncio.wait_for(entered.wait(), 2)
-        finish = h.context.repository.finish_run
+        finish = h.context.repository.finish_cancellation
         async def unavailable(*args, **kwargs):
             raise DatabaseError()
-        monkeypatch.setattr(h.context.repository, 'finish_run', unavailable)
+        monkeypatch.setattr(h.context.repository, 'finish_cancellation', unavailable)
         path = f"/api/v1/sessions/{h.conversation['session_id']}"
         assert (await h.api.delete(path)).status_code == 503
         assert (await h.api.get(path)).status_code == 200
-        monkeypatch.setattr(h.context.repository, 'finish_run', finish)
+        monkeypatch.setattr(h.context.repository, 'finish_cancellation', finish)
         assert (await h.api.delete(path)).status_code == 204
         async with h.context.repository.db.transaction() as tx:
             assert (await tx.get(Run, run_id)).status == 'cancelled'

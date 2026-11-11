@@ -87,7 +87,7 @@ async def complete_run(run_id: int, context: AgentContext):
 async def run_agent(graph, run_id: int, context: AgentContext, *,
                     user_cancelled: Callable[[], bool] = lambda: False) -> AgentState | None:
     try:
-        run = await context.repository.claim_run(run_id)
+        run = await context.repository.claim_run(run_id, context.resume_time)
         if run is None:
             return None
         context = replace(context, resume_time=run.resume_time)

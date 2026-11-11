@@ -43,6 +43,7 @@ async def chat_api(repository, conversation, config_data, monkeypatch):
         context = AgentContext(client, events, repository)
         graph = build_graph(InMemorySaver())
         manager = TaskManager(graph, context)
+        await manager.start()
         app.state.agent_context = context
         app.state.graph = graph
         app.state.task_manager = manager
@@ -51,7 +52,7 @@ async def chat_api(repository, conversation, config_data, monkeypatch):
             api.headers["Authorization"] = f"Bearer {token}"
             try:
                 yield SimpleNamespace(api=api, manager=manager, context=context, graph=graph,
-                                      config=config, conversation=conversation, captured=captured)
+                                      config=config, conversation=conversation, captured=captured, created=created)
             finally:
                 await manager.close()
                 for run_id in created:
@@ -268,17 +269,15 @@ async def test_cancelled_http_submission_is_still_owned(chat_api, monkeypatch):
 
 
 @pytest.mark.anyio
-async def test_startup_cleanup_keeps_terminal_runs(repository, conversation):
+async def test_api_startup_keeps_other_instances_active_runs(repository, conversation, config_data):
     values = dict(user_id=conversation["user_id"], session_id=conversation["session_id"], user_query="x",
                   model="example:model-name", context_limit=100, output_limit=10)
-    first = await repository.create_run(**values)
-    await repository.claim_run(first.id)
-    await repository.finish_run(first.id)
-    interrupted = await repository.create_run(**values)
-    await repository.fail_interrupted_runs()
-    assert (await repository.get_run(first.id, conversation["user_id"])).status == "success"
-    run = await repository.get_run(interrupted.id, conversation["user_id"])
-    assert run.status == "failed" and run.error == "Service execution interrupted"
+    run = await repository.create_run(**values)
+    await repository.claim_run(run.id)
+    app = create_app(AppConfig.model_validate(config_data))
+    async with app.router.lifespan_context(app):
+        assert (await repository.get_run(run.id, run.user_id)).status == "running"
+    assert (await repository.get_run(run.id, run.user_id)).status == "running"
 
 
 @pytest.mark.anyio

@@ -41,9 +41,10 @@ def create_app(config: AppConfig | None = None) -> FastAPI:
                 client, events, Repository(db), recursion_limit=config.recursion_limit,
                 builtin_skills_dir=config.builtin_skills_dir,
             )
-            await app.state.agent_context.repository.fail_interrupted_runs()
             app.state.graph = build_graph(checkpointer=checkpointer)
-            app.state.task_manager = TaskManager(app.state.graph, app.state.agent_context)
+            app.state.task_manager = TaskManager(app.state.graph, app.state.agent_context,
+                                                 cancel_timeout=config.cancel_timeout_seconds)
+            await app.state.task_manager.start()
             try:
                 yield
             finally:

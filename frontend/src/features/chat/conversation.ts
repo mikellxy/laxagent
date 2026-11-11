@@ -359,7 +359,8 @@ export class Conversation {
       // Drain an older read before applying the terminal response and taking a fresh snapshot.
       if (this.syncFlight) await this.syncFlight
       if (this.disposed) return
-      if (this.detail?.latest_run?.run_id === ended.run_id) {
+      if (this.detail?.latest_run?.run_id === ended.run_id &&
+          this.detail.latest_run.resume_time === ended.resume_time) {
         this.detail = { ...this.detail, latest_run: ended }
         this.finishToolCalls(ended)
       }

@@ -165,9 +165,10 @@ async def test_completed_graph_only_retries_terminal_commit(chat_api, monkeypatc
 @pytest.mark.anyio
 async def test_missing_checkpoint_rejected_without_mutation(chat_api):
     h = chat_api
-    run = await h.manager._submit(dict(user_id=h.conversation['user_id'], session_id=h.conversation['session_id'],
-        user_query='hello', model='example:model-name', context_limit=100, output_limit=10))
-    await h.manager._stop(run)
+    run = await h.context.repository.create_run(user_id=h.conversation['user_id'], session_id=h.conversation['session_id'],
+        user_query='hello', model='example:model-name', context_limit=100, output_limit=10)
+    await h.context.events.create_run(run.id)
+    await h.context.repository.finish_cancellation(run.id, run.resume_time)
     response = await resume(h, run.id)
     assert response.status_code == 409 and '恢复点' in response.text
     current = (await h.api.get(f'/api/v1/runs/{run.id}')).json()
@@ -192,7 +193,7 @@ async def test_resume_authorization_latest_status_and_request_validation(chat_ap
         await wait_run(h, failed_id)
     newer = await h.manager._submit(dict(user_id=h.conversation['user_id'], session_id=h.conversation['session_id'],
         user_query='new', model='example:model-name', context_limit=100, output_limit=10))
-    await h.manager._stop(newer)
+    await h.manager.cancel(newer.user_id, newer.id)
     assert (await resume(h, failed_id)).status_code == 409
     await h.api.delete(f"/api/v1/sessions/{h.conversation['session_id']}")
     assert (await resume(h, newer.id)).status_code == 404
@@ -215,7 +216,7 @@ async def test_repeated_failed_resumes_increment_once_and_reject_stale_attempts(
 
 
 @pytest.mark.anyio
-async def test_resume_waits_for_failed_worker_terminal_events(chat_api, monkeypatch):
+async def test_resume_does_not_wait_for_old_terminal_events(chat_api, monkeypatch):
     h = chat_api
     publishing, release = asyncio.Event(), asyncio.Event()
     publish = h.context.events.publish
@@ -235,11 +236,9 @@ async def test_resume_waits_for_failed_worker_terminal_events(chat_api, monkeypa
             async with asyncio.timeout(2):
                 while not h.manager.controls:
                     await asyncio.sleep(0)
-            await asyncio.sleep(.02)
-            assert not pending.done()
+            assert (await asyncio.wait_for(pending, 2)).status_code == 202
         finally:
             release.set()
-        assert (await pending).status_code == 202
         assert (await wait_run(h, run_id))['status'] == 'success'
 
 

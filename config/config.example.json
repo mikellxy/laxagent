@@ -1,5 +1,6 @@
 {
   "recursion_limit": -1,
+  "cancel_timeout_seconds": 30,
   "llm": {
     "default_model": "example:model-name",
     "provider_list": [

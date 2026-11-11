@@ -392,3 +392,21 @@ it('switches attempts when a background read observes another tab resuming', asy
   expect(h.transport.stream).toHaveBeenLastCalledWith(10, expect.any(Function), expect.any(AbortSignal), 1)
   h.controller.dispose()
 })
+
+it('does not apply a delayed cancellation result to a resumed attempt', async () => {
+  const h = harness()
+  await h.controller.refresh()
+  const result = deferred<Run>()
+  vi.mocked(h.transport.cancelRun).mockReturnValue(result.promise)
+  const pending = h.controller.cancel()
+  const resumed = { ...run(), resume_time: 1 }
+  vi.mocked(h.transport.detail).mockResolvedValue(detail(2, resumed))
+  await h.controller.refresh()
+  const snapshots: Array<Run | null | undefined> = []
+  const unsubscribe = h.controller.subscribe(() => snapshots.push(h.controller.getSnapshot().detail?.latest_run))
+  result.resolve(run('cancelled'))
+  await pending
+  expect(h.controller.getSnapshot().detail?.latest_run).toMatchObject({ status: 'running', resume_time: 1 })
+  expect(snapshots.every(value => value?.resume_time === 1)).toBe(true)
+  unsubscribe(); h.controller.dispose()
+})

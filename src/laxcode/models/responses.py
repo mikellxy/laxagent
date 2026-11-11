@@ -10,12 +10,14 @@ from laxcode.run_errors import make_run_error
 
 @dataclass(frozen=True)
 class ModelEvent:
-    type: Literal["started", "text_delta", "reasoning_delta", "refusal_delta", "completed"]
+    type: Literal["started", "text_delta", "reasoning_delta", "refusal_delta", "tool_call_start", "tool_call_delta", "completed"]
     text: str = ""
     channel: Literal["text", "summary"] | None = None
     usage: dict | None = None
     tool_calls: list[dict] | None = None
     output: list[dict] | None = None
+    tool_call_id: str | None = None
+    tool_name: str | None = None
 
 
 def completed_content(response: dict) -> str:
@@ -119,6 +121,8 @@ async def stream_response(
     tools: list[dict] | None = None,
 ) -> AsyncIterator[ModelEvent]:
     started = False
+    # Argument deltas identify the output item, not its function call ID.
+    calls_by_item: dict[str, str] = {}
     try:
         stream = await client.responses.create(
             model=model, input=messages, stream=True, **({"tools": tools} if tools is not None else {}),
@@ -135,6 +139,23 @@ async def stream_response(
                 elif kind in ("response.output_item.added", "response.output_item.done"):
                     if event["item"]["type"] not in ("message", "reasoning", "function_call"):
                         raise make_run_error("unsupported_model_output")
+                    if kind == "response.output_item.added" and event["item"]["type"] == "function_call":
+                        item = event["item"]
+                        item_id, call_id, name = (item[key] for key in ("id", "call_id", "name"))
+                        if not all(isinstance(value, str) and value for value in (item_id, call_id, name)):
+                            raise make_run_error("invalid_model_stream")
+                        if item_id in calls_by_item or call_id in calls_by_item.values():
+                            raise make_run_error("invalid_model_stream")
+                        calls_by_item[item_id] = call_id
+                        yield ModelEvent("tool_call_start", tool_call_id=call_id, tool_name=name)
+                        initial = item.get("arguments", "")
+                        if not isinstance(initial, str):
+                            raise make_run_error("invalid_model_stream")
+                        if initial:
+                            yield ModelEvent("tool_call_delta", tool_call_id=call_id, text=initial)
+                elif kind == "response.function_call_arguments.delta":
+                    yield ModelEvent("tool_call_delta", tool_call_id=calls_by_item[event["item_id"]],
+                                     text=delta_text(event))
                 elif kind == "response.output_text.delta":
                     yield ModelEvent("text_delta", text=delta_text(event))
                 elif kind in ("response.reasoning_text.delta", "response.reasoning_summary_text.delta"):

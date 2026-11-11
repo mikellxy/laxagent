@@ -32,6 +32,28 @@ function setup(initial: Message[], status: Run['status'] = 'running', hasMore = 
   return { state, event, user: userEvent.setup() }
 }
 
+it('shows partial tool arguments before execution and keeps the same disclosure open through completion', async () => {
+  const h = setup([{ seq: 1, role: 'user', content: 'question' }])
+  await waitFor(() => expect(api.stream).toHaveBeenCalled())
+  await h.event('message_chunk', 2, '开始编写')
+  await h.event('tool_call_start', 2, { tool_call_id: 'a', tool_name: 'write_file' })
+  await h.user.click(screen.getByRole('button', { name: '正在工作' }))
+  const card = screen.getByRole('button', { name: 'write_file · 正在生成参数' })
+  await h.user.click(card)
+  await h.event('tool_call_delta', 2, { tool_call_id: 'a', arguments_delta: '{"content":"第一段' })
+  expect(screen.getByText('{"content":"第一段')).toBeVisible()
+  await h.event('tool_call_delta', 2, { tool_call_id: 'a', arguments_delta: '第二段"}' })
+  expect(screen.getByText(/第一段第二段/)).toBeVisible()
+  await h.event('message_end', 2, { text: '开始编写' })
+  await h.event('tool_start', 3, { tool_call_id: 'a', tool_name: 'write_file', arguments: '{"content":"最终内容"}' })
+  expect(screen.getByRole('button', { name: 'write_file · 正在执行' })).toBe(card)
+  expect(card).toHaveAttribute('aria-expanded', 'true')
+  expect(screen.getByText(/最终内容/)).toBeVisible()
+  expect(screen.getAllByLabelText('工具调用')).toHaveLength(1)
+  await h.event('tool_end', 3, { tool_call_id: 'a', error_code: null })
+  expect(screen.getByRole('button', { name: 'write_file · 已完成' })).toBe(card)
+})
+
 it.each(['failed', 'cancelled'] as const)('shows the %s resume action and preserves the draft', async status => {
   const h = setup([{ seq: 1, role: 'user', content: 'question' }], status)
   h.state.error_desc = '模型回答意外中断，请重试。'

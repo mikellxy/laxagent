@@ -22,7 +22,7 @@ function harness(initial = detail(), rows: Message[] = [user(1)]) {
     }),
   }
   const controller = new Conversation(1, transport)
-  const event = (type: string, seq: number | null, content: StreamEvent['content'] = '', error: string | null = null, channel?: StreamEvent['channel']) => receive({ type, msg_seq: seq, content, run_id: 10, role: 'assistant', error, channel })
+  const event = (type: string, seq: number | null, content: StreamEvent['content'] = '', error: string | null = null, channel?: StreamEvent['channel'], event_id?: string) => receive({ type, msg_seq: seq, content, run_id: 10, role: 'assistant', error, channel, event_id })
   return { controller, transport, event }
 }
 
@@ -186,6 +186,84 @@ describe('conversation synchronization', () => {
     h.controller.dispose(); h.event('message_chunk', 2, 'late')
     expect(h.controller.getSnapshot()).toBe(previous)
   })
+})
+
+it('streams two tool previews, deduplicates replay, and reconciles authoritative execution and history', async () => {
+  const h = harness()
+  await h.controller.refresh()
+  const emit = (type: string, id: string, content: Record<string, unknown>, seq = 2) =>
+    h.event(type, seq, content, null, undefined, id)
+  emit('tool_call_start', '1', { tool_call_id: 'a', tool_name: 'write_file' })
+  await waitFor(() => expect(h.controller.getSnapshot().syncing).toBe(false))
+  emit('tool_call_delta', '2', { tool_call_id: 'a', arguments_delta: '{"content":"中文' })
+  emit('tool_call_start', '3', { tool_call_id: 'b', tool_name: 'write_file' })
+  emit('tool_call_delta', '4', { tool_call_id: 'b', arguments_delta: '{"path":' })
+  expect(h.controller.getSnapshot().generatingTools.map(t => t.call_key)).toEqual(['10:0:a', '10:0:b'])
+  await h.controller.refresh(true)
+  expect(h.controller.getSnapshot().generatingTools[0].status).toBe('generating')
+  emit('tool_call_start', '1', { tool_call_id: 'a', tool_name: 'write_file' })
+  emit('tool_call_delta', '2', { tool_call_id: 'a', arguments_delta: '{"content":"中文' })
+  emit('tool_call_delta', '5', { tool_call_id: 'a', arguments_delta: '🙂"}' })
+  expect(h.controller.getSnapshot().generatingTools[0].arguments).toBe('{"content":"中文🙂"}')
+  h.event('message_end', 2, { text: 'Writing' })
+  emit('tool_start', '6', { tool_call_id: 'a', tool_name: 'write_file', arguments: '{"content":"final"}' }, 3)
+  expect(h.controller.getSnapshot().generatingTools).toHaveLength(1)
+  expect(h.controller.getSnapshot().messages.at(-1)).toMatchObject({ seq: 3, call_key: '10:0:a', status: 'running', arguments: '{"content":"final"}' })
+  emit('tool_end', '7', { tool_call_id: 'a', error_code: null }, 3)
+  vi.mocked(h.transport.detail).mockResolvedValue(detail(4))
+  vi.mocked(h.transport.messages).mockResolvedValue(page([user(1), assistant(2, 'Writing'), { seq: 3, role: 'tool', tool_name: 'write_file', arguments: '{"content":"final"}' }]))
+  await h.controller.refresh(true)
+  expect(h.controller.getSnapshot().messages.at(-1)).toMatchObject({ call_key: '10:0:a', status: 'completed' })
+  emit('tool_call_start', '1', { tool_call_id: 'a', tool_name: 'write_file' })
+  emit('tool_call_delta', '2', { tool_call_id: 'a', arguments_delta: 'duplicate' })
+  emit('tool_start', '8', { tool_call_id: 'b', tool_name: 'write_file', arguments: '{}' }, 4)
+  expect(h.controller.getSnapshot().generatingTools).toEqual([])
+  expect(h.controller.getSnapshot().messages.filter(m => m.role === 'tool')).toHaveLength(2)
+  emit('tool_end', '9', { tool_call_id: 'b', error_code: 'INVALID_ARGUMENTS' }, 4)
+  expect(h.controller.getSnapshot().messages.at(-1)).toMatchObject({ status: 'failed' })
+  h.controller.dispose()
+})
+
+it.each(['cancelled', 'failed'] as const)('marks only unexecuted previews interrupted when run is %s', async status => {
+  const h = harness()
+  await h.controller.refresh()
+  h.event('tool_call_start', 2, { tool_call_id: 'a', tool_name: 'write_file' })
+  await waitFor(() => expect(h.controller.getSnapshot().syncing).toBe(false))
+  h.event('tool_call_delta', 2, { tool_call_id: 'a', arguments_delta: '{"content":' })
+  // A transport failure or an error event alone is not a terminal run state.
+  h.event('error', null, {}, 'connection failed')
+  expect(h.controller.getSnapshot().generatingTools[0].status).toBe('generating')
+  vi.mocked(h.transport.detail).mockResolvedValue(detail(2, run(status)))
+  h.event('sse_end', null)
+  await waitFor(() => expect(h.controller.getSnapshot().generatingTools[0].status).toBe('interrupted'))
+  expect(h.controller.getSnapshot().messages).toEqual([user(1)])
+  await h.controller.refresh()
+  expect(h.controller.getSnapshot().generatingTools).toHaveLength(1)
+  vi.mocked(h.transport.detail).mockResolvedValue(detail(2, { ...run(), resume_time: 1 }))
+  await h.controller.resume()
+  expect(h.controller.getSnapshot().generatingTools).toEqual([])
+  const callback = vi.mocked(h.transport.stream).mock.calls.at(-1)![1]
+  callback({ type: 'tool_call_start', msg_seq: 2, content: { tool_call_id: 'a', tool_name: 'write_file' }, run_id: 10, resume_time: 1, role: 'tool', error: null })
+  await waitFor(() => expect(h.controller.getSnapshot().generatingTools[0]?.call_key).toBe('10:1:a'))
+  h.controller.dispose()
+})
+
+it('retains committed card identity when the next run starts', async () => {
+  const h = harness()
+  await h.controller.refresh()
+  h.event('tool_call_start', 2, { tool_call_id: 'a', tool_name: 'write_file' })
+  await waitFor(() => expect(h.controller.getSnapshot().syncing).toBe(false))
+  h.event('tool_start', 3, { tool_call_id: 'a', tool_name: 'write_file', arguments: '{}' })
+  h.event('tool_end', 3, { tool_call_id: 'a', error_code: null })
+  vi.mocked(h.transport.detail).mockResolvedValue(detail(4, run('success')))
+  vi.mocked(h.transport.messages).mockResolvedValue(page([user(1), assistant(2, 'Writing'),
+    { seq: 3, role: 'tool', tool_name: 'write_file', arguments: '{}' }]))
+  await h.controller.refresh()
+  vi.mocked(h.transport.chat).mockResolvedValue({ run_id: 11, session_id: 1, status: 'waiting', resume_time: 0 })
+  expect(await h.controller.send('next', 'p:m')).toBe(true)
+  expect(h.controller.getSnapshot().messages.at(-1)).toMatchObject({ call_key: '10:0:a', status: 'completed' })
+  expect(h.controller.getSnapshot().generatingTools).toEqual([])
+  h.controller.dispose()
 })
 
 it('cancels once, discards unfinished chunks and can send again', async () => {

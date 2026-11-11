@@ -132,14 +132,48 @@ async def test_completed_calls_are_authoritative_and_keep_text_and_reasoning():
              for i in range(2)]
     final["response"]["output"] += [{"type": "reasoning", "summary": [], "encrypted_content": "opaque"}, *calls]
     source = ModelStream([
-        {"type": "response.output_item.added", "item": {"type": "function_call", "call_id": "c0", "arguments": ""}},
-        {"type": "response.function_call_arguments.delta", "delta": "partial"}, final,
+        {"type": "response.output_item.added", "item": {"type": "function_call", "id": "fc0", "call_id": "c0", "name": "read_file", "arguments": ""}},
+        {"type": "response.function_call_arguments.delta", "item_id": "fc0", "delta": "partial"}, final,
     ])
     async with client_for(source, []) as client:
         events = [event async for event in stream_response(client, model="chosen:model", messages=[])]
     assert events[-1].text == "准备读取"
     assert events[-1].tool_calls == [{k: call[k] for k in ("call_id", "name", "arguments")} for call in calls]
     assert events[-1].output == final["response"]["output"]
+    assert events[:2] == [ModelEvent("tool_call_start", tool_call_id="c0", tool_name="read_file"),
+                          ModelEvent("tool_call_delta", tool_call_id="c0", text="partial")]
+
+
+@pytest.mark.anyio
+async def test_interleaved_tool_arguments_stream_before_completion():
+    source = ModelStream([
+        {"type": "response.output_item.added", "item": {"type": "function_call", "id": "item-a", "call_id": "call-a", "name": "write_file", "arguments": "{"}},
+        {"type": "response.output_item.added", "item": {"type": "function_call", "id": "item-b", "call_id": "call-b", "name": "read_file", "arguments": ""}},
+        {"type": "response.function_call_arguments.delta", "item_id": "item-b", "delta": '{"path":"中文'},
+        {"type": "response.function_call_arguments.delta", "item_id": "item-a", "delta": '"content":"🙂"}'},
+        {"type": "response.function_call_arguments.done", "item_id": "item-a", "arguments": '{"content":"🙂"}'},
+        {"type": "response.function_call_arguments.delta", "item_id": "item-b", "delta": '.txt"}'},
+        completed(),
+    ])
+    async with client_for(source, []) as client:
+        async with aclosing(stream_response(client, model="chosen:model", messages=[])) as stream:
+            assert await anext(stream) == ModelEvent("tool_call_start", tool_call_id="call-a", tool_name="write_file")
+            assert await anext(stream) == ModelEvent("tool_call_delta", tool_call_id="call-a", text="{")
+            assert await anext(stream) == ModelEvent("tool_call_start", tool_call_id="call-b", tool_name="read_file")
+            assert await anext(stream) == ModelEvent("tool_call_delta", tool_call_id="call-b", text='{"path":"中文')
+            assert await anext(stream) == ModelEvent("tool_call_delta", tool_call_id="call-a", text='"content":"🙂"}')
+            assert await anext(stream) == ModelEvent("tool_call_delta", tool_call_id="call-b", text='.txt"}')
+            assert (await anext(stream)).type == "completed"
+
+
+@pytest.mark.anyio
+async def test_unknown_tool_argument_item_is_rejected():
+    async with client_for(ModelStream([
+        {"type": "response.function_call_arguments.delta", "item_id": "unknown", "delta": "{}"},
+    ]), []) as client:
+        with pytest.raises(ModelError):
+            async for _ in stream_response(client, model="chosen:model", messages=[]):
+                pass
 
 
 @pytest.mark.anyio

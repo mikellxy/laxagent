@@ -7,7 +7,7 @@ import { api } from '../../api/resources'
 import { chooseModel, sessionModel } from '../../lib/preferences'
 import { messageOf } from '../../api/errors'
 import { Conversation } from './conversation'
-import { groupTimeline, latestWorkLine, type WorkGroup } from './timeline'
+import { groupTimeline, latestWorkLine, processKey, type WorkGroup } from './timeline'
 import type { Message, ToolMessage } from '../../api/types'
 import styles from './Chat.module.css'
 
@@ -42,7 +42,11 @@ function AssistantMarkdown({ text }: { text: string }) {
 }
 function ToolCall({ message, fold }: { message: ToolMessage; fold: Fold }) {
   const text = argumentsText(message.arguments)
-  return <Disclosure label={message.tool_name} icon={<Wrench size={14} />} fold={fold}>
+  const status = message.status && { generating: '正在生成参数', running: '正在执行', completed: '已完成',
+    failed: '失败', interrupted: '已中断', unknown: '执行结果未知' }[message.status]
+  const active = message.status === 'generating' || message.status === 'running'
+  return <Disclosure label={`${message.tool_name}${status ? ` · ${status}` : ''}`}
+    icon={active ? <LoaderCircle size={14} className="spin" /> : <Wrench size={14} />} active={active} fold={fold}>
     {text && <pre>{text}</pre>}
   </Disclosure>
 }
@@ -59,10 +63,10 @@ function WorkCard({ group, fold }: { group: WorkGroup; fold: (keys: string[]) =>
   return <section className={styles.work} aria-label="工作过程">
     <Disclosure label={group.active ? '正在工作' : '已工作'} icon={<Layers size={16} />} active={group.active}
       preview={group.active ? latestWorkLine(group) : null}
-      fold={fold(group.items.map(item => `work:${item.message.seq}`))}>
+      fold={fold(group.items.map(item => `work:${processKey(item.message)}`))}>
       <div className={styles.workContents}>{group.items.map(item => item.kind === 'tool'
-        ? <div key={`tool:${item.message.seq}`} data-anchor={`process:${item.message.seq}`} data-members={`process:${item.message.seq}`} data-seq={item.message.seq} className={styles.tool} aria-label="工具调用" aria-busy={item.active}>
-          <ToolCall message={item.message} fold={fold([`tool:${item.message.seq}`])} />
+        ? <div key={`tool:${processKey(item.message)}`} data-anchor={`process:${processKey(item.message)}`} data-members={`process:${processKey(item.message)}`} data-seq={item.message.seq} className={styles.tool} aria-label="工具调用" aria-busy={item.active}>
+          <ToolCall message={item.message} fold={fold([`tool:${processKey(item.message)}`])} />
         </div>
         : <div key={`thinking:${item.message.seq}`} data-anchor={`process:${item.message.seq}`} data-members={`process:${item.message.seq}`} className={styles.thinking}>
           <Disclosure label={item.active ? '正在思考' : '已思考'} icon={<Sparkles size={16} />} active={item.active} fold={fold([`thinking:${item.message.seq}`])}>
@@ -144,7 +148,7 @@ export function Chat({ owner, sessionId, onMissing }: { owner: string; sessionId
       if (row) moveScroll(el => { el.scrollTop += row.getBoundingClientRect().top - el.getBoundingClientRect().top - saved.offset })
       if (!snapshot.loadingOlder) anchor.current = null
     } else if (follow.current) moveScroll(el => { el.scrollTop = el.scrollHeight })
-  }, [snapshot.messages, snapshot.pending, snapshot.loadingOlder])
+  }, [snapshot.messages, snapshot.generatingTools, snapshot.pending, snapshot.loadingOlder])
   useLayoutEffect(() => {
     if (textarea.current) { textarea.current.style.height = 'auto'; textarea.current.style.height = `${Math.min(textarea.current.scrollHeight, 200)}px` }
   }, [draft])
@@ -167,8 +171,8 @@ export function Chat({ owner, sessionId, onMissing }: { owner: string; sessionId
   }
   const latestRun = snapshot.detail?.latest_run
   const canResume = latestRun?.status === 'failed' || latestRun?.status === 'cancelled'
-  const rows: { key: string; seq: number; members: string; node: React.ReactNode }[] = groupTimeline(snapshot.messages, snapshot.pending ? null : snapshot.activity).map(row => ({
-    key: row.key, seq: row.seq, members: row.kind === 'work' ? row.items.map(item => `process:${item.message.seq}`).join(',') : `message:${row.seq}`,
+  const rows: { key: string; seq: number; members: string; node: React.ReactNode }[] = groupTimeline(snapshot.messages, snapshot.pending ? null : snapshot.activity, snapshot.generatingTools).map(row => ({
+    key: row.key, seq: row.seq, members: row.kind === 'work' ? row.items.map(item => `process:${processKey(item.message)}`).join(',') : `message:${row.seq}`,
     node: row.kind === 'work' ? <WorkCard group={row} fold={fold} /> : <MessageCard message={row.message} />,
   }))
   if (snapshot.pending) rows.push({ key: 'pending', seq: snapshot.pending.afterSeq + 0.5, members: 'pending',

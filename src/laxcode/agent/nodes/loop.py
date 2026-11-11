@@ -40,6 +40,12 @@ async def call_model(state: AgentState, runtime: Runtime[AgentContext]):
                 await publish("reasoning_chunk", event.text, channel=event.channel)
             elif event.type == "refusal_delta":
                 await publish("refusal_chunk", event.text)
+            elif event.type == "tool_call_start":
+                await publish("tool_call_start", {"tool_call_id": event.tool_call_id,
+                                                  "tool_name": event.tool_name}, role="tool")
+            elif event.type == "tool_call_delta":
+                await publish("tool_call_delta", {"tool_call_id": event.tool_call_id,
+                                                  "arguments_delta": event.text}, role="tool")
             elif event.type == "completed":
                 reasoning = reasoning or completed_reasoning(event.output or [])
                 return {"tool_node_state_uncertain": False,

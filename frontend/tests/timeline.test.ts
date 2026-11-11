@@ -1,9 +1,20 @@
 import { describe, expect, it } from 'vitest'
-import type { Message } from '../src/api/types'
+import type { Message, ToolMessage } from '../src/api/types'
 import { groupTimeline, latestWorkLine, type WorkGroup } from '../src/features/chat/timeline'
 
 const thought = (seq: number, content = ''): Message => ({ seq, role: 'assistant', content, reasoning: [{ channel: 'text', text: 'thinking' }] })
 const tool = (seq: number): Message => ({ seq, role: 'tool', tool_name: 'read_file', arguments: '{}' })
+
+it('keeps a generating second call after the first executing call and outside assistant text', () => {
+  const preview: ToolMessage = { seq: 2, role: 'tool', tool_name: 'write_file', arguments: '',
+    call_key: '10:0:b', parent_seq: 2, call_order: 1, status: 'generating' }
+  const first: ToolMessage = { ...preview, seq: 3, call_key: '10:0:a', call_order: 0, status: 'running' }
+  const rows = groupTimeline([thought(2, 'Writing'), first], { firstSeq: 2, thinkingSeq: null, toolSeq: 3 }, [preview])
+  expect(rows.map(row => row.kind)).toEqual(['work', 'message', 'work'])
+  const group = rows[2] as WorkGroup
+  expect(group.items.map(item => (item.message as ToolMessage).call_key)).toEqual(['10:0:a', '10:0:b'])
+  expect(group.items.every(item => item.active)).toBe(true)
+})
 
 describe('work grouping', () => {
   it('keeps body text outside and reasoning before it, grouping tools and empty-body assistants', () => {

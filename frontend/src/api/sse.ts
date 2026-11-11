@@ -4,18 +4,20 @@ import type { StreamEvent } from './types'
 export async function consumeSSE(body: ReadableStream<Uint8Array>, onEvent: (event: StreamEvent) => void, signal?: AbortSignal) {
   const reader = body.getReader()
   const decoder = new TextDecoder()
-  let buffer = '', data: string[] = [], ended = false
+  let buffer = '', data: string[] = [], ended = false, eventId: string | undefined
   const abort = () => { void reader.cancel() }
   signal?.addEventListener('abort', abort, { once: true })
   function line(value: string) {
     if (value === '') {
       if (data.length) {
         const event = JSON.parse(data.join('\n')) as StreamEvent
+        if (eventId !== undefined) event.event_id = eventId
         onEvent(event)
         if (event.type === 'sse_end') ended = true
       }
-      data = []
+      data = []; eventId = undefined
     } else if (value.startsWith('data:')) data.push(value.slice(5).replace(/^ /, ''))
+    else if (value.startsWith('id:')) eventId = value.slice(3).replace(/^ /, '')
   }
   try {
     while (!ended) {

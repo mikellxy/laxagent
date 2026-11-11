@@ -1,12 +1,17 @@
 import { api } from '../../api/resources'
 import { ApiError, messageOf } from '../../api/errors'
-import type { Message, ReasoningPart, Run, SessionDetail, StreamEvent } from '../../api/types'
+import type { Message, ReasoningPart, Run, SessionDetail, StreamEvent, ToolMessage, ToolStatus } from '../../api/types'
 
 export type Transport = Pick<typeof api, 'detail' | 'messages' | 'chat' | 'stream' | 'cancelRun' | 'resumeRun'>
 export interface PendingMessage { content: string; afterSeq: number; runId: number | null; failed: boolean }
 export interface Activity { firstSeq: number; thinkingSeq: number | null; toolSeq: number | null }
+interface StreamingTool {
+  key: string; parentSeq: number; seq: number | null; name: string; arguments: string
+  status: ToolStatus; lastEventId?: bigint
+}
 export interface ConversationSnapshot {
   messages: Message[]; pending: PendingMessage | null; detail: SessionDetail | null
+  generatingTools: ToolMessage[]
   busy: boolean; ready: boolean; syncing: boolean; loadingOlder: boolean; hasMore: boolean; cancelling: boolean
   error: string | null; missing: boolean
   activity: Activity | null
@@ -19,6 +24,7 @@ const attempt = (run: Run | null | undefined) => run ? `${run.run_id}:${run.resu
 export class Conversation {
   private history = new Map<number, Message>()
   private live = new Map<number, Message>()
+  private toolCalls = new Map<string, StreamingTool>()
   private boundary = 0
   private detail: SessionDetail | null = null
   private pending: PendingMessage | null = null
@@ -43,7 +49,7 @@ export class Conversation {
   private retry: ReturnType<typeof setTimeout> | null = null
   private retryDelay = 500
   private listeners = new Set<() => void>()
-  private snapshot: ConversationSnapshot = { messages: [], pending: null, detail: null, busy: false, ready: false,
+  private snapshot: ConversationSnapshot = { messages: [], generatingTools: [], pending: null, detail: null, busy: false, ready: false,
     syncing: false, loadingOlder: false, hasMore: false, error: null, missing: false, cancelling: false, resuming: false, activity: null }
 
   constructor(readonly sessionId: number, private transport: Transport = api) {}
@@ -52,7 +58,20 @@ export class Conversation {
   private emit() {
     if (this.disposed) return
     const messages = new Map([...this.history, ...this.live])
+    const generatingTools: ToolMessage[] = []
+    let callOrder = 0
+    for (const call of this.toolCalls.values()) {
+      const identity = { call_key: call.key, status: call.status, parent_seq: call.parentSeq, call_order: callOrder++ }
+      if (call.seq === null) {
+        generatingTools.push({ seq: call.parentSeq, role: 'tool', tool_name: call.name,
+          arguments: call.arguments, ...identity })
+      } else {
+        const message = messages.get(call.seq)
+        if (message?.role === 'tool') messages.set(call.seq, { ...message, ...identity })
+      }
+    }
     this.snapshot = {
+      generatingTools,
       messages: [...messages.values()].sort((a, b) => a.seq - b.seq), pending: this.pending ? { ...this.pending } : null,
       detail: this.detail, busy: this.submitting || this.cancelling || this.resuming || active(this.detail?.latest_run), ready: this.ready,
       cancelling: this.cancelling, resuming: this.resuming,
@@ -96,7 +115,12 @@ export class Conversation {
         if (attempt(detail.latest_run) !== attempt(this.detail?.latest_run)) {
           // Another tab may resume the same run during an ordinary history read.
           this.reconnectWanted = true; this.streamAbort?.abort(); this.buffered = []; this.checkedRun = null
+          this.clearUnfinishedTools()
         }
+        for (const call of this.toolCalls.values()) {
+          if (call.status === 'running' && call.seq !== null && this.history.has(call.seq)) call.status = 'completed'
+        }
+        this.finishToolCalls(detail.latest_run)
         for (const seq of this.live.keys()) if (seq <= boundary || this.reconnectWanted || !active(detail.latest_run)) this.live.delete(seq)
         this.syncFailed = false
         if (attempt(detail.latest_run) !== attempt(this.detail?.latest_run) || !active(detail.latest_run)) this.activity = null
@@ -159,6 +183,51 @@ export class Conversation {
     this.retry = setTimeout(() => { this.retry = null; void this.refresh(true) }, this.retryDelay)
     this.retryDelay = Math.min(this.retryDelay * 2, 5000)
   }
+  private finishToolCalls(run: Run | null) {
+    if (!run || active(run)) return
+    for (const [key, call] of this.toolCalls) {
+      if (call.status === 'generating') {
+        if (run.status === 'success') this.toolCalls.delete(key)
+        else call.status = 'interrupted'
+      } else if (call.status === 'running') call.status = 'unknown'
+    }
+  }
+  private clearUnfinishedTools() {
+    // Keep committed call identities so older cards retain their disclosure state
+    // when another run starts. Unfinished previews belong only to their attempt.
+    for (const [key, call] of this.toolCalls) {
+      if (call.seq === null || !this.history.has(call.seq)) this.toolCalls.delete(key)
+    }
+  }
+  private applyToolEvent(event: StreamEvent, seq: number, content: Record<string, unknown>) {
+    const id = content.tool_call_id
+    if (typeof id !== 'string' || !id) return
+    const key = `${event.run_id}:${event.resume_time ?? 0}:${id}`
+    let call = this.toolCalls.get(key)
+    if (event.type === 'tool_call_start' || event.type === 'tool_call_delta') {
+      // Committed history owns old turns. Keep existing previews until tool_start
+      // reconciles them, but never recreate historical previews during replay.
+      if ((!call && seq <= this.boundary) || !active(this.detail?.latest_run)) return
+      const eventId = event.event_id && /^\d+$/.test(event.event_id) ? BigInt(event.event_id) : undefined
+      if (call && eventId !== undefined && call.lastEventId !== undefined && eventId <= call.lastEventId) return
+      if (call && call.status !== 'generating') return
+      if (event.type === 'tool_call_start') {
+        if (!call) {
+          call = { key, parentSeq: seq, seq: null, name: String(content.tool_name ?? ''),
+            arguments: '', status: 'generating' }
+          this.toolCalls.set(key, call)
+        }
+      } else if (call && typeof content.arguments_delta === 'string') call.arguments += content.arguments_delta
+      if (call && eventId !== undefined) call.lastEventId = eventId
+    } else if (event.type === 'tool_start') {
+      // The authoritative complete arguments replace the transient JSON fragments.
+      this.toolCalls.set(key, { key, parentSeq: call?.parentSeq ?? seq, seq,
+        name: String(content.tool_name ?? ''), arguments: String(content.arguments ?? ''),
+        status: seq <= this.boundary ? 'completed' : 'running', lastEventId: call?.lastEventId })
+    } else if (event.type === 'tool_end' && call) {
+      call.status = content.error_code ? 'failed' : 'completed'
+    }
+  }
   private apply(event: StreamEvent) {
     const run = this.detail?.latest_run
     if (!run || event.run_id !== run.run_id || (event.resume_time ?? 0) !== run.resume_time) return
@@ -169,19 +238,23 @@ export class Conversation {
     }
     const seq = event.msg_seq
     if (seq === null) return
+    if (!active(run)) return
+    const content = typeof event.content === 'object' ? event.content : {}
+    this.applyToolEvent(event, seq, content)
     // Replayed committed events identify this run's range, but never restart its completed phases.
     if (active(this.detail?.latest_run)) {
       this.activity ??= { firstSeq: seq, thinkingSeq: null, toolSeq: null }
       this.activity.firstSeq = Math.min(this.activity.firstSeq, seq)
     }
     if (seq <= this.boundary) { this.emit(); return }
-    const content = typeof event.content === 'object' ? event.content : {}
     const previous = this.live.get(seq)
     const old = previous?.role === 'assistant' ? previous : { seq, role: 'assistant' as const, content: '' }
     if (event.type === 'message_chunk' || event.type === 'refusal_chunk') {
       const text = old.content + (typeof event.content === 'string' ? event.content : '')
       this.live.set(seq, { ...old, content: text })
       if (text && this.activity) this.activity.thinkingSeq = null
+    } else if (event.type === 'tool_call_start' || event.type === 'tool_call_delta') {
+      if (this.activity) this.activity.thinkingSeq = null
     } else if (event.type === 'reasoning_chunk') {
       const text = typeof event.content === 'string' ? event.content : ''
       if (text) {
@@ -235,6 +308,7 @@ export class Conversation {
       if (this.disposed) return false
       if (this.pending) this.pending.runId = submitted.run_id
       this.activity = null
+      this.clearUnfinishedTools()
       this.detail = { ...this.detail!, latest_run: { ...submitted, model, error: null, error_code: null, error_desc: null } }
       this.checkedRun = null
       this.connect() // 202 guarantees the stream exists, not that the user message has committed.
@@ -262,6 +336,7 @@ export class Conversation {
       if (this.syncFlight) await this.syncFlight
       if (this.disposed) return
       this.streamAbort?.abort(); this.buffered = []; this.live.clear(); this.activity = null; this.checkedRun = null
+      this.clearUnfinishedTools()
       if (this.pending) this.pending.failed = false
       this.detail = { ...this.detail!, latest_run: { ...run, ...submitted, error: null, error_code: null, error_desc: null } }
       await this.refresh(true)
@@ -284,7 +359,10 @@ export class Conversation {
       // Drain an older read before applying the terminal response and taking a fresh snapshot.
       if (this.syncFlight) await this.syncFlight
       if (this.disposed) return
-      if (this.detail?.latest_run?.run_id === ended.run_id) this.detail = { ...this.detail, latest_run: ended }
+      if (this.detail?.latest_run?.run_id === ended.run_id) {
+        this.detail = { ...this.detail, latest_run: ended }
+        this.finishToolCalls(ended)
+      }
       await this.refresh(true)
     } catch (error) {
       if (!this.disposed) this.error = messageOf(error)

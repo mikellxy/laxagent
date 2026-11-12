@@ -30,7 +30,8 @@ def classify_run_error(exc: Exception) -> RunError:
 
 async def run_agent(graph, run_id: int, context: AgentContext, *,
                     user_cancelled: Callable[[], bool] = lambda: False,
-                    finalizer: RunFinalizer | None = None) -> AgentState | None:
+                    finalizer: RunFinalizer | None = None,
+                    answer_command: Command | None = None) -> AgentState | None:
     finalizer = finalizer if finalizer is not None else RunFinalizer(context.repository, context.events)
     try:
         run = await context.repository.claim_run(run_id, context.resume_time)
@@ -39,7 +40,9 @@ async def run_agent(graph, run_id: int, context: AgentContext, *,
         context = replace(context, resume_time=run.resume_time)
         # Recheck ownership after dispatch; API validation is not execution authorization.
         await context.repository.get_run(run_id, run.user_id)
-        if run.resume_time:
+        if answer_command is not None:
+            state = answer_command
+        elif run.resume_time:
             state = Command(update={"tool_node_state_uncertain": True})
         else:
             user_configs = await context.repository.get_user_configs(run.user_id)
@@ -57,7 +60,14 @@ async def run_agent(graph, run_id: int, context: AgentContext, *,
         result = await graph.ainvoke(state, config={
             "recursion_limit": recursion_limit, "configurable": {"thread_id": run.thread_id},
         }, context=context, durability="sync" if getattr(graph, "checkpointer", None) else None)
-        await finalizer.finish_succeeded(run_id, context.resume_time)
+        if result.get("__interrupt__"):
+            pending = result["__interrupt__"][0]
+            call = result["pending_tool_calls"][0]
+            await finalizer.finish_paused(run_id, context.resume_time, {
+                "interrupt_id": pending.id, "tool_call_id": call["call_id"], **pending.value,
+            })
+        else:
+            await finalizer.finish_succeeded(run_id, context.resume_time)
     except asyncio.CancelledError:
         # User cancellation is terminalized by the manager after this worker fully exits.
         if not user_cancelled():

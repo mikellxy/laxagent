@@ -16,5 +16,5 @@ def build_graph(checkpointer=None):
     graph.add_edge("prepare", "call_model")
     graph.add_edge("call_model", "save_model")
     graph.add_conditional_edges("save_model", lambda state: "tool_node" if state["pending_tool_calls"] else END)
-    graph.add_edge("tool_node", "call_model")
+    graph.add_conditional_edges("tool_node", lambda state: "tool_node" if state["pending_tool_calls"] else "call_model")
     return graph.compile(checkpointer=checkpointer)

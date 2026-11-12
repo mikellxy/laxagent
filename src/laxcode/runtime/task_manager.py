@@ -1,5 +1,7 @@
 import asyncio
 import logging
+
+from langgraph.types import Command
 from dataclasses import dataclass, field, replace
 
 from laxcode.runtime.cancellation import CancellationBus, CancelCommand, RunSnapshot
@@ -10,7 +12,7 @@ from laxcode.storage.database import DatabaseError
 from laxcode.storage.models import Run
 
 logger = logging.getLogger(__name__)
-ACTIVE = ("waiting", "running")
+ACTIVE = ("waiting", "running", "paused")
 
 
 @dataclass
@@ -18,6 +20,7 @@ class LocalExecution:
     run: Run
     task: asyncio.Task = field(init=False)
     cancel_job: asyncio.Task | None = None
+    answer_command: Command | None = None
     user_cancelled: bool = False
     started: bool = False
 
@@ -73,8 +76,8 @@ class TaskManager:
         if self.executions.get(execution.key) is execution:
             self.executions.pop(execution.key)
 
-    def _dispatch(self, run):
-        execution = LocalExecution(run)
+    def _dispatch(self, run, *, answer_command=None):
+        execution = LocalExecution(run, answer_command=answer_command)
         if execution.key in self.executions:
             raise RuntimeError("Execution already registered")
         task = asyncio.create_task(self._execute(execution), name=f"run-{run.id}-{run.resume_time}")
@@ -109,7 +112,7 @@ class TaskManager:
             raise
         # run_agent alone owns execution errors; the block above handles startup only.
         await run_agent(self.graph, run.id, context, user_cancelled=lambda: execution.user_cancelled,
-                        finalizer=self.finalizer)
+                        finalizer=self.finalizer, answer_command=execution.answer_command)
 
     async def resume(self, user_id: str, run_id: int, resume_time: int):
         return await self.control(self._resume, user_id, run_id, resume_time)
@@ -135,6 +138,31 @@ class TaskManager:
             raise
         return run
 
+    async def answer(self, user_id, run_id, resume_time, interrupt_id, answers):
+        return await self.control(self._answer, user_id, run_id, resume_time, interrupt_id, answers)
+
+    async def _answer(self, user_id, run_id, resume_time, interrupt_id, answers):
+        repository = self.context.repository
+        run = await repository.get_run(run_id, user_id)
+        if run.status != "paused" or run.resume_time != resume_time:
+            raise DatabaseError("任务状态已变化，请刷新后重试", 409)
+        snapshot = await self.graph.aget_state({"configurable": {"thread_id": run.thread_id}})
+        pending = next((item for item in snapshot.interrupts if item.id == interrupt_id), None)
+        if pending is None or snapshot.values.get("run_id") != run.id:
+            raise DatabaseError("提问已失效，请刷新后重试", 409)
+        if [item["question"] for item in answers] != [item["question"] for item in pending.value["questions"]]:
+            raise DatabaseError("答案必须按原顺序包含每个问题", 422)
+        if self.closing:
+            raise DatabaseError("Agent runtime is shutting down")
+        await self.context.events.create_run(run.id, exist_ok=True)
+        run = await repository.answer_run(user_id, run_id, resume_time)
+        try:
+            self._dispatch(run, answer_command=Command(resume={interrupt_id: {"answers": answers}}))
+        except BaseException:
+            await self.finalizer.finish_submission_failed(run.id, run.resume_time)
+            raise
+        return run
+
     async def control(self, operation, *args):
         """Own API operations through request cancellation and drain them before shutdown."""
         if self.closing:
@@ -155,6 +183,9 @@ class TaskManager:
     async def _request_cancel(self, run):
         if run.status not in ACTIVE:
             return RunSnapshot.model_validate(run)
+        if run.status == "paused":
+            await self.context.repository.request_cancellation(run.user_id, run.id, run.resume_time)
+            return RunSnapshot.model_validate(await self.finalizer.finish_user_cancelled(run.id, run.resume_time))
         command = CancelCommand(run_id=run.id, resume_time=run.resume_time)
         try:
             async with asyncio.timeout(self.cancel_timeout):
@@ -162,6 +193,8 @@ class TaskManager:
                     current = await self.context.repository.request_cancellation(run.user_id, run.id, run.resume_time)
                     if current.status not in ACTIVE:
                         return RunSnapshot.model_validate(current)
+                    if current.status == "paused":
+                        return RunSnapshot.model_validate(await self.finalizer.finish_user_cancelled(run.id, run.resume_time))
                     await self.cancellation.request(command)
                     return await self.cancellation.wait_result(sub, command)
         except TimeoutError:

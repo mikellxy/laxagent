@@ -4,7 +4,7 @@ import type { Activity } from './conversation'
 export type ProcessItem = { kind: 'thinking'; message: TextMessage; active: boolean }
   | { kind: 'tool'; message: ToolMessage; active: boolean }
 export interface WorkGroup { kind: 'work'; key: string; seq: number; items: ProcessItem[]; active: boolean }
-export type TimelineRow = WorkGroup | { kind: 'message'; key: string; seq: number; message: TextMessage }
+export type TimelineRow = WorkGroup | { kind: 'message'; key: string; seq: number; message: TextMessage | ToolMessage }
 
 export function processKey(message: Message): string {
   return message.role === 'tool' && message.call_key ? `call:${message.call_key}` : String(message.seq)
@@ -49,6 +49,13 @@ export function groupTimeline(messages: Message[], activity: Activity | null, ge
   })
   for (const message of ordered) {
     if (message.role === 'tool') {
+      if (message.tool_name === 'ask_user_question') {
+        if (message.answers?.length) {
+          rows.push({ kind: 'message', key: `message:${message.seq}`, seq: message.seq, message })
+          boundary = String(message.seq); group = null
+        }
+        continue
+      }
       process({ kind: 'tool', message, active: message.status === 'generating' || message.status === 'running'
         || (!message.status && activity?.toolSeq === message.seq) })
     } else {

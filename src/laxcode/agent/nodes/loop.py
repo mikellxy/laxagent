@@ -87,30 +87,30 @@ async def tool_node(state: AgentState, runtime: Runtime[AgentContext]):
         user_id=state["user_id"], repository=runtime.context.repository, workspace=state["workspace"],
         loaded_skills=dict(state.get("loaded_skills", {})),
     )
-    for call in state["pending_tool_calls"]:
-        msg_seq = next_seq
-        details = {"tool_call_id": call["call_id"], "tool_name": call["name"]}
-        await runtime.context.events.publish(make_event(
-            state["run_id"], "tool_start", {**details, "arguments": call["arguments"]},
-            role="tool", msg_seq=msg_seq, resume_time=runtime.context.resume_time,
-        ))
-        if state.get("tool_node_state_uncertain"):
-            result = {"error_code": "TOOL_STATE_UNCERTAIN", "result": {}}
-        else:
-            result = await execute_tool(call["name"], call["arguments"],
-                                        context=tool_context, user_configs=state.get("user_configs"))
-        content = format_result(result)
-        metadata = {**details, "tool_call": call}
-        next_seq, _ = await runtime.context.repository.append_message(
-            user_id=state["user_id"], project_id=state["project_id"], session_id=state["session_id"],
-            role="tool", content=content, expected_seq=msg_seq, **metadata,
-        )
-        await runtime.context.events.publish(make_event(
-            state["run_id"], "tool_end", {**details, **result}, role="tool", msg_seq=msg_seq,
-            error=result["error_code"], resume_time=runtime.context.resume_time,
-        ))
-        message = {"role": "tool", "content": content, **metadata}
-        messages.append(message)
-        model_input = append_tool_message(model_input, message)
+    call = state["pending_tool_calls"][0]
+    msg_seq = next_seq
+    details = {"tool_call_id": call["call_id"], "tool_name": call["name"]}
+    await runtime.context.events.publish(make_event(
+        state["run_id"], "tool_start", {**details, "arguments": call["arguments"]},
+        role="tool", msg_seq=msg_seq, resume_time=runtime.context.resume_time,
+    ))
+    if state.get("tool_node_state_uncertain"):
+        result = {"error_code": "TOOL_STATE_UNCERTAIN", "result": {}}
+    else:
+        result = await execute_tool(call["name"], call["arguments"],
+                                    context=tool_context, user_configs=state.get("user_configs"))
+    content = format_result(result)
+    metadata = {**details, "tool_call": call}
+    next_seq, _ = await runtime.context.repository.append_message(
+        user_id=state["user_id"], project_id=state["project_id"], session_id=state["session_id"],
+        role="tool", content=content, expected_seq=msg_seq, **metadata,
+    )
+    await runtime.context.events.publish(make_event(
+        state["run_id"], "tool_end", {**details, **result}, role="tool", msg_seq=msg_seq,
+        error=result["error_code"], resume_time=runtime.context.resume_time,
+    ))
+    message = {"role": "tool", "content": content, **metadata}
+    messages.append(message)
+    model_input = append_tool_message(model_input, message)
     return {"messages": messages, "next_msg_seq": next_seq,
-            "model_input": model_input, "pending_tool_calls": [], "loaded_skills": tool_context.loaded_skills}
+            "model_input": model_input, "pending_tool_calls": state["pending_tool_calls"][1:], "loaded_skills": tool_context.loaded_skills}

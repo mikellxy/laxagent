@@ -60,6 +60,20 @@ class RunFinalizer:
             run_id, resume_time, cancelled=True, terminal_status="cancelled",
         )))
 
+    async def finish_paused(self, run_id: int, resume_time: int, question: dict):
+        """Commit a checkpointed pause before advertising an answerable question."""
+        return await drain(asyncio.create_task(self._pause(run_id, resume_time, question)))
+
+    async def _pause(self, run_id: int, resume_time: int, question: dict):
+        current = await self.repository.pause_run(run_id, resume_time)
+        if current.status != "paused":
+            return current
+        if current.cancel_requested_at is not None:
+            return await self.finish_user_cancelled(run_id, resume_time)
+        await self.events.publish(make_event(run_id, "ask_user_question", question, resume_time=resume_time))
+        await self.events.publish(make_event(run_id, "sse_end", {"status": "paused"}, resume_time=resume_time))
+        return current
+
     async def finish_succeeded(self, run_id: int, resume_time: int) -> Run:
         """Finalize a normally returned Graph; propagate persistence errors to the runner."""
         return await drain(asyncio.create_task(self._commit(

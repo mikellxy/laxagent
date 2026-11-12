@@ -12,6 +12,7 @@ function deferred<T>() { let resolve!: (value: T) => void, reject!: (error: unkn
 function harness(initial = detail(), rows: Message[] = [user(1)]) {
   let receive: (event: StreamEvent) => void = () => {}
   const transport: Transport = {
+    getRun: vi.fn(), answerRun: vi.fn(),
     detail: vi.fn().mockResolvedValue(initial), messages: vi.fn().mockResolvedValue(page(rows)),
     chat: vi.fn().mockResolvedValue({ run_id: 10, session_id: 1, status: 'waiting', resume_time: 0 }),
     resumeRun: vi.fn().mockResolvedValue({ run_id: 10, session_id: 1, status: 'waiting', resume_time: 1 }),
@@ -423,5 +424,58 @@ it('reconciles attachment-only prompts by ordered attachment identities', async 
   vi.mocked(h.transport.messages).mockResolvedValue(page([{ seq: 1, role: 'user', content: '', appendix }]))
   await h.controller.refresh()
   expect(h.controller.getSnapshot().pending).toBeNull()
+  h.controller.dispose()
+})
+
+const questionEvent = { interrupt_id: 'interrupt', tool_call_id: 'call', questions: [{ question: '选择？', choice: ['A'] }] }
+it('shows a question only after paused status verification and does not reconnect on pause end', async () => {
+  const h = harness(detail(2, run('paused')))
+  vi.mocked(h.transport.getRun).mockResolvedValue(run('paused'))
+  await h.controller.refresh()
+  h.event('ask_user_question', null, questionEvent)
+  h.event('sse_end', null, { status: 'paused' })
+  await waitFor(() => expect(h.controller.getSnapshot().question?.interrupt_id).toBe('interrupt'))
+  await waitFor(() => expect(h.controller.getSnapshot().syncing).toBe(false))
+  expect(h.transport.stream).toHaveBeenCalledOnce()
+  expect(h.controller.getSnapshot().busy).toBe(true)
+  expect(h.controller.getSnapshot().activity).toBeNull()
+  const question = h.controller.getSnapshot().question
+  h.event('ask_user_question', null, questionEvent)
+  await waitFor(() => expect(h.transport.getRun).toHaveBeenCalledTimes(2))
+  expect(h.controller.getSnapshot().question).toBe(question)
+  expect(await h.controller.send('new', 'p:m')).toBe(false)
+  h.controller.dispose()
+})
+it('does not open a stale question once the server is no longer paused', async () => {
+  const h = harness(detail(2, run('paused')))
+  vi.mocked(h.transport.getRun).mockResolvedValue(run('cancelled'))
+  vi.mocked(h.transport.detail).mockResolvedValueOnce(detail(2, run('paused'))).mockResolvedValue(detail(2, run('cancelled')))
+  await h.controller.refresh()
+  h.event('ask_user_question', null, questionEvent)
+  await waitFor(() => expect(h.controller.getSnapshot().detail?.latest_run?.status).toBe('cancelled'))
+  expect(h.controller.getSnapshot().question).toBeNull()
+  h.controller.dispose()
+})
+it('answers once, switches attempts, and displays tool_end without a tool_start', async () => {
+  const h = harness(detail(2, run('paused')))
+  vi.mocked(h.transport.getRun).mockResolvedValue(run('paused'))
+  await h.controller.refresh()
+  h.event('ask_user_question', null, questionEvent)
+  await waitFor(() => expect(h.controller.getSnapshot().question).not.toBeNull())
+  const response = deferred<{ run_id: number; session_id: number; resume_time: number; status: 'waiting' }>()
+  vi.mocked(h.transport.answerRun).mockReturnValue(response.promise)
+  const answers = [{ question: '选择？', answer: '用户未回答' }]
+  const submitting = h.controller.answer(answers)
+  await h.controller.answer(answers)
+  expect(h.transport.answerRun).toHaveBeenCalledExactlyOnceWith(10, 0, 'interrupt', answers, expect.any(AbortSignal))
+  vi.mocked(h.transport.detail).mockResolvedValue(detail(2, { ...run(), resume_time: 1 }))
+  response.resolve({ run_id: 10, session_id: 1, status: 'waiting', resume_time: 1 })
+  await submitting
+  expect(h.controller.getSnapshot().question).toBeNull()
+  expect(h.controller.getSnapshot().messages).toEqual([user(1)])
+  const callback = vi.mocked(h.transport.stream).mock.calls.at(-1)![1]
+  callback({ run_id: 10, resume_time: 1, msg_seq: 3, type: 'tool_end', role: 'tool', error: null,
+    content: { tool_name: 'ask_user_question', tool_call_id: 'call', error_code: null, result: { answers } } })
+  await waitFor(() => expect(h.controller.getSnapshot().messages.at(-1)).toMatchObject({ seq: 3, answers }))
   h.controller.dispose()
 })

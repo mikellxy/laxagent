@@ -5,7 +5,7 @@ from fastapi.responses import StreamingResponse
 
 from laxcode.api.auth import get_current_user
 from laxcode.api.dependencies import get_config, get_context, get_repository
-from laxcode.api.schemas import ChatRequest, ResumeRequest, RunResponse, SubmittedRunResponse
+from laxcode.api.schemas import AnswersRequest, ChatRequest, ResumeRequest, RunResponse, SubmittedRunResponse
 from laxcode.runtime.events import stream_events
 from laxcode.storage.database import DatabaseError
 
@@ -55,6 +55,16 @@ async def resume_run(run_id: ResourceId, body: ResumeRequest, request: Request, 
     if manager is None:
         raise DatabaseError("Agent runtime is not initialized")
     run = await manager.resume(user_id, run_id, body.resume_time)
+    return {"run_id": run.id, "session_id": run.session_id, "status": "waiting", "resume_time": run.resume_time}
+
+
+@router.post("/runs/{run_id}/answers", status_code=202, response_model=SubmittedRunResponse)
+async def answer_run(run_id: ResourceId, body: AnswersRequest, request: Request, user_id=Depends(get_current_user)):
+    manager = getattr(request.app.state, "task_manager", None)
+    if manager is None:
+        raise DatabaseError("Agent runtime is not initialized")
+    run = await manager.answer(user_id, run_id, body.resume_time, body.interrupt_id,
+                               [item.model_dump() for item in body.answers])
     return {"run_id": run.id, "session_id": run.session_id, "status": "waiting", "resume_time": run.resume_time}
 
 

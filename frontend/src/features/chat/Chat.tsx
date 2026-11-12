@@ -6,6 +6,7 @@ import remarkGfm from 'remark-gfm'
 import { api } from '../../api/resources'
 import { chooseModel, sessionModel } from '../../lib/preferences'
 import { messageOf } from '../../api/errors'
+import { QuestionCard, AnswerCard } from './QuestionCard'
 import { Conversation } from './conversation'
 import { DraftAttachments, MessageAttachments, UploadMenu, useAppendices } from './attachments'
 import { groupTimeline, latestWorkLine, processKey, type WorkGroup } from './timeline'
@@ -52,7 +53,7 @@ function ToolCall({ message, fold }: { message: ToolMessage; fold: Fold }) {
   </Disclosure>
 }
 function MessageCard({ message }: { message: Message }) {
-  if (message.role === 'tool') return null
+  if (message.role === 'tool') return message.answers?.length ? <AnswerCard answers={message.answers} /> : null
   if (message.role === 'assistant' && !message.content) return null
   return <article data-seq={message.seq} aria-label={message.role === 'user' ? '用户消息' : message.role === 'assistant' ? '助手消息' : '工具调用'}
     className={`${styles.message} ${styles[message.role]}`}>
@@ -100,7 +101,7 @@ function UserIdBar({ owner, sessionId }: { owner: string; sessionId: number }) {
 export function Chat({ owner, sessionId, onMissing }: { owner: string; sessionId: number; onMissing: () => void }) {
   const conversation = useMemo(() => new Conversation(sessionId), [sessionId])
   const snapshot = useSyncExternalStore(conversation.subscribe, conversation.getSnapshot)
-  const canCancel = snapshot.detail?.latest_run?.status === 'waiting' || snapshot.detail?.latest_run?.status === 'running'
+  const canCancel = snapshot.detail?.latest_run?.status === 'waiting' || snapshot.detail?.latest_run?.status === 'running' || snapshot.detail?.latest_run?.status === 'paused'
   const catalog = useQuery({ queryKey: ['models', owner], queryFn: ({ signal }) => api.models(signal) })
   const [model, setModel] = useState('')
   const [draft, setDraft] = useState('')
@@ -215,6 +216,8 @@ export function Chat({ owner, sessionId, onMissing }: { owner: string; sessionId
         </button>
         <span role="status">{latestRun.status === 'failed' ? latestRun.error_desc ?? '任务执行失败，请重试。' : '已取消'}</span>
       </div>}
+      {snapshot.question && <QuestionCard key={`${snapshot.question.run_id}:${snapshot.question.interrupt_id}`}
+        pending={snapshot.question} submitting={snapshot.answering || snapshot.cancelling} onSubmit={answers => void conversation.answer(answers)} />}
       <div className={styles.composer}>
         {!!attachments.items.length && <DraftAttachments items={attachments.items} remove={attachments.remove} retry={attachments.retry} />}
         {attachments.error && <div className="error" role="alert">{attachments.error}</div>}
@@ -234,7 +237,7 @@ export function Chat({ owner, sessionId, onMissing }: { owner: string; sessionId
             <ChevronDown size={13} />
           </div>
           {canCancel || snapshot.cancelling
-            ? <button className={styles.send} aria-label={snapshot.cancelling ? '正在取消' : '取消生成'} onClick={() => void conversation.cancel()} disabled={snapshot.cancelling}>
+            ? <button className={styles.send} aria-label={snapshot.cancelling ? '正在取消' : '取消生成'} onClick={() => void conversation.cancel()} disabled={snapshot.cancelling || snapshot.answering}>
               {snapshot.cancelling ? <LoaderCircle size={18} className="spin" /> : <Square size={14} fill="currentColor" />}
             </button>
             : <button className={styles.send} aria-label="发送消息" onClick={() => void send()} disabled={sendDisabled}>

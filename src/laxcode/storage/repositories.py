@@ -1,8 +1,11 @@
+import json
+
 from uuid import uuid4
 
 from sqlalchemy import delete, func, select, update
 from sqlalchemy.dialects.postgresql import insert
 
+from laxcode.tools.builtin.ask_user_question import Answers
 from laxcode.run_errors import RunError, registered_run_error
 from laxcode.storage.database import Database, DatabaseError
 from laxcode.storage.models import Appendix, Memory, Message, Project, Run, Session, SessionMessage, User, UserConfig
@@ -158,7 +161,7 @@ class Repository:
             if session.deleted_at is not None:
                 return
             if await transaction.scalar(select(Run.id).where(
-                Run.session_id == session_id, Run.status.in_(["waiting", "running"]),
+                Run.session_id == session_id, Run.status.in_(["waiting", "running", "paused"]),
             )) is not None:
                 raise DatabaseError("Session still has an active run", 409)
             session.deleted_at = func.now()
@@ -206,7 +209,7 @@ class Repository:
     async def check_no_active_run(transaction, session_id: int):
         # Call only while holding the session row lock, in the admitting transaction.
         if await transaction.scalar(select(Run.id).where(
-            Run.session_id == session_id, Run.status.in_(["waiting", "running"]),
+            Run.session_id == session_id, Run.status.in_(["waiting", "running", "paused"]),
         )) is not None:
             raise DatabaseError("Session still has an active run", 409)
 
@@ -217,7 +220,23 @@ class Repository:
             ).values(status="running", started_at=func.now()).returning(Run))
         return run
 
+    async def pause_run(self, run_id: int, resume_time: int) -> Run:
+        async with self.db.transaction() as transaction:
+            run = await transaction.scalar(select(Run).where(Run.id == run_id).with_for_update())
+            if run is None or run.resume_time != resume_time:
+                raise DatabaseError("任务执行次数已变化，请刷新后重试", 409)
+            if run.status == "running":
+                run.status = "paused"
+                await transaction.flush()
+        return run
+
+    async def answer_run(self, user_id: str, run_id: int, resume_time: int) -> Run:
+        return await self._continue_run(user_id, run_id, resume_time, answering=True)
+
     async def resume_run(self, user_id: str, run_id: int, resume_time: int) -> Run:
+        return await self._continue_run(user_id, run_id, resume_time, answering=False)
+
+    async def _continue_run(self, user_id: str, run_id: int, resume_time: int, *, answering: bool) -> Run:
         async with self.db.transaction() as transaction:
             run = await transaction.get(Run, run_id)
             if run is None or run.user_id != user_id:
@@ -226,11 +245,15 @@ class Repository:
             if session is None or session.project_id != run.project_id:
                 raise DatabaseError("Run not found", 404)
             # Refresh after locking the session, which also serializes chat submission.
-            await transaction.refresh(run)
+            run = await transaction.scalar(select(Run).where(Run.id == run_id).with_for_update()
+                                           .execution_options(populate_existing=True))
             latest_id = await transaction.scalar(select(func.max(Run.id)).where(Run.session_id == session.id))
-            if latest_id != run.id or run.status not in ("failed", "cancelled") or run.resume_time != resume_time:
+            allowed = ("paused",) if answering else ("failed", "cancelled")
+            if (latest_id != run.id or run.status not in allowed or run.resume_time != resume_time
+                    or (answering and run.cancel_requested_at is not None)):
                 raise DatabaseError("任务状态已变化，请刷新后重试", 409)
-            await self.check_no_active_run(transaction, session.id)
+            if not answering:
+                await self.check_no_active_run(transaction, session.id)
             run.status = "waiting"
             run.resume_time += 1
             run.error = run.error_code = None
@@ -247,7 +270,7 @@ class Repository:
             run = await transaction.scalar(select(Run).where(Run.id == run_id).with_for_update())
             if run is None or run.resume_time != resume_time:
                 raise DatabaseError("任务执行次数已变化，请刷新后重试", 409)
-            changed = run.status in ("waiting", "running")
+            changed = run.status in ("waiting", "running", "paused")
             if changed:
                 run.status = "cancelled" if cancelled else "failed" if error is not None else "success"
                 run.finished_at = func.now()
@@ -267,7 +290,7 @@ class Repository:
                 raise DatabaseError("Run not found", 404)
             if run.resume_time != resume_time:
                 raise DatabaseError("任务执行次数已变化，请刷新后重试", 409)
-            if run.status in ("waiting", "running"):
+            if run.status in ("waiting", "running", "paused"):
                 run.cancel_requested_at = run.cancel_requested_at or func.now()
                 await transaction.flush()
                 await transaction.refresh(run)
@@ -362,6 +385,13 @@ class Repository:
                 if row.role == "tool":
                     call = row.tool_call if isinstance(row.tool_call, dict) else {}
                     item.update(tool_name=row.tool_name or "", arguments=call.get("arguments", ""))
+                    if row.tool_name == "ask_user_question":
+                        try:
+                            result = json.loads(row.content)
+                            if result.get("error_code") is None:
+                                item["answers"] = Answers.model_validate(result["result"]).model_dump()["answers"]
+                        except (ValueError, KeyError, TypeError, AttributeError):
+                            pass
                 else:
                     item["content"] = row.content
                     if row.role == "user":

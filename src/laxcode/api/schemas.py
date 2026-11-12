@@ -4,6 +4,7 @@ from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, computed_field, field_validator, model_validator
 
+from laxcode.tools.builtin.ask_user_question import Answer, Answers
 from laxcode.memory import MemoryCategory
 from laxcode.run_errors import failure_description
 
@@ -87,11 +88,16 @@ class ResumeRequest(BaseModel):
     resume_time: int = Field(ge=0)
 
 
+class AnswersRequest(Answers):
+    resume_time: int = Field(ge=0)
+    interrupt_id: str = Field(min_length=1)
+
+
 class RunResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
     run_id: int = Field(validation_alias="id")
     session_id: int
-    status: Literal["waiting", "running", "success", "failed", "cancelled"]
+    status: Literal["waiting", "running", "paused", "success", "failed", "cancelled"]
     model: str
     created_at: datetime
     started_at: datetime | None
@@ -181,8 +187,12 @@ class ToolMessageResponse(BaseModel):
     arguments: str
 
 
+class QuestionMessageResponse(ToolMessageResponse):
+    answers: list[Answer]
+
+
 class MessagePageResponse(BaseModel):
-    items: list[TextMessageResponse | AssistantMessageResponse | ToolMessageResponse]
+    items: list[TextMessageResponse | AssistantMessageResponse | QuestionMessageResponse | ToolMessageResponse]
     has_more: bool
     next_before_seq: int | None
 

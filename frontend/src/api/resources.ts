@@ -1,6 +1,6 @@
 import { json, request } from './http'
 import { streamRun } from './sse'
-import type { AppendixReference, UserConfigs, Memories, MessagePage, Models, Project, Run, Session, SessionDetail, SubmittedRun } from './types'
+import type { Answer, AppendixReference, UserConfigs, Memories, MessagePage, Models, Project, Run, Session, SessionDetail, SubmittedRun } from './types'
 
 export const api = {
   uploadAppendix: (file: File, signal?: AbortSignal) => {
@@ -20,6 +20,10 @@ export const api = {
   renameSession: (session: number, name: string) => json<Session>(`/sessions/${session}`, { method: 'PATCH', body: JSON.stringify({ name }) }),
   deleteSession: async (session: number): Promise<void> => { await request(`/sessions/${session}`, { method: 'DELETE' }) },
   cancelRun: (run: number, signal?: AbortSignal) => json<Run>(`/runs/${run}/cancel`, { method: 'POST', signal }),
+  getRun: (run: number, signal?: AbortSignal) => json<Run>(`/runs/${run}`, { signal }),
+  answerRun: (run: number, resumeTime: number, interruptId: string, answers: Answer[], signal?: AbortSignal) => json<SubmittedRun>(`/runs/${run}/answers`, {
+    method: 'POST', body: JSON.stringify({ resume_time: resumeTime, interrupt_id: interruptId, answers }), signal,
+  }),
   resumeRun: (run: number, resumeTime: number, signal?: AbortSignal) => json<SubmittedRun>(`/runs/${run}/resume`, {
     method: 'POST', body: JSON.stringify({ resume_time: resumeTime }), signal,
   }),

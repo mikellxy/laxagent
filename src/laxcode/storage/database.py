@@ -6,7 +6,7 @@ from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from laxcode.config import DatabaseConfig
 
-SCHEMA_REVISION = "0009"
+SCHEMA_REVISION = "0010"
 
 
 class DatabaseError(Exception):

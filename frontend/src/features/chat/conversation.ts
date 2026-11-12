@@ -1,8 +1,8 @@
 import { api } from '../../api/resources'
 import { ApiError, messageOf } from '../../api/errors'
-import type { AppendixDisplay, Message, ReasoningPart, Run, SessionDetail, StreamEvent, ToolMessage, ToolStatus } from '../../api/types'
+import type { Answer, PendingQuestion, Question, AppendixDisplay, Message, ReasoningPart, Run, SessionDetail, StreamEvent, ToolMessage, ToolStatus } from '../../api/types'
 
-export type Transport = Pick<typeof api, 'detail' | 'messages' | 'chat' | 'stream' | 'cancelRun' | 'resumeRun'>
+export type Transport = Pick<typeof api, 'detail' | 'messages' | 'chat' | 'stream' | 'cancelRun' | 'resumeRun' | 'getRun' | 'answerRun'>
 export interface PendingMessage { content: string; appendix: AppendixDisplay[]; afterSeq: number; runId: number | null; failed: boolean }
 export interface Activity { firstSeq: number; thinkingSeq: number | null; toolSeq: number | null }
 interface StreamingTool {
@@ -16,8 +16,10 @@ export interface ConversationSnapshot {
   error: string | null; missing: boolean
   activity: Activity | null
   resuming: boolean
+  question: PendingQuestion | null; answering: boolean
 }
 const active = (run: Run | null | undefined) => run?.status === 'waiting' || run?.status === 'running'
+const occupied = (run: Run | null | undefined) => active(run) || run?.status === 'paused'
 const attempt = (run: Run | null | undefined) => run ? `${run.run_id}:${run.resume_time}` : null
 
 /** One selected session owns one stream; durable rows and transient chunks never share storage. */
@@ -28,6 +30,9 @@ export class Conversation {
   private boundary = 0
   private detail: SessionDetail | null = null
   private pending: PendingMessage | null = null
+  private question: PendingQuestion | null = null
+  private answering = false
+  private pausedStreamRead: string | null = null
   private hasMore = false
   private ready = false
   private submitting = false
@@ -50,7 +55,7 @@ export class Conversation {
   private retryDelay = 500
   private listeners = new Set<() => void>()
   private snapshot: ConversationSnapshot = { messages: [], generatingTools: [], pending: null, detail: null, busy: false, ready: false,
-    syncing: false, loadingOlder: false, hasMore: false, error: null, missing: false, cancelling: false, resuming: false, activity: null }
+    syncing: false, loadingOlder: false, hasMore: false, error: null, missing: false, cancelling: false, resuming: false, activity: null, question: null, answering: false }
 
   constructor(readonly sessionId: number, private transport: Transport = api) {}
   subscribe = (listener: () => void) => { this.listeners.add(listener); return () => { this.listeners.delete(listener) } }
@@ -73,8 +78,8 @@ export class Conversation {
     this.snapshot = {
       generatingTools,
       messages: [...messages.values()].sort((a, b) => a.seq - b.seq), pending: this.pending ? { ...this.pending } : null,
-      detail: this.detail, busy: this.submitting || this.cancelling || this.resuming || active(this.detail?.latest_run), ready: this.ready,
-      cancelling: this.cancelling, resuming: this.resuming,
+      detail: this.detail, busy: this.submitting || this.cancelling || this.resuming || this.answering || occupied(this.detail?.latest_run), ready: this.ready,
+      cancelling: this.cancelling, resuming: this.resuming, question: this.question, answering: this.answering,
       activity: active(this.detail?.latest_run) && this.activity ? { ...this.activity } : null,
       syncing: this.syncing, loadingOlder: this.loadingOlder, hasMore: this.hasMore,
       error: this.error ?? (this.pending?.failed && this.detail?.latest_run?.status !== 'failed' ? "消息提交失败" : null), missing: this.missing,
@@ -129,6 +134,8 @@ export class Conversation {
           if (this.activity.thinkingSeq !== null && this.activity.thinkingSeq <= boundary) this.activity.thinkingSeq = null
           if (this.activity.toolSeq !== null && this.activity.toolSeq <= boundary) this.activity.toolSeq = null
         }
+        if (this.question && (detail.latest_run?.status !== 'paused' ||
+            attempt(detail.latest_run) !== `${this.question.run_id}:${this.question.resume_time}`)) this.question = null
         this.detail = detail; this.ready = true; this.error = null
         this.reconcilePending()
         if (this.pending && detail.latest_run?.status === 'failed') this.pending.failed = true
@@ -161,7 +168,7 @@ export class Conversation {
     this.streamAbort?.abort()
     if (this.retry) { clearTimeout(this.retry); this.retry = null }
     const run = this.detail?.latest_run
-    if (this.disposed || !run || !active(run)) return
+    if (this.disposed || !run || !occupied(run) || (run.status === 'paused' && this.pausedStreamRead === attempt(run))) return
     const abort = new AbortController()
     this.streamAbort = abort
     void this.transport.stream(run.run_id, event => {
@@ -185,7 +192,7 @@ export class Conversation {
     this.retryDelay = Math.min(this.retryDelay * 2, 5000)
   }
   private finishToolCalls(run: Run | null) {
-    if (!run || active(run)) return
+    if (!run || occupied(run)) return
     for (const [key, call] of this.toolCalls) {
       if (call.status === 'generating') {
         if (run.status === 'success') this.toolCalls.delete(key)
@@ -232,7 +239,12 @@ export class Conversation {
   private apply(event: StreamEvent) {
     const run = this.detail?.latest_run
     if (!run || event.run_id !== run.run_id || (event.resume_time ?? 0) !== run.resume_time) return
-    if (event.type === 'sse_end') { void this.refresh(true); return }
+    if (event.type === 'ask_user_question') { void this.receiveQuestion(event); return }
+    if (event.type === 'sse_end') {
+      const paused = typeof event.content === 'object' && event.content.status === 'paused'
+      if (paused) this.pausedStreamRead = attempt(run)
+      void this.refresh(!paused); return
+    }
     if (event.type === 'error' || event.type === 'response_incomplete') {
       this.activity = null
       this.error = event.error ?? '运行失败'; this.emit(); return
@@ -241,6 +253,15 @@ export class Conversation {
     if (seq === null) return
     if (!active(run)) return
     const content = typeof event.content === 'object' ? event.content : {}
+    if (event.type === 'tool_end' && content.tool_name === 'ask_user_question') {
+      if (!content.error_code && typeof content.result === 'object' && content.result !== null &&
+          'answers' in content.result && Array.isArray(content.result.answers) && seq > this.boundary) {
+        this.live.set(seq, { seq, role: 'tool', tool_name: 'ask_user_question', arguments: '',
+          answers: content.result.answers as Answer[] })
+      }
+      if (this.activity?.toolSeq === seq) this.activity.toolSeq = null
+      this.emit(); return
+    }
     this.applyToolEvent(event, seq, content)
     // Replayed committed events identify this run's range, but never restart its completed phases.
     if (active(this.detail?.latest_run)) {
@@ -281,6 +302,49 @@ export class Conversation {
     this.emit()
   }
 
+  private async receiveQuestion(event: StreamEvent) {
+    const content = typeof event.content === 'object' ? event.content : {}
+    if (typeof content.interrupt_id !== 'string' || typeof content.tool_call_id !== 'string' || !Array.isArray(content.questions)) return
+    try {
+      const current = await this.transport.getRun(event.run_id, this.lifetime.signal)
+      if (this.disposed || attempt(this.detail?.latest_run) !== attempt(current) ||
+          current.resume_time !== (event.resume_time ?? 0)) return
+      if (current.status !== 'paused') { await this.refresh(true); return }
+      this.detail = { ...this.detail!, latest_run: current }
+      this.activity = null
+      if (this.question?.interrupt_id !== content.interrupt_id) this.question = {
+        run_id: current.run_id, resume_time: current.resume_time, interrupt_id: content.interrupt_id,
+        tool_call_id: content.tool_call_id, questions: content.questions as Question[],
+      }
+      this.emit()
+    } catch (error) {
+      if (!this.disposed) { this.error = messageOf(error); this.emit() }
+    }
+  }
+
+  answer = async (answers: Answer[]): Promise<void> => {
+    const question = this.question
+    if (!question || this.disposed || this.answering || this.cancelling) return
+    this.answering = true; this.error = null; this.emit()
+    try {
+      const submitted = await this.transport.answerRun(question.run_id, question.resume_time,
+        question.interrupt_id, answers, this.lifetime.signal)
+      if (this.syncFlight) await this.syncFlight
+      if (this.disposed) return
+      this.question = null
+      this.streamAbort?.abort(); this.buffered = []; this.activity = null; this.checkedRun = null
+      this.clearUnfinishedTools()
+      this.detail = { ...this.detail!, latest_run: { ...this.detail!.latest_run!, ...submitted } }
+      await this.refresh(true)
+    } catch (error) {
+      if (!this.disposed) {
+        // Reconcile a lost response without automatically submitting twice.
+        await this.refresh(true)
+        if (!this.disposed) this.error = messageOf(error)
+      }
+    } finally { this.answering = false; this.emit() }
+  }
+
   loadOlder = async () => {
     if (this.disposed || this.loadingOlder || !this.hasMore || !this.history.size || this.syncing) return
     this.loadingOlder = true; this.emit()
@@ -295,13 +359,13 @@ export class Conversation {
   }
 
   send = async (content: string, model: string, appendix: AppendixDisplay[] = []): Promise<boolean> => {
-    if (this.disposed || !this.ready || this.submitting || this.cancelling || this.resuming || active(this.detail?.latest_run) || (!content.trim() && !appendix.length)) return false
+    if (this.disposed || !this.ready || this.submitting || this.cancelling || this.resuming || this.answering || occupied(this.detail?.latest_run) || (!content.trim() && !appendix.length)) return false
     this.submitting = true; this.error = null; this.emit()
     try {
       // Establish a fresh lower bound so repeated text cannot match old historical prompts.
       await this.refresh(false)
       if (this.disposed) return false
-      if (active(this.detail?.latest_run)) { this.connect(); return false }
+      if (occupied(this.detail?.latest_run)) { this.connect(); return false }
       if (this.syncFailed) throw new Error(this.error ?? "读取会话失败")
       this.error = null
       this.pending = { content, appendix, afterSeq: this.boundary, runId: null, failed: false }; this.emit()
@@ -352,7 +416,7 @@ export class Conversation {
 
   cancel = async (): Promise<void> => {
     const run = this.detail?.latest_run
-    if (this.disposed || this.cancelling || this.resuming || !run || !active(run)) return
+    if (this.disposed || this.cancelling || this.resuming || this.answering || !run || !occupied(run)) return
     this.cancelling = true; this.error = null; this.emit()
     try {
       const ended = await this.transport.cancelRun(run.run_id, this.lifetime.signal)

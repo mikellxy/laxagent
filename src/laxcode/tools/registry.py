@@ -5,6 +5,7 @@ from pydantic import BaseModel
 
 from laxcode.memory import memory_enabled
 
+from laxcode.tools.builtin.ask_user_question import AskUserQuestionArgs, ask_user_question
 from laxcode.tools.builtin.bash import BashArgs, bash
 from laxcode.tools.builtin.skills import LoadSkillArgs, RunSkillScriptsArgs, load_skill, run_skill_scripts
 from laxcode.tools.builtin.edit_file import EditFileArgs, edit_file
@@ -23,6 +24,7 @@ class Tool:
 
 
 TOOLS = {
+    "ask_user_question": Tool(AskUserQuestionArgs, ask_user_question),
     "read_file": Tool(ReadFileArgs, read_file),
     "write_file": Tool(WriteFileArgs, write_file),
     "edit_file": Tool(EditFileArgs, edit_file),
@@ -68,6 +70,15 @@ def _strict_schema(value):
 
 def _all_tool_definitions() -> list[dict]:
     return [{
+        "type": "function", "name": "ask_user_question", "strict": True,
+        "description": (
+            "Ask the user 1–5 questions when their input is needed before continuing. "
+            "Each question offers up to 3 single-choice strings; choice=[] is text-only. "
+            "Users can always type their own answer or skip. Skipped answers are 用户未回答. "
+            "Execution pauses until this batch is answered; subsequent tools wait."
+        ),
+        "parameters": AskUserQuestionArgs.model_json_schema(),
+    }, {
         "type": "function", "name": "read_file", "strict": True,
         "description": (
             "Read UTF-8 text: skill_name=null selects workspace, otherwise the named user skill. "

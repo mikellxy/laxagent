@@ -4,7 +4,7 @@ from dataclasses import dataclass, field, replace
 
 from laxcode.runtime.cancellation import CancellationBus, CancelCommand, RunSnapshot
 from laxcode.runtime.events import EventStoreError
-from laxcode.runtime.finalization_v2 import RunFinalizerV2
+from laxcode.runtime.finalization import RunFinalizer
 from laxcode.runtime.runner import classify_run_error, run_agent
 from laxcode.storage.database import DatabaseError
 from laxcode.storage.models import Run
@@ -34,7 +34,7 @@ class TaskManager:
         self.context = context
         self.cancel_timeout = cancel_timeout
         self.cancellation = CancellationBus(context.events)
-        self.finalizer_v2 = RunFinalizerV2(context.repository, context.events, self.cancellation)
+        self.finalizer = RunFinalizer(context.repository, context.events, self.cancellation)
         self.executions: dict[tuple[int, int], LocalExecution] = {}
         self.submissions: set[asyncio.Task] = set()
         self.controls: set[asyncio.Task] = set()
@@ -64,16 +64,16 @@ class TaskManager:
         try:
             await self.context.events.create_run(run.id)
         except BaseException:
-            await self.finalizer_v2.finish_submission_failed(run.id, run.resume_time)
+            await self.finalizer.finish_submission_failed(run.id, run.resume_time)
             raise
         if self.closing:
-            await self.finalizer_v2.finish_submission_failed(run.id, run.resume_time)
+            await self.finalizer.finish_submission_failed(run.id, run.resume_time)
             raise DatabaseError("Agent runtime is shutting down")
         try:
             self._dispatch(run)
             return run
         except BaseException:
-            await self.finalizer_v2.finish_submission_failed(run.id, run.resume_time)
+            await self.finalizer.finish_submission_failed(run.id, run.resume_time)
             raise
 
     def _remove_execution(self, execution):
@@ -109,14 +109,14 @@ class TaskManager:
                 return
         except asyncio.CancelledError:
             if not execution.user_cancelled:
-                await self.finalizer_v2.finish_startup_interrupted(*execution.key)
+                await self.finalizer.finish_startup_interrupted(*execution.key)
             raise
         except Exception as exc:
-            await self.finalizer_v2.finish_startup_failed(*execution.key, classify_run_error(exc))
+            await self.finalizer.finish_startup_failed(*execution.key, classify_run_error(exc))
             raise
         # run_agent alone owns execution errors; the block above handles startup only.
         await run_agent(self.graph, run.id, context, user_cancelled=lambda: execution.user_cancelled,
-                        finalizer_v2=self.finalizer_v2)
+                        finalizer=self.finalizer)
 
     async def resume(self, user_id: str, run_id: int, resume_time: int):
         return await self.control(self._resume, user_id, run_id, resume_time)
@@ -138,7 +138,7 @@ class TaskManager:
         try:
             self._dispatch(run)
         except BaseException:
-            await self.finalizer_v2.finish_submission_failed(run.id, run.resume_time)
+            await self.finalizer.finish_submission_failed(run.id, run.resume_time)
             raise
         return run
 
@@ -190,7 +190,7 @@ class TaskManager:
             task.cancel()
         await asyncio.gather(task, return_exceptions=True)
         try:
-            await self.finalizer_v2.finish_user_cancelled(*execution.key)
+            await self.finalizer.finish_user_cancelled(*execution.key)
         except Exception as exc:
             logger.warning("Cancellation failed for run %s (%s)", execution.run.id, type(exc).__name__)
             if isinstance(exc, DatabaseError) and exc.status == 409:
@@ -230,7 +230,7 @@ class TaskManager:
             if not execution.user_cancelled:
                 # A task cancelled before its first step never reached either error boundary.
                 if not execution.started:
-                    await self.finalizer_v2.finish_startup_interrupted(*execution.key)
+                    await self.finalizer.finish_startup_interrupted(*execution.key)
                 self._remove_execution(execution)
         if self._listener is not None:
             await self._listener.__aexit__(None, None, None)

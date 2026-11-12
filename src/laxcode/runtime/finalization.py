@@ -25,7 +25,7 @@ async def drain(task):
     return task.result()
 
 
-class RunFinalizerV2:
+class RunFinalizer:
     def __init__(self, repository, events, cancellation=None):
         self.repository = repository
         self.events = events

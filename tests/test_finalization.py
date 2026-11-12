@@ -4,7 +4,7 @@ import pytest
 
 from laxcode.run_errors import make_run_error
 from laxcode.runtime.cancellation import CancelCommand, RunSnapshot
-from laxcode.runtime.finalization_v2 import RunFinalizerV2
+from laxcode.runtime.finalization import RunFinalizer
 from laxcode.runtime.events import EventStoreError
 from laxcode.storage.database import DatabaseError
 from model_helpers import ModelStream, client_for
@@ -26,7 +26,7 @@ async def unstarted_run(h):
 async def test_finalization_without_local_worker_is_idempotent_and_replies(chat_api, outcome):
     h = chat_api
     run = await unstarted_run(h)
-    finalizer = RunFinalizerV2(h.context.repository, h.context.events)
+    finalizer = RunFinalizer(h.context.repository, h.context.events)
     method = {
         'success': finalizer.finish_succeeded,
         'failed': finalizer.finish_execution_failed,
@@ -69,7 +69,7 @@ async def test_natural_failure_reply_keeps_snapshot_when_resumed_during_sse(chat
         await publish(event)
 
     monkeypatch.setattr(h.context.events, 'publish', blocked)
-    finalizer = RunFinalizerV2(h.context.repository, h.context.events)
+    finalizer = RunFinalizer(h.context.repository, h.context.events)
     async with h.manager.cancellation.results(run.id, 0) as sub:
         finishing = asyncio.create_task(finalizer.finish_execution_failed(run.id, 0, make_run_error('agent_execution_failed')))
         try:
@@ -102,7 +102,7 @@ async def test_finalization_timeout_still_replies_to_cancel_waiters(chat_api, mo
         monkeypatch.setattr(h.context.repository, 'finish_run', stuck)
     else:
         monkeypatch.setattr(h.context.events, 'publish', stuck)
-    finalizer = RunFinalizerV2(h.context.repository, h.context.events)
+    finalizer = RunFinalizer(h.context.repository, h.context.events)
     async with h.manager.cancellation.results(run.id, 0) as sub:
         async with asyncio.timeout(8):
             current = await finalizer.finish_execution_failed(run.id, 0, make_run_error('agent_execution_failed'))

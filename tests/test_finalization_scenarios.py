@@ -7,7 +7,7 @@ import pytest
 from laxcode.run_errors import RunError, make_run_error
 from laxcode.runtime.cancellation import CancelCommand
 from laxcode.runtime.events import EventStoreError
-from laxcode.runtime.finalization_v2 import RunFinalizerV2
+from laxcode.runtime.finalization import RunFinalizer
 from laxcode.runtime.runner import classify_run_error
 from laxcode.storage.database import DatabaseError
 from test_chat import chat_api
@@ -65,7 +65,7 @@ async def test_submission_failure_confirms_concurrent_cancel(chat_api, monkeypat
         assert not h.manager.executions
 
         # Retrying cleanup must not publish a second terminal event.
-        await h.manager.finalizer_v2.finish_submission_failed(run_id, 0)
+        await h.manager.finalizer.finish_submission_failed(run_id, 0)
         replay = (await h.api.get(f'/api/v1/runs/{run_id}/events')).text
         assert replay.count('event: error') == replay.count('event: sse_end') == 1
         assert '"status": "failed"' in replay
@@ -100,8 +100,8 @@ async def test_interruption_preserves_terminal_contract(chat_api, monkeypatch, u
     else:
         h.manager.graph = SimpleNamespace(ainvoke=blocked_get)
     method = f'finish_{stage}_interrupted'
-    interrupted = AsyncMock(wraps=getattr(h.manager.finalizer_v2, method))
-    monkeypatch.setattr(h.manager.finalizer_v2, method, interrupted)
+    interrupted = AsyncMock(wraps=getattr(h.manager.finalizer, method))
+    monkeypatch.setattr(h.manager.finalizer, method, interrupted)
     command = CancelCommand(run_id=run.id, resume_time=run.resume_time)
     async with h.manager.cancellation.results(run.id, run.resume_time) as sub:
         h.manager._dispatch(run)
@@ -179,7 +179,7 @@ async def test_startup_failure_preserves_error_and_confirms_cancel(
     else:
         assert current.status == 'failed' and current.error_code == code
         assert current.finished_at is not None
-        await h.manager.finalizer_v2.finish_startup_failed(run.id, run.resume_time, classify_run_error(failure))
+        await h.manager.finalizer.finish_startup_failed(run.id, run.resume_time, classify_run_error(failure))
         replay = (await h.api.get(f'/api/v1/runs/{run.id}/events')).text
         assert replay.count('event: error') == replay.count('event: sse_end') == 1
         assert '"status": "failed"' in replay
@@ -197,7 +197,7 @@ async def test_failure_cleanup_storage_failure_notifies_waiters(failure, status,
     repository = SimpleNamespace(finish_run=AsyncMock(side_effect=failure))
     events = SimpleNamespace(publish=AsyncMock())
     cancellation = SimpleNamespace(reply=AsyncMock())
-    finalizer = RunFinalizerV2(repository, events, cancellation)
+    finalizer = RunFinalizer(repository, events, cancellation)
 
     args = (make_run_error('agent_execution_failed'),) if method == 'finish_execution_failed' else ()
     assert await getattr(finalizer, method)(1, 0, *args) is None
@@ -221,7 +221,7 @@ async def test_failure_cleanup_survives_host_cancellation(method):
         raise DatabaseError()
 
     cancellation = SimpleNamespace(reply=AsyncMock())
-    finalizer = RunFinalizerV2(SimpleNamespace(finish_run=blocked_finish), None, cancellation)
+    finalizer = RunFinalizer(SimpleNamespace(finish_run=blocked_finish), None, cancellation)
     args = (make_run_error('agent_execution_failed'),) if method == 'finish_execution_failed' else ()
     finishing = asyncio.create_task(getattr(finalizer, method)(1, 0, *args))
     try:
@@ -264,7 +264,7 @@ async def test_terminal_commit_preserves_state_and_replies(chat_api, monkeypatch
     # Cancellation replies even without intent; success replies to persisted intent.
     async with h.manager.cancellation.results(run.id, run.resume_time) as sub:
         first, second = await asyncio.gather(*[
-            getattr(h.manager.finalizer_v2, method)(run.id, run.resume_time) for _ in range(2)
+            getattr(h.manager.finalizer, method)(run.id, run.resume_time) for _ in range(2)
         ])
         results = [await asyncio.wait_for(h.manager.cancellation.wait_result(sub, command), 3) for _ in range(2)]
     target_status = 'cancelled' if method == 'finish_user_cancelled' else 'success'
@@ -292,7 +292,7 @@ async def test_terminal_commit_replies_and_propagates_storage_errors(failure, st
     repository = SimpleNamespace(finish_run=AsyncMock(side_effect=failure))
     events = SimpleNamespace(publish=AsyncMock())
     cancellation = SimpleNamespace(reply=AsyncMock())
-    finalizer = RunFinalizerV2(repository, events, cancellation)
+    finalizer = RunFinalizer(repository, events, cancellation)
     with pytest.raises(type(failure)) as caught:
         await getattr(finalizer, method)(1, 2)
     assert caught.value is failure
@@ -312,10 +312,10 @@ async def test_runner_success_commit_failure_uses_execution_failure_boundary(cha
     )
     await h.context.events.create_run(run.id)
     h.manager.graph = SimpleNamespace(ainvoke=AsyncMock(return_value={}))
-    succeeded = AsyncMock(wraps=h.manager.finalizer_v2.finish_succeeded)
-    failed = AsyncMock(wraps=h.manager.finalizer_v2.finish_execution_failed)
-    monkeypatch.setattr(h.manager.finalizer_v2, 'finish_succeeded', succeeded)
-    monkeypatch.setattr(h.manager.finalizer_v2, 'finish_execution_failed', failed)
+    succeeded = AsyncMock(wraps=h.manager.finalizer.finish_succeeded)
+    failed = AsyncMock(wraps=h.manager.finalizer.finish_execution_failed)
+    monkeypatch.setattr(h.manager.finalizer, 'finish_succeeded', succeeded)
+    monkeypatch.setattr(h.manager.finalizer, 'finish_execution_failed', failed)
     finish = h.context.repository.finish_run
 
     async def fail_success_commit(*args, **kwargs):

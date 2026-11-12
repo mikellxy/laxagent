@@ -64,7 +64,7 @@ async def run_agent(graph, run_id: int, context: AgentContext, *,
     except asyncio.CancelledError:
         # User cancellation is terminalized by the manager after this worker fully exits.
         if not user_cancelled():
-            await finalizer.fail(run_id, context.resume_time, make_run_error("execution_cancelled"), interrupted=True)
+            await finalizer_v2.finish_execution_interrupted(run_id, context.resume_time)
         raise
     except Exception as exc:
         error = classify_run_error(exc)

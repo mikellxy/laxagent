@@ -42,6 +42,16 @@ class RunFinalizerV2:
         except Exception:
             logger.error("Could not persist interrupted run %s", run_id)
 
+    async def finish_execution_interrupted(self, run_id: int, resume_time: int):
+        """Finish a non-user interruption after the runner's execution cleanup exits."""
+        try:
+            return await drain(asyncio.create_task(self._commit_failure(
+                run_id, resume_time, error=make_run_error("execution_cancelled"),
+                publish_events=self._cancelled_events,
+            )))
+        except Exception:
+            logger.error("Could not persist interrupted run %s", run_id)
+
     async def finish_startup_failed(self, run_id: int, resume_time: int, error: RunError):
         """Finish a startup check that failed with a classified run error."""
         try:

@@ -84,7 +84,8 @@ async def test_submission_failure_confirms_concurrent_cancel(chat_api, monkeypat
 
 @pytest.mark.anyio
 @pytest.mark.parametrize('user_cancelled', [False, True])
-async def test_startup_interruption_preserves_terminal_contract(chat_api, monkeypatch, user_cancelled):
+@pytest.mark.parametrize('stage', ['startup', 'execution'])
+async def test_interruption_preserves_terminal_contract(chat_api, monkeypatch, user_cancelled, stage):
     h = chat_api
     run = await h.context.repository.create_run(
         user_id=h.conversation['user_id'], session_id=h.conversation['session_id'],
@@ -98,12 +99,16 @@ async def test_startup_interruption_preserves_terminal_contract(chat_api, monkey
         entered.set()
         await asyncio.Future()
 
-    monkeypatch.setattr(h.context.repository, 'get_run', blocked_get)
+    if stage == 'startup':
+        monkeypatch.setattr(h.context.repository, 'get_run', blocked_get)
+    else:
+        h.manager.graph = SimpleNamespace(ainvoke=blocked_get)
     legacy = AsyncMock(side_effect=AssertionError('legacy failure finalizer called'))
     monkeypatch.setattr(h.manager.finalizer, 'fail', legacy)
     monkeypatch.setattr(h.manager.finalizer, 'finish', legacy)
-    interrupted = AsyncMock(wraps=h.manager.finalizer_v2.finish_startup_interrupted)
-    monkeypatch.setattr(h.manager.finalizer_v2, 'finish_startup_interrupted', interrupted)
+    method = f'finish_{stage}_interrupted'
+    interrupted = AsyncMock(wraps=getattr(h.manager.finalizer_v2, method))
+    monkeypatch.setattr(h.manager.finalizer_v2, method, interrupted)
     command = CancelCommand(run_id=run.id, resume_time=run.resume_time)
     async with h.manager.cancellation.results(run.id, run.resume_time) as sub:
         h.manager._dispatch(run)
@@ -123,7 +128,8 @@ async def test_startup_interruption_preserves_terminal_contract(chat_api, monkey
     current = await get_run(run.id, run.user_id)
     assert current.status == result.status == ('cancelled' if user_cancelled else 'failed')
     assert current.error_code == (None if user_cancelled else 'execution_cancelled')
-    assert current.started_at is None and current.finished_at is not None
+    assert (current.started_at is None) == (stage == 'startup')
+    assert current.finished_at is not None
     assert not h.manager.executions
     legacy.assert_not_called()
     if user_cancelled:
@@ -192,7 +198,9 @@ async def test_startup_failure_preserves_error_and_confirms_cancel(
 
 
 @pytest.mark.anyio
-@pytest.mark.parametrize('method', ['finish_submission_failed', 'finish_startup_interrupted'])
+@pytest.mark.parametrize('method', [
+    'finish_submission_failed', 'finish_startup_interrupted', 'finish_execution_interrupted',
+])
 @pytest.mark.parametrize('failure,status', [(DatabaseError(), 503), (DatabaseError('stale', 409), 409),
                                           (TimeoutError(), 503)])
 async def test_failure_cleanup_storage_failure_notifies_waiters(failure, status, method):
@@ -209,7 +217,8 @@ async def test_failure_cleanup_storage_failure_notifies_waiters(failure, status,
 
 @pytest.mark.anyio
 @pytest.mark.parametrize('method', [
-    'finish_submission_failed', 'finish_startup_interrupted', 'finish_user_cancelled', 'finish_succeeded',
+    'finish_submission_failed', 'finish_startup_interrupted', 'finish_execution_interrupted',
+    'finish_user_cancelled', 'finish_succeeded',
 ])
 async def test_failure_cleanup_survives_host_cancellation(method):
     entered, release = asyncio.Event(), asyncio.Event()

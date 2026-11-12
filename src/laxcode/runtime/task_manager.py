@@ -2,7 +2,6 @@ import asyncio
 import logging
 from dataclasses import dataclass, field, replace
 
-from laxcode.run_errors import make_run_error
 from laxcode.runtime.cancellation import CancellationBus, CancelCommand, RunSnapshot
 from laxcode.runtime.events import EventStoreError
 from laxcode.runtime.finalization import RunFinalizer
@@ -233,7 +232,7 @@ class TaskManager:
             if not execution.user_cancelled:
                 # A task cancelled before its first step never reached either error boundary.
                 if not execution.started:
-                    await self.finalizer.fail(*execution.key, make_run_error("execution_cancelled"), interrupted=True)
+                    await self.finalizer_v2.finish_startup_interrupted(*execution.key)
                 self._remove_execution(execution)
         if self._listener is not None:
             await self._listener.__aexit__(None, None, None)

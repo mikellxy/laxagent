@@ -33,7 +33,7 @@ class RunFinalizerV2:
             logger.error("Could not persist failed run %s", run_id)
 
     async def finish_startup_interrupted(self, run_id: int, resume_time: int):
-        """Finish a startup check interrupted independently of user cancellation."""
+        """Finish a non-user interruption before execution starts or during startup checks."""
         try:
             return await drain(asyncio.create_task(self._commit_failure(
                 run_id, resume_time, error=make_run_error("execution_cancelled"),

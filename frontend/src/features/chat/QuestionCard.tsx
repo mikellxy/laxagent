@@ -21,14 +21,16 @@ export function QuestionCard({ pending, submitting, onSubmit }: {
   }
   return <section className={styles.card} aria-label="回答问题" aria-busy={submitting}>
     <div className={styles.heading}>
-      <span>已回答 {completed}/{pending.questions.length} · 第 {page + 1}/{pending.questions.length} 页</span>
-      <button type="button" aria-label="跳过全部问题" title="跳过全部问题并继续" disabled={submitting} onClick={() => submit(true)}><X size={17} /></button>
-    </div>
-    <div className={styles.tabs} role="tablist" aria-label="问题页签">
-      {pending.questions.map((_, index) => <button type="button" key={index} role="tab" aria-selected={page === index}
-        aria-controls={`question-panel-${pending.interrupt_id}`} disabled={submitting} onClick={() => setPage(index)}>
-        问题 {index + 1}{values[index].trim() ? ' ✓' : ''}
-      </button>)}
+      <div className={styles.tabs} role="tablist" aria-label="问题页签">
+        {pending.questions.map((_, index) => <button type="button" key={index} role="tab" aria-selected={page === index}
+          aria-controls={`question-panel-${pending.interrupt_id}`} disabled={submitting} onClick={() => setPage(index)}>
+          问题 {index + 1}{values[index].trim() ? ' ✓' : ''}
+        </button>)}
+      </div>
+      <div className={styles.progress}>
+        <span>已回答 {completed}/{pending.questions.length} · 第 {page + 1}/{pending.questions.length} 页</span>
+        <button className={styles.close} type="button" aria-label="跳过全部问题" title="跳过全部问题并继续" disabled={submitting} onClick={() => submit(true)}><X size={15} /></button>
+      </div>
     </div>
     <div role="tabpanel" id={`question-panel-${pending.interrupt_id}`}>
       <p className={styles.question}>{question.question}</p>
@@ -40,13 +42,11 @@ export function QuestionCard({ pending, submitting, onSubmit }: {
         value={choices[page] === null ? values[page] : ''} onChange={event => update(event.target.value, null)} />
     </div>
     <div className={styles.actions}>
+      {page > 0 && <button type="button" disabled={submitting} onClick={() => setPage(page - 1)}>上一题</button>}
       <button type="button" disabled={submitting} onClick={() => update('', null)}>跳过本题</button>
-      <div>
-        {page > 0 && <button type="button" disabled={submitting} onClick={() => setPage(page - 1)}>上一题</button>}
-        {page < pending.questions.length - 1
-          ? <button type="button" disabled={submitting} onClick={() => setPage(page + 1)}>下一题</button>
-          : <button type="button" disabled={submitting} onClick={() => submit()}>{submitting ? '正在提交…' : '提交答案'}</button>}
-      </div>
+      {page < pending.questions.length - 1
+        ? <button type="button" disabled={submitting} onClick={() => setPage(page + 1)}>下一题</button>
+        : <button type="button" disabled={submitting} onClick={() => submit()}>{submitting ? '正在提交…' : '提交答案'}</button>}
     </div>
   </section>
 }

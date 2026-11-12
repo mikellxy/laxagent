@@ -81,13 +81,13 @@ function WorkCard({ group, fold }: { group: WorkGroup; fold: (keys: string[]) =>
   </section>
 }
 
-function UserIdBar({ owner, sessionId }: { owner: string; sessionId: number }) {
+export function UserIdBar({ owner, sessionId }: { owner: string; sessionId: number }) {
   const [copied, setCopied] = useState<string | null>(null)
   async function copy(key: string, value: string) {
     try { await navigator.clipboard.writeText(value); setCopied(key); setTimeout(() => setCopied(old => old === key ? null : old), 1500) } catch { /* 剪贴板不可用时忽略 */ }
   }
   const item = (key: string, label: string, value: string) => <>
-    <span>{label}: {value}</span>
+    <span title={`${label}: ${value}`}>{label}: {value}</span>
     <button aria-label={`复制 ${label}`} onClick={() => void copy(key, value)}>
       {copied === key ? <Check size={13} /> : <Copy size={13} />}
     </button>
@@ -192,7 +192,6 @@ export function Chat({ owner, sessionId, onMissing }: { owner: string; sessionId
     node: <article className={`${styles.message} ${styles.user} ${snapshot.pending.failed ? styles.failed : ''}`} aria-label="待确认用户消息">{snapshot.pending.content}<MessageAttachments items={snapshot.pending.appendix} /></article> })
   rows.sort((a, b) => a.seq - b.seq)
   return <main className={styles.chat} aria-label="聊天">
-    <UserIdBar owner={owner} sessionId={sessionId} />
     <div className={styles.scrollArea} ref={scroller} aria-label="消息列表" tabIndex={0}
       onWheel={event => { if (event.deltaY < 0 && scroller.current && scroller.current.scrollHeight > scroller.current.clientHeight) setFollow(false) }}
       onScroll={() => {

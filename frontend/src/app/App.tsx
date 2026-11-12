@@ -3,7 +3,7 @@ import { LoaderCircle } from 'lucide-react'
 import { bootstrap, guestLogin } from '../features/auth/session'
 import { Sidebar } from '../features/projects/Sidebar'
 import { MemoryControls } from '../features/memory/MemoryControls'
-import { Chat } from '../features/chat/Chat'
+import { Chat, UserIdBar } from '../features/chat/Chat'
 import { selectedSession, selectSession } from '../lib/preferences'
 import { messageOf } from '../api/errors'
 
@@ -42,7 +42,11 @@ export function App() {
     <span aria-hidden className="loginWatermark">LAXCODE</span>
   </div>
   return <div className="shell"><Sidebar owner={owner} selected={selected} onSelect={select} onDeleted={deleted} />
-    <div className="mainColumn"><MemoryControls key={owner} owner={owner} />
+    <div className="mainColumn">
+    <header className="mainHeader">
+      {selected !== null && <UserIdBar key={`${owner}:${selected}`} owner={owner} sessionId={selected} />}
+      <MemoryControls key={owner} owner={owner} />
+    </header>
     {selected !== null ? <Chat key={`${owner}:${selected}`} owner={owner} sessionId={selected} onMissing={missing} /> : <main className="blank" />}</div>
   </div>
 }

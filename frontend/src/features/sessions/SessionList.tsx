@@ -10,7 +10,8 @@ import type { Session } from '../../api/types'
 import styles from '../projects/Sidebar.module.css'
 
 export function SessionList({ projectId, owner, selected, onSelect, onDeleted, creating, onCreate }: {
-  projectId: number; owner: string; selected: number | null; onSelect: (id: number) => void; onDeleted: (id: number) => void; creating: boolean; onCreate: () => void
+  projectId: number; owner: string; selected: number | null; onSelect: (id: number) => void
+  onDeleted: (id: number, next: number | null) => void; creating: boolean; onCreate: () => void
 }) {
   const client = useQueryClient()
   const query = useQuery({ queryKey: ['sessions', owner, projectId], queryFn: ({ signal }) => api.sessions(projectId, signal) })
@@ -33,11 +34,14 @@ export function SessionList({ projectId, owner, selected, onSelect, onDeleted, c
       client.setQueryData<Session[]>(['sessions', owner, projectId], old => old?.map(s => s.id === updated.id ? updated : s))
     }} />}
     {deleting && <DeleteSessionDialog name={deleting.name} onClose={() => setDeleting(null)} onDelete={async () => {
+      const sessions = query.data ?? []
+      const index = sessions.findIndex(s => s.id === deleting.id)
+      const next = index < 0 ? null : sessions[index - 1]?.id ?? sessions[index + 1]?.id ?? null
       await api.deleteSession(deleting.id)
       await client.cancelQueries({ queryKey: ['sessions', owner, projectId] })
       client.setQueryData<Session[]>(['sessions', owner, projectId], old => old?.filter(s => s.id !== deleting.id))
       forgetSession(owner, deleting.id)
-      onDeleted(deleting.id)
+      onDeleted(deleting.id, next)
       void client.invalidateQueries({ queryKey: ['sessions', owner, projectId] })
     }} />}
   </>

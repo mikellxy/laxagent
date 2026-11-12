@@ -25,7 +25,11 @@ export function App() {
   useEffect(() => { void load() }, [load])
   const select = useCallback((id: number | null) => { setSelected(id); if (owner) selectSession(owner, id) }, [owner])
   const missing = useCallback(() => select(null), [select])
-  const deleted = useCallback((id: number) => setSelected(current => current === id ? null : current), [])
+  const deleted = useCallback((id: number, next: number | null) => {
+    if (selected !== id) return
+    setSelected(next)
+    if (owner) selectSession(owner, next)
+  }, [owner, selected])
   if (!owner) return <div className="login">
     {error && <div role="alert" className="error">{error}</div>}
     {busy ? <LoaderCircle size={20} className="spin" aria-label="正在登录" /> :

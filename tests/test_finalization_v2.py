@@ -4,6 +4,7 @@ from unittest.mock import AsyncMock
 
 import pytest
 
+from laxcode.run_errors import make_run_error
 from laxcode.runtime.cancellation import CancelCommand
 from laxcode.runtime.events import EventStoreError
 from laxcode.runtime.finalization_v2 import RunFinalizerV2
@@ -100,6 +101,7 @@ async def test_startup_interruption_preserves_terminal_contract(chat_api, monkey
     monkeypatch.setattr(h.context.repository, 'get_run', blocked_get)
     legacy = AsyncMock(side_effect=AssertionError('legacy failure finalizer called'))
     monkeypatch.setattr(h.manager.finalizer, 'fail', legacy)
+    monkeypatch.setattr(h.manager.finalizer, 'finish', legacy)
     interrupted = AsyncMock(wraps=h.manager.finalizer_v2.finish_startup_interrupted)
     monkeypatch.setattr(h.manager.finalizer_v2, 'finish_startup_interrupted', interrupted)
     command = CancelCommand(run_id=run.id, resume_time=run.resume_time)
@@ -206,7 +208,7 @@ async def test_failure_cleanup_storage_failure_notifies_waiters(failure, status,
 
 
 @pytest.mark.anyio
-@pytest.mark.parametrize('method', ['finish_submission_failed', 'finish_startup_interrupted'])
+@pytest.mark.parametrize('method', ['finish_submission_failed', 'finish_startup_interrupted', 'finish_user_cancelled'])
 async def test_failure_cleanup_survives_host_cancellation(method):
     entered, release = asyncio.Event(), asyncio.Event()
 
@@ -225,5 +227,66 @@ async def test_failure_cleanup_survives_host_cancellation(method):
         assert not finishing.done()
     finally:
         release.set()
-        await asyncio.wait_for(finishing, 2)
+        if method == 'finish_user_cancelled':
+            with pytest.raises(DatabaseError):
+                await asyncio.wait_for(finishing, 2)
+        else:
+            await asyncio.wait_for(finishing, 2)
     cancellation.reply.assert_awaited_once()
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize('initial_status', ['waiting', 'running', 'success', 'failed', 'cancelled'])
+async def test_user_cancellation_preserves_terminal_state_and_always_replies(chat_api, monkeypatch, initial_status):
+    h = chat_api
+    run = await h.context.repository.create_run(
+        user_id=h.conversation['user_id'], session_id=h.conversation['session_id'],
+        user_query='hello', model='example:model-name', context_limit=100, output_limit=10,
+    )
+    await h.context.events.create_run(run.id)
+    if initial_status == 'running':
+        await h.context.repository.claim_run(run.id, run.resume_time)
+    elif initial_status in ('success', 'failed', 'cancelled'):
+        await h.context.repository.finish_run(
+            run.id, resume_time=run.resume_time, cancelled=initial_status == 'cancelled',
+            error=make_run_error('agent_execution_failed') if initial_status == 'failed' else None,
+        )
+    publish = AsyncMock(wraps=h.context.events.publish)
+    monkeypatch.setattr(h.context.events, 'publish', publish)
+    command = CancelCommand(run_id=run.id, resume_time=run.resume_time)
+    # No persisted cancel intent: this entry point must still reply, even on retry.
+    async with h.manager.cancellation.results(run.id, run.resume_time) as sub:
+        first, second = await asyncio.gather(*[
+            h.manager.finalizer_v2.finish_user_cancelled(run.id, run.resume_time) for _ in range(2)
+        ])
+        results = [await asyncio.wait_for(h.manager.cancellation.wait_result(sub, command), 3) for _ in range(2)]
+    expected = 'cancelled' if initial_status in ('waiting', 'running') else initial_status
+    assert first.status == second.status == expected
+    assert all(result.status == expected and result.finished_at is not None for result in results)
+    assert results[0] == results[1]
+    assert results[0].error_code == ('agent_execution_failed' if initial_status == 'failed' else None)
+    if initial_status in ('waiting', 'running'):
+        publish.assert_awaited_once()
+        event = publish.call_args.args[0]
+        assert event['type'] == 'sse_end' and event['content']['status'] == 'cancelled'
+    else:
+        publish.assert_not_called()
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize('failure,status', [
+    (DatabaseError(), 503), (DatabaseError('stale', 409), 409),
+    (TimeoutError(), 503), (RuntimeError('private detail'), 503),
+])
+async def test_user_cancellation_replies_and_propagates_storage_errors(failure, status):
+    repository = SimpleNamespace(finish_run=AsyncMock(side_effect=failure))
+    events = SimpleNamespace(publish=AsyncMock())
+    cancellation = SimpleNamespace(reply=AsyncMock())
+    finalizer = RunFinalizerV2(repository, events, cancellation)
+    with pytest.raises(type(failure)) as caught:
+        await finalizer.finish_user_cancelled(1, 2)
+    assert caught.value is failure
+    events.publish.assert_not_called()
+    result = cancellation.reply.call_args.args[0]
+    assert (result.run_id, result.resume_time, result.status) == (1, 2, status)
+    assert result.run is None and 'private' not in result.error

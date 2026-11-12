@@ -193,7 +193,7 @@ class TaskManager:
             task.cancel()
         await asyncio.gather(task, return_exceptions=True)
         try:
-            await self.finalizer.finish(*execution.key, cancelled=True, reply=True)
+            await self.finalizer_v2.finish_user_cancelled(*execution.key)
         except Exception as exc:
             logger.warning("Cancellation failed for run %s (%s)", execution.run.id, type(exc).__name__)
             if isinstance(exc, DatabaseError) and exc.status == 409:

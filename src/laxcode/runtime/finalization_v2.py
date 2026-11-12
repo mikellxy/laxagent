@@ -37,7 +37,7 @@ class RunFinalizerV2:
         try:
             return await drain(asyncio.create_task(self._commit_failure(
                 run_id, resume_time, error=make_run_error("execution_cancelled"),
-                publish_events=self._startup_interrupted_events,
+                publish_events=self._cancelled_events,
             )))
         except Exception:
             logger.error("Could not persist interrupted run %s", run_id)
@@ -51,6 +51,37 @@ class RunFinalizerV2:
         except Exception:
             logger.error("Could not persist failed run %s", run_id)
 
+    async def finish_user_cancelled(self, run_id: int, resume_time: int) -> Run:
+        """Finalize user cancellation after execution and resource cleanup have stopped.
+
+        Preserve an existing terminal state and always acknowledge the request.
+        Persistence errors propagate so the caller can retain the execution for retry.
+        """
+        return await drain(asyncio.create_task(self._commit_user_cancellation(run_id, resume_time)))
+
+    async def _commit_user_cancellation(self, run_id: int, resume_time: int) -> Run:
+        try:
+            current, changed = await self.repository.finish_run(
+                run_id, resume_time=resume_time, cancelled=True,
+            )
+        except Exception as exc:
+            conflict = isinstance(exc, DatabaseError) and exc.status == 409
+            await self._reply(CancelResult(
+                run_id=run_id, resume_time=resume_time, status=409 if conflict else 503,
+                error=("任务执行次数已变化，请刷新状态" if conflict else
+                       "取消收尾状态保存失败，请重试" if isinstance(exc, (DatabaseError, TimeoutError)) else
+                       "取消收尾失败，请重试"),
+            ))
+            raise
+        try:
+            if changed:
+                await self._cancelled_events(current)
+        finally:
+            await self._reply(CancelResult(
+                run_id=run_id, resume_time=resume_time, run=RunSnapshot.model_validate(current),
+            ))
+        return current
+
     async def _failure_events(self, current: Run):
         try:
             await self.events.publish(make_event(
@@ -63,8 +94,8 @@ class RunFinalizerV2:
         except EventStoreError:
             logger.warning("Could not publish terminal SSE for run %s", current.id)
 
-    async def _startup_interrupted_events(self, current: Run):
-        # Preserve interruption's failed DB state and cancelled SSE contract.
+    async def _cancelled_events(self, current: Run):
+        # User cancellation and service interruption share this SSE status.
         try:
             await self.events.publish(make_event(
                 current.id, "sse_end", {"status": "cancelled"},

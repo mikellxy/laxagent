@@ -25,6 +25,10 @@ class FailureDefinition(TypedDict):
 
 
 RUN_FAILURES: dict[str, FailureDefinition] = {
+    "attachment_read_failed": {
+        "exception": RunError, "message": "Attachment read failed",
+        "desc": "附件读取失败，请在附件存储恢复后重试。",
+    },
     "model_request_failed": {
         "exception": ModelError, "message": "Model request failed",
         "desc": "模型服务请求失败，请稍后重试。",

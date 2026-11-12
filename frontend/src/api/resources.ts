@@ -1,8 +1,13 @@
 import { json, request } from './http'
 import { streamRun } from './sse'
-import type { UserConfigs, Memories, MessagePage, Models, Project, Run, Session, SessionDetail, SubmittedRun } from './types'
+import type { AppendixReference, UserConfigs, Memories, MessagePage, Models, Project, Run, Session, SessionDetail, SubmittedRun } from './types'
 
 export const api = {
+  uploadAppendix: (file: File, signal?: AbortSignal) => {
+    const body = new FormData(); body.append('file', file)
+    return json<AppendixReference>('/appendices', { method: 'POST', body, signal })
+  },
+  appendix: async (id: number, signal?: AbortSignal) => (await request(`/appendices/${id}`, { signal })).blob(),
   userConfigs: (signal?: AbortSignal) => json<UserConfigs>('/user-configs', { signal }),
   updateUserConfig: (key: string, value: string) => json<UserConfigs>('/user-configs', { method: 'PATCH', body: JSON.stringify({ key, value }) }),
   memories: (signal?: AbortSignal) => json<Memories>('/memories', { signal }),
@@ -21,8 +26,8 @@ export const api = {
   models: (signal?: AbortSignal) => json<Models>('/models', { signal }),
   detail: (session: number, signal?: AbortSignal) => json<SessionDetail>(`/sessions/${session}`, { signal }),
   messages: (session: number, before: number, signal?: AbortSignal) => json<MessagePage>(`/sessions/${session}/messages?before_seq=${before}&limit=50`, { signal }),
-  chat: (session: number, query: string, model: string, signal?: AbortSignal) => json<SubmittedRun>(`/sessions/${session}/chat`, {
-    method: 'POST', body: JSON.stringify({ user_query: query, model }), signal,
+  chat: (session: number, query: string, model: string, signal?: AbortSignal, appendix: AppendixReference[] = []) => json<SubmittedRun>(`/sessions/${session}/chat`, {
+    method: 'POST', body: JSON.stringify({ user_query: query, model, appendix: appendix.map(({ id, name }) => ({ id, name })) }), signal,
   }),
   stream: streamRun,
 }

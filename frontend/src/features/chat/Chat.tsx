@@ -7,6 +7,7 @@ import { api } from '../../api/resources'
 import { chooseModel, sessionModel } from '../../lib/preferences'
 import { messageOf } from '../../api/errors'
 import { Conversation } from './conversation'
+import { DraftAttachments, MessageAttachments, UploadMenu, useAppendices } from './attachments'
 import { groupTimeline, latestWorkLine, processKey, type WorkGroup } from './timeline'
 import type { Message, ToolMessage } from '../../api/types'
 import styles from './Chat.module.css'
@@ -56,6 +57,7 @@ function MessageCard({ message }: { message: Message }) {
   return <article data-seq={message.seq} aria-label={message.role === 'user' ? '用户消息' : message.role === 'assistant' ? '助手消息' : '工具调用'}
     className={`${styles.message} ${styles[message.role]}`}>
     {message.role === 'assistant' ? <AssistantMarkdown text={message.content} /> : message.content}
+    {message.role === 'user' && <MessageAttachments items={message.appendix} />}
   </article>
 }
 
@@ -102,6 +104,12 @@ export function Chat({ owner, sessionId, onMissing }: { owner: string; sessionId
   const catalog = useQuery({ queryKey: ['models', owner], queryFn: ({ signal }) => api.models(signal) })
   const [model, setModel] = useState('')
   const [draft, setDraft] = useState('')
+  const attachments = useAppendices()
+  const multimodal = catalog.data?.models.find(item => item.id === model)?.supports_multimodal ?? false
+  const incompatible = !multimodal && (!!attachments.items.length || !!snapshot.detail?.has_appendix)
+  const uploadPending = attachments.items.some(item => item.status !== 'ready')
+  const sendDisabled = (!draft.trim() && !attachments.items.length) || !model || snapshot.busy || !snapshot.ready || incompatible || uploadPending
+  useEffect(() => { if (!snapshot.pending) attachments.releaseRetired() })
   const [following, setFollowing] = useState(true)
   const follow = useRef(true)
   const scroller = useRef<HTMLDivElement>(null)
@@ -165,9 +173,13 @@ export function Chat({ owner, sessionId, onMissing }: { owner: string; sessionId
     await conversation.loadOlder()
   }
   async function send() {
-    if (!draft.trim() || !model || snapshot.busy || !snapshot.ready) return
+    if (sendDisabled) return
     const submitted = draft
-    if (await conversation.send(submitted, model)) setDraft(current => current === submitted ? '' : current)
+    const selected = attachments.items
+    if (await conversation.send(submitted, model, selected.map(item => item.value!))) {
+      setDraft(current => current === submitted ? '' : current)
+      attachments.remove(selected.map(item => item.key))
+    }
   }
   const latestRun = snapshot.detail?.latest_run
   const canResume = latestRun?.status === 'failed' || latestRun?.status === 'cancelled'
@@ -176,7 +188,7 @@ export function Chat({ owner, sessionId, onMissing }: { owner: string; sessionId
     node: row.kind === 'work' ? <WorkCard group={row} fold={fold} /> : <MessageCard message={row.message} />,
   }))
   if (snapshot.pending) rows.push({ key: 'pending', seq: snapshot.pending.afterSeq + 0.5, members: 'pending',
-    node: <article className={`${styles.message} ${styles.user} ${snapshot.pending.failed ? styles.failed : ''}`} aria-label="待确认用户消息">{snapshot.pending.content}</article> })
+    node: <article className={`${styles.message} ${styles.user} ${snapshot.pending.failed ? styles.failed : ''}`} aria-label="待确认用户消息">{snapshot.pending.content}<MessageAttachments items={snapshot.pending.appendix} /></article> })
   rows.sort((a, b) => a.seq - b.seq)
   return <main className={styles.chat} aria-label="聊天">
     <UserIdBar owner={owner} sessionId={sessionId} />
@@ -204,11 +216,17 @@ export function Chat({ owner, sessionId, onMissing }: { owner: string; sessionId
         <span role="status">{latestRun.status === 'failed' ? latestRun.error_desc ?? '任务执行失败，请重试。' : '已取消'}</span>
       </div>}
       <div className={styles.composer}>
+        {!!attachments.items.length && <DraftAttachments items={attachments.items} remove={attachments.remove} retry={attachments.retry} />}
+        {attachments.error && <div className="error" role="alert">{attachments.error}</div>}
+        {incompatible && <div className={styles.attachmentHint} role="status">{snapshot.detail?.has_appendix
+          ? '此会话包含附件，请选择支持多模态的模型，或新建会话'
+          : '当前模型不支持附件，请更换模型或移除附件'}</div>}
         <textarea ref={textarea} aria-label="消息输入" value={draft} rows={2} onChange={e => setDraft(e.target.value)}
           onKeyDown={event => {
             if (event.key === 'Enter' && !event.shiftKey && !event.nativeEvent.isComposing && event.nativeEvent.keyCode !== 229) { event.preventDefault(); void send() }
           }} />
         <div className={styles.toolbar}>
+          <UploadMenu disabled={!multimodal} add={attachments.add} />
           <div className={styles.model}>
             <select aria-label="模型" value={model} disabled={!catalog.data} onChange={event => {
               setModel(event.target.value); chooseModel(owner, sessionId, event.target.value)
@@ -219,7 +237,7 @@ export function Chat({ owner, sessionId, onMissing }: { owner: string; sessionId
             ? <button className={styles.send} aria-label={snapshot.cancelling ? '正在取消' : '取消生成'} onClick={() => void conversation.cancel()} disabled={snapshot.cancelling}>
               {snapshot.cancelling ? <LoaderCircle size={18} className="spin" /> : <Square size={14} fill="currentColor" />}
             </button>
-            : <button className={styles.send} aria-label="发送消息" onClick={() => void send()} disabled={!draft.trim() || !model || snapshot.busy || !snapshot.ready}>
+            : <button className={styles.send} aria-label="发送消息" onClick={() => void send()} disabled={sendDisabled}>
               {snapshot.busy ? <LoaderCircle size={18} className="spin" /> : <ArrowUp size={19} strokeWidth={2} />}
             </button>}
         </div>

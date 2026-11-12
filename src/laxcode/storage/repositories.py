@@ -5,13 +5,39 @@ from sqlalchemy.dialects.postgresql import insert
 
 from laxcode.run_errors import RunError, registered_run_error
 from laxcode.storage.database import Database, DatabaseError
-from laxcode.storage.models import Memory, Message, Project, Run, Session, SessionMessage, User, UserConfig
+from laxcode.storage.models import Appendix, Memory, Message, Project, Run, Session, SessionMessage, User, UserConfig
+from laxcode.appendices import MAX_ATTACHMENTS, MAX_MESSAGE_BYTES
 from laxcode.memory import MemoryCategory, MemoryUnavailableError
 
 
 class Repository:
     def __init__(self, db: Database):
         self.db = db
+
+    async def create_appendix(self, **values) -> Appendix:
+        async with self.db.transaction() as transaction:
+            row = Appendix(**values)
+            transaction.add(row)
+            await transaction.flush()
+        return row
+
+    async def get_appendices(self, user_id: str, ids: list[int]) -> dict[int, Appendix]:
+        async with self.db.transaction() as transaction:
+            rows = await transaction.scalars(select(Appendix).where(Appendix.user_id == user_id, Appendix.id.in_(ids)))
+            return {row.id: row for row in rows}
+
+    @staticmethod
+    def appendix_history_query(session_id: int):
+        return select(SessionMessage.id).where(
+            SessionMessage.session_id == session_id, SessionMessage.role == "user",
+            SessionMessage.appendix != [],
+        ).exists().select()
+
+    async def session_has_appendix(self, user_id: str, session_id: int) -> bool:
+        async with self.db.transaction() as transaction:
+            if await transaction.scalar(self.owned_session(user_id, session_id)) is None:
+                raise DatabaseError("Session not found", 404)
+            return bool(await transaction.scalar(self.appendix_history_query(session_id)))
 
     async def get_user_configs(self, user_id: str) -> dict[str, str]:
         async with self.db.transaction() as transaction:
@@ -138,14 +164,29 @@ class Repository:
             session.deleted_at = func.now()
 
     async def create_run(self, *, user_id: str, session_id: int, user_query: str,
-                         model: str, context_limit: int, output_limit: int) -> Run:
+                         model: str, context_limit: int, output_limit: int,
+                         appendix: list[dict] | None = None, supports_multimodal: bool = False) -> Run:
         async with self.db.transaction() as transaction:
             session = await transaction.scalar(self.owned_session(user_id, session_id).with_for_update(of=Session))
             if session is None:
                 raise DatabaseError("Session not found", 404)
             await self.check_no_active_run(transaction, session.id)
+            refs = appendix or []
+            ids = [ref["id"] for ref in refs]
+            if len(ids) > MAX_ATTACHMENTS or len(set(ids)) != len(ids):
+                raise DatabaseError("最多添加 5 个附件，且不能重复", 422)
+            rows = {row.id: row for row in await transaction.scalars(select(Appendix).where(
+                Appendix.user_id == user_id, Appendix.id.in_(ids),
+            ))} if ids else {}
+            if set(ids) - rows.keys():
+                raise DatabaseError("附件不存在", 404)
+            if sum(row.size_bytes for row in rows.values()) > MAX_MESSAGE_BYTES:
+                raise DatabaseError("附件合计不能超过 20 MiB", 422)
+            if not supports_multimodal and (ids or await transaction.scalar(self.appendix_history_query(session.id))):
+                raise DatabaseError("此会话包含附件，请选择支持多模态的模型，或新建会话", 422)
             run = Run(user_id=user_id, session_id=session.id, project_id=session.project_id,
                       user_query=user_query, model=model, context_limit=context_limit,
+                      appendix=[{"id": identifier, "name": rows[identifier].name} for identifier in ids],
                       output_limit=output_limit, thread_id=str(uuid4()))
             transaction.add(run)
             await transaction.flush()
@@ -323,6 +364,8 @@ class Repository:
                     item.update(tool_name=row.tool_name or "", arguments=call.get("arguments", ""))
                 else:
                     item["content"] = row.content
+                    if row.role == "user":
+                        item["appendix"] = row.appendix or []
                     if row.role == "assistant":
                         item["reasoning"] = row.reasoning or []
                 items.append(item)
@@ -335,6 +378,7 @@ class Repository:
         tool_call_id: str | None = None, tool_name: str | None = None,
         tool_call: dict | list[dict] | None = None,
         reasoning: list[dict] | None = None,
+        appendix: list[dict] | None = None,
         replay_safe: bool = False,
     ) -> tuple[int, list[dict]]:
         async with self.db.transaction() as transaction:
@@ -358,7 +402,7 @@ class Repository:
                 raise DatabaseError("Session message sequence changed", 409)
             values = dict(seq=seq, session_id=session_id, role=role, content=content,
                           tool_call_id=tool_call_id, tool_name=tool_name, tool_call=tool_call,
-                          reasoning=reasoning)
+                          reasoning=reasoning, appendix=appendix or [])
             if replay:
                 for table in (Message, SessionMessage):
                     existing = await transaction.scalar(select(table).where(
@@ -375,6 +419,8 @@ class Repository:
                 rows = (await transaction.execute(select(
                     SessionMessage.role, SessionMessage.content, SessionMessage.tool_call_id,
                     SessionMessage.tool_name, SessionMessage.tool_call,
+                    SessionMessage.appendix,
                 ).where(SessionMessage.session_id == session_id).order_by(SessionMessage.seq))).mappings()
-                messages = [{key: value for key, value in row.items() if value is not None} for row in rows]
+                messages = [{key: value for key, value in row.items()
+                             if value is not None and not (key == "appendix" and not value)} for row in rows]
         return seq + 1, messages

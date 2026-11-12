@@ -94,7 +94,8 @@ def messages_to_input(messages: list[dict]) -> list[dict]:
                            "output": message["content"]})
         else:
             if message["content"] or not message.get("tool_call"):
-                result.append({"role": message["role"], "content": message["content"]})
+                result.append({"role": message["role"], "content": message["content"],
+                               **({"appendix": message["appendix"]} if message.get("appendix") else {})})
             if message.get("tool_call"):
                 completed_ids = set()
                 following = index + 1

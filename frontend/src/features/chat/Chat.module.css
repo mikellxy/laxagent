@@ -75,3 +75,6 @@
 .resume { display: flex; align-items: center; gap: 10px; margin-bottom: 8px; }
 .resume button { display: inline-flex; align-items: center; gap: 5px; padding: 5px 12px; border: 1px solid #d2d4cd; border-radius: 7px; background: #fdfdfb; font-size: 12px; flex-shrink: 0; }
 .resume span { color: #b66b6b; font-size: 12px; }
+.attachmentHint { color: #8b633f; font-size: 12px; line-height: 1.6; margin-bottom: 8px; }
+.toolbar { gap: 8px; }
+.toolbar .model { margin-right: auto; min-width: 0; }

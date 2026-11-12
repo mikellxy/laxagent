@@ -48,6 +48,7 @@ async def run_agent(graph, run_id: int, context: AgentContext, *,
                 "user_configs": user_configs,
                 "user_id": run.user_id, "project_id": run.project_id, "session_id": run.session_id,
                 "run_id": run.id, "user_query": run.user_query, "model": run.model,
+                "appendix": run.appendix or [],
                 "messages": [], "model_input": [], "pending_tool_calls": [],
                 "next_msg_seq": session.next_msg_seq, "tool_node_state_uncertain": False,
             }

@@ -24,7 +24,7 @@ async def test_migration_has_no_foreign_keys_and_nullable_tool_columns(repositor
     def check(connection):
         schema = inspect(connection)
         business_tables = {
-            "users", "projects", "sessions", "messages", "session_messages", "runs", "memories", "user_configs", "alembic_version",
+            "appendices", "users", "projects", "sessions", "messages", "session_messages", "runs", "memories", "user_configs", "alembic_version",
         }
         assert business_tables <= set(schema.get_table_names())
         assert all(table.startswith('checkpoint') for table in set(schema.get_table_names()) - business_tables)

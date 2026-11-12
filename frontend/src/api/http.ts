@@ -4,7 +4,7 @@ import { responseError } from './errors'
 export async function request(path: string, init: RequestInit = {}): Promise<Response> {
   const usedToken = token()
   const send = () => fetch(`/api/v1${path}`, { ...init, headers: {
-    ...(init.body ? { 'Content-Type': 'application/json' } : {}),
+    ...(init.body && !(init.body instanceof FormData) ? { 'Content-Type': 'application/json' } : {}),
     ...init.headers, ...(token() ? { Authorization: `Bearer ${token()}` } : {}),
   } })
   let response = await send()

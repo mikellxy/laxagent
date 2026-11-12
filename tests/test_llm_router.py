@@ -73,7 +73,11 @@ def test_routes_provider_credentials_and_preserves_json_and_sse(config_data, ups
             ("second", "second-key", "https://second.example/v1/responses"),
         ]:
             body = {
-                "model": f"{provider}:model-name", "stream": True, "input": "hi",
+                "model": f"{provider}:model-name", "stream": True, "input": [{"role": "user", "content": [
+                    {"type": "input_text", "text": "hi"},
+                    {"type": "input_image", "image_url": "data:image/png;base64,eA=="},
+                    {"type": "input_file", "filename": "a.pdf", "file_data": "data:application/pdf;base64,eA=="},
+                ]}],
                 "tools": [{"type": "function", "name": "test", "parameters": {}}],
                 "temperature": None, "provider_extension": {"enabled": True},
                 "extra_headers": {"Authorization": "must-stay-in-json"},

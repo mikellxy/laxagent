@@ -21,6 +21,7 @@ class ModelLimit(ConfigModel):
 class ModelConfig(ConfigModel):
     name: Annotated[str, Field(min_length=1, pattern=r"^\S+$")]
     limit: ModelLimit
+    supports_multimodal: bool = False
 
 
 class ProviderConfig(ConfigModel):

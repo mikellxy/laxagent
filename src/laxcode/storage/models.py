@@ -48,6 +48,19 @@ class Memory(Base):
     category: Mapped[str] = mapped_column(String(32))
 
 
+class Appendix(Base):
+    __tablename__ = "appendices"
+
+    id: Mapped[int] = mapped_column(Integer, Identity(always=True), primary_key=True)
+    user_id: Mapped[str] = mapped_column(String(36), index=True)
+    name: Mapped[str] = mapped_column(Text)
+    path: Mapped[str] = mapped_column(Text)
+    media_type: Mapped[str] = mapped_column(Text)
+    size_bytes: Mapped[int] = mapped_column(Integer)
+    thumbnail_path: Mapped[str | None] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=text("now()"))
+
+
 class Project(Base):
     __tablename__ = "projects"
 
@@ -90,6 +103,7 @@ class Run(Base):
     user_id: Mapped[str] = mapped_column(String(36))
     status: Mapped[str] = mapped_column(String(16), server_default=text("'waiting'"))
     user_query: Mapped[str] = mapped_column(Text)
+    appendix: Mapped[list[dict]] = mapped_column(JSONB, server_default=text("'[]'::jsonb"))
     model: Mapped[str] = mapped_column(Text)
     context_limit: Mapped[int] = mapped_column(Integer)
     output_limit: Mapped[int] = mapped_column(Integer)
@@ -108,6 +122,7 @@ class MessageColumns:
     seq: Mapped[int] = mapped_column(Integer)
     session_id: Mapped[int] = mapped_column(Integer)
     content: Mapped[str] = mapped_column(Text)
+    appendix: Mapped[list[dict]] = mapped_column(JSONB, server_default=text("'[]'::jsonb"))
     reasoning: Mapped[list[dict] | None] = mapped_column(JSONB(none_as_null=True), nullable=True)
     role: Mapped[str] = mapped_column(Text)
     tool_call_id: Mapped[str | None] = mapped_column(Text, nullable=True)

@@ -410,3 +410,18 @@ it('does not apply a delayed cancellation result to a resumed attempt', async ()
   expect(snapshots.every(value => value?.resume_time === 1)).toBe(true)
   unsubscribe(); h.controller.dispose()
 })
+
+it('reconciles attachment-only prompts by ordered attachment identities', async () => {
+  const h = harness(detail(1, null), [])
+  const appendix = [{ id: 2, name: 'two.txt', kind: 'file' as const, thumbnail_data_url: null }]
+  await h.controller.refresh()
+  expect(await h.controller.send('', 'p:m', appendix)).toBe(true)
+  vi.mocked(h.transport.detail).mockResolvedValue(detail(2, run()))
+  vi.mocked(h.transport.messages).mockResolvedValue(page([{ seq: 1, role: 'user', content: '', appendix: [{ ...appendix[0], id: 1 }] }]))
+  await h.controller.refresh()
+  expect(h.controller.getSnapshot().pending?.appendix).toEqual(appendix)
+  vi.mocked(h.transport.messages).mockResolvedValue(page([{ seq: 1, role: 'user', content: '', appendix }]))
+  await h.controller.refresh()
+  expect(h.controller.getSnapshot().pending).toBeNull()
+  h.controller.dispose()
+})

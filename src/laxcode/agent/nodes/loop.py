@@ -6,6 +6,7 @@ from langgraph.runtime import Runtime
 from laxcode.agent.context import AgentContext
 from laxcode.agent.state import AgentState
 from laxcode.run_errors import make_run_error
+from laxcode.appendices import materialize_input
 from laxcode.models.responses import ModelEvent, append_model_response, append_tool_message, append_reasoning, completed_reasoning, stream_response
 from laxcode.runtime.events import make_event
 from laxcode.tools.executor import execute_tool
@@ -25,9 +26,12 @@ async def call_model(state: AgentState, runtime: Runtime[AgentContext]):
             resume_time=runtime.context.resume_time, **extra,
         ))
 
+    wire_input = state["model_input"]
+    if any(message.get("appendix") for message in wire_input):
+        wire_input = await materialize_input(wire_input, state["user_id"], runtime.context.repository)
     # Closing explicitly also releases the SDK stream if publishing fails or execution is cancelled.
     async with aclosing(stream_response(
-        runtime.context.client, model=state["model"], messages=state["model_input"],
+        runtime.context.client, model=state["model"], messages=wire_input,
         tools=tool_definitions(state.get("user_configs")),
     )) as stream:
         async for event in stream:

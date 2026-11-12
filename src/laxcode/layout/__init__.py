@@ -17,3 +17,7 @@ def get_project_workdir(user_id: str, project_id: int) -> Path:
 
 def get_skills_dir(user_id: str) -> Path:
     return get_user_data_dir(user_id) / "skills"
+
+
+def get_appendices_dir(user_id: str) -> Path:
+    return get_user_data_dir(user_id) / "appendix"

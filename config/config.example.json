@@ -11,6 +11,7 @@
         "model_list": [
           {
             "name": "model-name",
+            "supports_multimodal": false,
             "limit": {
               "context": 128000,
               "output": 16000

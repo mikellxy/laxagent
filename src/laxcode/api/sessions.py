@@ -4,6 +4,7 @@ from fastapi import APIRouter, Depends, Path, Query, Request, Response
 
 from laxcode.api.auth import get_current_user
 from laxcode.api.dependencies import get_repository
+from laxcode.appendices import enrich_history
 from laxcode.storage.database import DatabaseError
 from laxcode.api.schemas import (
     CreateSessionRequest, MessagePageResponse, NameRequest, RunResponse, SessionDetailResponse, SessionResponse,
@@ -34,6 +35,7 @@ async def rename_session(session_id: ResourceId, body: NameRequest,
 async def session_detail(session_id: ResourceId, user_id=Depends(get_current_user), repository=Depends(get_repository)):
     session, run = await repository.session_detail(user_id, session_id)
     return {**SessionResponse.model_validate(session).model_dump(),
+            "has_appendix": await repository.session_has_appendix(user_id, session_id),
             "latest_run": RunResponse.model_validate(run) if run else None}
 
 
@@ -51,4 +53,6 @@ async def list_messages(session_id: ResourceId,
                         before_seq: Annotated[int | None, Query(gt=0)] = None,
                         limit: Annotated[int, Query(ge=1, le=100)] = 50,
                         user_id=Depends(get_current_user), repository=Depends(get_repository)):
-    return await repository.list_messages(user_id, session_id, before_seq=before_seq, limit=limit)
+    page = await repository.list_messages(user_id, session_id, before_seq=before_seq, limit=limit)
+    await enrich_history(page["items"], user_id, repository)
+    return page

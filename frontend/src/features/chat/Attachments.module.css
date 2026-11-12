@@ -1,0 +1,26 @@
+.list { display: flex; flex-wrap: wrap; gap: 9px; margin: 8px 0; white-space: normal; }
+.card { position: relative; display: flex; align-items: center; gap: 10px; max-width: 260px; min-width: 0; min-height: 64px; padding: 10px 12px; background: #fff; border: 1px solid #dce0dc; border-radius: 11px; text-align: left; font-size: 13px; }
+button.card:hover { border-color: #9ea99c; background: #fafbf9; }
+.card > svg, .card > button { flex-shrink: 0; }
+.fileIcon { color: #778c98; }
+.label { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.label > span, .label > small { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.label > small { color: #777e74; font-size: 11px; margin-top: 3px; }
+.thumbnail { width: 64px; height: 64px; border-radius: 6px; object-fit: cover; }
+.imageCard { padding: 7px; }
+.imageCard .label { max-width: 130px; }
+.card:has(.remove) { padding-right: 26px; }
+.remove { position: absolute; top: 3px; right: 3px; background: #f0f1ed; border-radius: 50%; width: 20px; height: 20px; display: grid; place-items: center; }
+.upload { position: relative; flex-shrink: 0; }
+.plus { display: grid; place-items: center; width: 32px; height: 32px; border-radius: 7px; color: #596052; }
+.plus:hover:not(:disabled) { background: #eceee7; }
+.plus:disabled { opacity: .35; cursor: not-allowed; }
+.menu { position: absolute; bottom: calc(100% + 8px); left: 0; width: 160px; padding: 5px; background: #fff; border: 1px solid #dce0dc; border-radius: 10px; box-shadow: 0 5px 24px #0002; z-index: 5; }
+.menu button { display: flex; align-items: center; gap: 10px; padding: 10px; width: 100%; border-radius: 6px; font-size: 13px; }
+.menu button:hover, .menu button:focus-visible { background: #eef0e9; }
+.preview { border: 0; border-radius: 12px; padding: 16px; max-width: 92vw; max-height: 90vh; background: #fafbf8; }
+.preview::backdrop { background: #0009; }
+.preview > img { display: block; max-width: 85vw; max-height: 75vh; object-fit: contain; }
+.previewToolbar { display: flex; align-items: center; gap: 16px; margin-bottom: 12px; }
+.previewToolbar > span { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+@media (max-width: 600px) { .card { max-width: 100%; } }

@@ -86,7 +86,7 @@ async def repository(migrated_database):
             yield Repository(db)
         finally:
             async with db.transaction() as transaction:
-                await transaction.execute(text("TRUNCATE user_configs, memories, runs, session_messages, messages, sessions, projects, users RESTART IDENTITY"))
+                await transaction.execute(text("TRUNCATE appendices, user_configs, memories, runs, session_messages, messages, sessions, projects, users RESTART IDENTITY"))
 
 
 @pytest.fixture

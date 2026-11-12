@@ -6,9 +6,11 @@ export interface Run {
   resume_time: number; error_code: string | null; error_desc: string | null
 }
 export interface SubmittedRun { run_id: number; session_id: number; status: 'waiting'; resume_time: number }
-export interface SessionDetail extends Session { latest_run: Run | null }
+export interface SessionDetail extends Session { latest_run: Run | null; has_appendix?: boolean }
+export interface AppendixReference { id: number; name: string }
+export interface AppendixDisplay extends AppendixReference { kind: 'image' | 'file'; thumbnail_data_url: string | null }
 export interface ReasoningPart { channel: 'text' | 'summary'; text: string }
-export interface TextMessage { seq: number; role: 'user' | 'assistant'; content: string; reasoning?: ReasoningPart[] }
+export interface TextMessage { seq: number; role: 'user' | 'assistant'; content: string; reasoning?: ReasoningPart[]; appendix?: AppendixDisplay[] }
 export type ToolStatus = 'generating' | 'running' | 'completed' | 'failed' | 'interrupted' | 'unknown'
 export interface ToolMessage {
   seq: number; role: 'tool'; tool_name: string; arguments: string
@@ -17,7 +19,7 @@ export interface ToolMessage {
 }
 export type Message = TextMessage | ToolMessage
 export interface MessagePage { items: Message[]; has_more: boolean; next_before_seq: number | null }
-export interface Models { default_model: string; models: { id: string; provider: string; name: string }[] }
+export interface Models { default_model: string; models: { id: string; provider: string; name: string; supports_multimodal?: boolean }[] }
 export interface StreamEvent {
   run_id: number; msg_seq: number | null; type: string; role: string; error: string | null
   content: string | Record<string, unknown>

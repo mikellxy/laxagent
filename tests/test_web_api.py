@@ -72,7 +72,7 @@ async def test_model_catalog_and_resource_ownership(web_api, repository, convers
     await login(web_api, str(uuid4()))
     catalog = (await web_api.get("/api/v1/models")).json()
     assert catalog == {"default_model": "example:model-name", "models": [
-        {"id": "example:model-name", "provider": "example", "name": "model-name"},
+        {"id": "example:model-name", "provider": "example", "name": "model-name", "supports_multimodal": False},
     ]}
     assert (await web_api.get("/api/v1/projects")).json() == []
     sid, pid = conversation["session_id"], conversation["project_id"]

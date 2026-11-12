@@ -1,9 +1,9 @@
 import { api } from '../../api/resources'
 import { ApiError, messageOf } from '../../api/errors'
-import type { Message, ReasoningPart, Run, SessionDetail, StreamEvent, ToolMessage, ToolStatus } from '../../api/types'
+import type { AppendixDisplay, Message, ReasoningPart, Run, SessionDetail, StreamEvent, ToolMessage, ToolStatus } from '../../api/types'
 
 export type Transport = Pick<typeof api, 'detail' | 'messages' | 'chat' | 'stream' | 'cancelRun' | 'resumeRun'>
-export interface PendingMessage { content: string; afterSeq: number; runId: number | null; failed: boolean }
+export interface PendingMessage { content: string; appendix: AppendixDisplay[]; afterSeq: number; runId: number | null; failed: boolean }
 export interface Activity { firstSeq: number; thinkingSeq: number | null; toolSeq: number | null }
 interface StreamingTool {
   key: string; parentSeq: number; seq: number | null; name: string; arguments: string
@@ -82,7 +82,8 @@ export class Conversation {
     this.listeners.forEach(listener => listener())
   }
   private reconcilePending() {
-    if (this.pending && [...this.history.values()].some(m => m.role === 'user' && m.seq > this.pending!.afterSeq && m.content === this.pending!.content)) {
+    if (this.pending && [...this.history.values()].some(m => m.role === 'user' && m.seq > this.pending!.afterSeq && m.content === this.pending!.content &&
+      JSON.stringify((m.appendix ?? []).map(a => a.id)) === JSON.stringify(this.pending!.appendix.map(a => a.id)))) {
       this.pending = null
     }
   }
@@ -293,8 +294,8 @@ export class Conversation {
     finally { this.loadingOlder = false; this.emit() }
   }
 
-  send = async (content: string, model: string): Promise<boolean> => {
-    if (this.disposed || !this.ready || this.submitting || this.cancelling || this.resuming || active(this.detail?.latest_run) || !content.trim()) return false
+  send = async (content: string, model: string, appendix: AppendixDisplay[] = []): Promise<boolean> => {
+    if (this.disposed || !this.ready || this.submitting || this.cancelling || this.resuming || active(this.detail?.latest_run) || (!content.trim() && !appendix.length)) return false
     this.submitting = true; this.error = null; this.emit()
     try {
       // Establish a fresh lower bound so repeated text cannot match old historical prompts.
@@ -303,8 +304,8 @@ export class Conversation {
       if (active(this.detail?.latest_run)) { this.connect(); return false }
       if (this.syncFailed) throw new Error(this.error ?? "读取会话失败")
       this.error = null
-      this.pending = { content, afterSeq: this.boundary, runId: null, failed: false }; this.emit()
-      const submitted = await this.transport.chat(this.sessionId, content, model, this.lifetime.signal)
+      this.pending = { content, appendix, afterSeq: this.boundary, runId: null, failed: false }; this.emit()
+      const submitted = await this.transport.chat(this.sessionId, content, model, this.lifetime.signal, appendix)
       if (this.disposed) return false
       if (this.pending) this.pending.runId = submitted.run_id
       this.activity = null

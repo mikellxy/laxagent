@@ -1,9 +1,12 @@
 import { expect, test, type Page } from '@playwright/test'
 import type { MemoryItem, Message, Project, Run, Session } from '../src/api/types'
 
+const attachmentPNG = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+j4eUAAAAASUVORK5CYII=', 'base64')
+
 async function mockAPI(page: Page) {
   let owner = '12345678-1234-4234-8234-123456789abc'
   const state = {
+    attachments: new Map<number, { id: number; name: string; kind: 'image' | 'file'; thumbnail_data_url: string | null }>(),
     configs: {} as Record<string, string>, configFailures: 0, memoryFailures: 0, memoryDeleteFailures: 0,
     memories: [] as (MemoryItem & { category: string })[],
     projects: [] as Project[], sessions: [] as Session[], messages: new Map<number, Message[]>(),
@@ -13,9 +16,21 @@ async function mockAPI(page: Page) {
   }
   await page.route('**/api/v1/**', async route => {
     const request = route.request(), path = new URL(request.url()).pathname.replace('/api/v1', '')
-    const method = request.method(), body = request.postDataJSON()
+    const method = request.method(), body = request.headers()['content-type']?.startsWith('multipart/form-data') ? null : request.postDataJSON()
     const reply = (data: unknown, status = 200) => route.fulfill({ status, contentType: 'application/json', body: JSON.stringify(data) })
     if (method === 'POST') state.posts.push({ path, body })
+    if (path === '/appendices' && method === 'POST') {
+      const name = request.postDataBuffer()?.toString().match(/filename="([^"]+)"/)?.[1] ?? 'file.txt'
+      const id = state.attachments.size + 1, kind = /\.(png|jpg|jpeg|webp|gif)$/i.test(name) ? 'image' as const : 'file' as const
+      state.attachments.set(id, { id, name, kind, thumbnail_data_url: kind === 'image' ? `data:image/png;base64,${attachmentPNG.toString('base64')}` : null })
+      return reply({ id, name }, 201)
+    }
+    if (path.startsWith('/appendices/')) {
+      expect(request.headers().authorization).toMatch(/^Bearer /)
+      const file = state.attachments.get(Number(path.split('/').at(-1)))
+      if (!file) return reply({}, 404)
+      return route.fulfill({ contentType: file.kind === 'image' ? 'image/png' : 'text/plain', body: file.kind === 'image' ? attachmentPNG : Buffer.from('document') })
+    }
     if (path === '/login') {
       owner = body.user_id
       const token = `h.${Buffer.from(JSON.stringify({ sub: owner, exp: Date.now() / 1000 + 3600 })).toString('base64url')}.s`
@@ -42,7 +57,7 @@ async function mockAPI(page: Page) {
         category, label, items: state.memories.filter(item => item.category === category).map(({ category: _, ...item }) => item),
       })) })
     }
-    if (path === '/models') return reply({ default_model: 'p:a', models: ['a', 'b', 'c'].map(name => ({ id: `p:${name}`, provider: 'p', name })) })
+    if (path === '/models') return reply({ default_model: 'p:a', models: ['a', 'b', 'c'].map(name => ({ id: `p:${name}`, provider: 'p', name, supports_multimodal: name !== 'b' })) })
     if (path === '/projects') {
       if (method === 'POST') {
         const project = { id: state.projects.length + 1, name: body.name, user_id: owner }; state.projects.push(project)
@@ -104,10 +119,10 @@ async function mockAPI(page: Page) {
       if (session[2] === '/chat') {
         const run: Run = { run_id: state.runs.size + 10, session_id: id, status: 'running', model: body.model, error: null, error_code: null, error_desc: null, resume_time: 0 }
         state.runs.set(run.run_id, run)
-        messages.push({ role: 'user', seq: (messages.at(-1)?.seq ?? 0) + 1, content: body.user_query })
+        messages.push({ role: 'user', seq: (messages.at(-1)?.seq ?? 0) + 1, content: body.user_query, appendix: (body.appendix ?? []).map((ref: { id: number }) => state.attachments.get(ref.id)!) })
         return reply({ run_id: run.run_id, session_id: id, status: 'waiting', resume_time: 0 }, 202)
       }
-      return reply({ ...item, next_msg_seq: (messages.at(-1)?.seq ?? 0) + 1, latest_run: [...state.runs.values()].filter(r => r.session_id === id).at(-1) ?? null })
+      return reply({ ...item, has_appendix: messages.some(m => m.role === 'user' && m.appendix?.length), next_msg_seq: (messages.at(-1)?.seq ?? 0) + 1, latest_run: [...state.runs.values()].filter(r => r.session_id === id).at(-1) ?? null })
     }
     return reply({ detail: 'Not found' }, 404)
   })
@@ -472,4 +487,42 @@ test('resumes cancelled and failed runs with the same id and keeps the composer 
   expect(state.runs.get(10)?.resume_time).toBe(2)
   expect(state.posts.filter(post => post.path === '/runs/10/resume').map(post => post.body)).toEqual([{ resume_time: 0 }, { resume_time: 1 }])
   expect(state.messages.get(1)?.filter(message => message.role === 'user')).toHaveLength(1)
+})
+
+test('uploads attachment-only messages, previews history images and downloads documents', async ({ page }, testInfo) => {
+  const state = await mockAPI(page)
+  await page.goto('/')
+  await page.getByRole('button', { name: '以游客登录' }).click()
+  await expect(page.getByRole('button', { name: '添加附件' })).toBeEnabled()
+  await page.getByRole('button', { name: '添加附件' }).click()
+  await expect(page.getByRole('menuitem', { name: '上传图片' })).toBeVisible()
+  const chooser = page.waitForEvent('filechooser')
+  await page.getByRole('menuitem', { name: '上传图片' }).click()
+  await (await chooser).setFiles({ name: 'sample.png', mimeType: 'image/png', buffer: attachmentPNG })
+  await page.getByLabel('选择文件').setInputFiles({ name: 'a-long-document-name-for-truncation.txt', mimeType: 'text/plain', buffer: Buffer.from('document') })
+  await expect(page.getByText('已上传')).toHaveCount(2)
+  await page.screenshot({ path: testInfo.outputPath('attachment-composer.png') })
+  await page.getByLabel('模型', { exact: true }).selectOption('p:b')
+  await expect(page.getByRole('button', { name: '发送消息' })).toBeDisabled()
+  await expect(page.getByRole('button', { name: '添加附件' })).toBeDisabled()
+  await page.getByLabel('模型', { exact: true }).selectOption('p:a')
+  await page.getByRole('button', { name: '发送消息' }).click()
+  await expect.poll(() => state.posts.filter(post => post.path.endsWith('/chat')).length).toBe(1)
+  const body = state.posts.find(post => post.path.endsWith('/chat'))!.body
+  expect(body.user_query).toBe('')
+  expect(body.appendix).toEqual([{ id: 1, name: 'sample.png' }, { id: 2, name: 'a-long-document-name-for-truncation.txt' }])
+  await page.getByRole('button', { name: '取消生成' }).click()
+  await expect(page.getByLabel('用户消息')).toHaveCount(1)
+  await page.getByRole('button', { name: '查看 sample.png' }).click()
+  await expect(page.getByRole('dialog', { name: '预览 sample.png' })).toBeVisible()
+  await page.getByRole('button', { name: '关闭图片预览' }).click()
+  const download = page.waitForEvent('download')
+  await page.getByRole('button', { name: '下载 a-long-document-name-for-truncation.txt' }).click()
+  expect((await download).suggestedFilename()).toBe('a-long-document-name-for-truncation.txt')
+  await page.reload()
+  await expect(page.getByRole('button', { name: '查看 sample.png' })).toBeVisible()
+  await page.getByLabel('模型', { exact: true }).selectOption('p:b')
+  await page.getByRole('textbox', { name: '消息输入' }).fill('继续')
+  await expect(page.getByRole('button', { name: '发送消息' })).toBeDisabled()
+  await expect(page.getByText('此会话包含附件，请选择支持多模态的模型，或新建会话')).toBeVisible()
 })

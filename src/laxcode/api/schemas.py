@@ -2,7 +2,7 @@ from datetime import datetime
 from typing import Literal
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field, computed_field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, computed_field, field_validator, model_validator
 
 from laxcode.memory import MemoryCategory
 from laxcode.run_errors import failure_description
@@ -42,10 +42,30 @@ class MemoriesResponse(BaseModel):
     categories: list[MemoryCategoryResponse]
 
 
+class AppendixReference(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+    id: int = Field(gt=0)
+    name: str
+
+
+class AppendixDisplay(AppendixReference):
+    kind: Literal["image", "file"]
+    thumbnail_data_url: str | None = None
+
+
 class ChatRequest(BaseModel):
     model_config = ConfigDict(extra="forbid", strict=True)
-    user_query: str = Field(min_length=1, pattern=r"\S")
+    user_query: str
     model: str = Field(pattern=r"^[^:\s]+:\S+$")
+    appendix: list[AppendixReference] = Field(default_factory=list, max_length=5)
+
+    @model_validator(mode="after")
+    def content_required(self):
+        if not self.user_query.strip() and not self.appendix:
+            raise ValueError("消息文字或附件至少需要一个")
+        if len({item.id for item in self.appendix}) != len(self.appendix):
+            raise ValueError("附件不能重复")
+        return self
 
 
 class TokenResponse(BaseModel):
@@ -132,12 +152,14 @@ class SessionResponse(ProjectResponse):
 
 class SessionDetailResponse(SessionResponse):
     latest_run: RunResponse | None
+    has_appendix: bool = False
 
 
 class TextMessageResponse(BaseModel):
     seq: int
     role: Literal["user"]
     content: str
+    appendix: list[AppendixDisplay] = Field(default_factory=list)
 
 
 class ReasoningPart(BaseModel):
@@ -169,6 +191,7 @@ class ModelResponse(BaseModel):
     id: str
     provider: str
     name: str
+    supports_multimodal: bool = False
 
 
 class ModelCatalogResponse(BaseModel):

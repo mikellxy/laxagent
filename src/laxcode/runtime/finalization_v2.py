@@ -1,18 +1,28 @@
-"""Scenario-specific run finalization, migrated one caller at a time."""
+"""Scenario-specific run finalization and best-effort terminal notifications."""
 import asyncio
 import logging
 from collections.abc import Awaitable, Callable
 
 import anyio
 
-from laxcode.run_errors import RunError, make_run_error
+from laxcode.run_errors import RunError, make_run_error, registered_run_error
 from laxcode.runtime.cancellation import CancellationBus, CancelResult, RunSnapshot
 from laxcode.runtime.events import EventStoreError, make_event
-from laxcode.runtime.finalization import drain
 from laxcode.storage.database import DatabaseError
 from laxcode.storage.models import Run
 
 logger = logging.getLogger(__name__)
+
+
+async def drain(task):
+    """Finish a terminal commit/notification pair despite racing host cancellation."""
+    while not task.done():
+        try:
+            await asyncio.shield(task)
+        except asyncio.CancelledError:
+            if task.cancelled():
+                raise
+    return task.result()
 
 
 class RunFinalizerV2:
@@ -57,6 +67,17 @@ class RunFinalizerV2:
         try:
             return await drain(asyncio.create_task(self._commit_failure(
                 run_id, resume_time, error=error, publish_events=self._failure_events,
+            )))
+        except Exception:
+            logger.error("Could not persist failed run %s", run_id)
+
+    async def finish_execution_failed(self, run_id: int, resume_time: int, error: RunError):
+        """Finish an execution failure without replacing the runner's original error."""
+        error = registered_run_error(error)
+        publish_events = self._incomplete_events if error.incomplete else self._failure_events
+        try:
+            return await drain(asyncio.create_task(self._commit_failure(
+                run_id, resume_time, error=error, publish_events=publish_events,
             )))
         except Exception:
             logger.error("Could not persist failed run %s", run_id)
@@ -134,6 +155,18 @@ class RunFinalizerV2:
             ))
             await self.events.publish(make_event(
                 current.id, "sse_end", {"status": "failed"},
+                error=current.error, resume_time=current.resume_time,
+            ))
+        except EventStoreError:
+            logger.warning("Could not publish terminal SSE for run %s", current.id)
+
+    async def _incomplete_events(self, current: Run):
+        try:
+            await self.events.publish(make_event(
+                current.id, "response_incomplete", {}, error=current.error, resume_time=current.resume_time,
+            ))
+            await self.events.publish(make_event(
+                current.id, "sse_end", {"status": "incomplete"},
                 error=current.error, resume_time=current.resume_time,
             ))
         except EventStoreError:

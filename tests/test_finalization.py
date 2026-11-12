@@ -3,8 +3,8 @@ import asyncio
 import pytest
 
 from laxcode.run_errors import make_run_error
-from laxcode.runtime.cancellation import CancelCommand
-from laxcode.runtime.finalization import RunFinalizer
+from laxcode.runtime.cancellation import CancelCommand, RunSnapshot
+from laxcode.runtime.finalization_v2 import RunFinalizerV2
 from laxcode.runtime.events import EventStoreError
 from laxcode.storage.database import DatabaseError
 from model_helpers import ModelStream, client_for
@@ -22,24 +22,35 @@ async def unstarted_run(h):
 
 
 @pytest.mark.anyio
-@pytest.mark.parametrize('outcome', ['success', 'failed', 'cancelled', 'shutdown'])
+@pytest.mark.parametrize('outcome', ['success', 'failed', 'incomplete', 'cancelled', 'shutdown'])
 async def test_finalization_without_local_worker_is_idempotent_and_replies(chat_api, outcome):
     h = chat_api
     run = await unstarted_run(h)
-    finalizer = RunFinalizer(h.context.repository, h.context.events)
-    options = {'cancelled': outcome == 'cancelled', 'interrupted': outcome == 'shutdown'}
-    if outcome in ('failed', 'shutdown'):
-        options['error'] = make_run_error('execution_cancelled' if outcome == 'shutdown' else 'agent_execution_failed')
-    expected = 'failed' if outcome == 'shutdown' else outcome
+    finalizer = RunFinalizerV2(h.context.repository, h.context.events)
+    method = {
+        'success': finalizer.finish_succeeded,
+        'failed': finalizer.finish_execution_failed,
+        'incomplete': finalizer.finish_execution_failed,
+        'cancelled': finalizer.finish_user_cancelled,
+        'shutdown': finalizer.finish_execution_interrupted,
+    }[outcome]
+    options = {}
+    if outcome in ('failed', 'incomplete'):
+        options['error'] = make_run_error(
+            'model_incomplete_max_output_tokens' if outcome == 'incomplete' else 'agent_execution_failed',
+        )
+    expected = 'failed' if outcome in ('shutdown', 'incomplete') else outcome
     async with h.manager.cancellation.results(run.id, 0) as sub:
-        first, second = await asyncio.gather(*[finalizer.finish(run.id, 0, **options) for _ in range(2)])
+        first, second = await asyncio.gather(*[method(run.id, 0, **options) for _ in range(2)])
         async with asyncio.timeout(2):
             result = await h.manager.cancellation.wait_result(sub, CancelCommand(run_id=run.id, resume_time=0))
-    assert first == second == result and result.status == expected
+    assert RunSnapshot.model_validate(first) == RunSnapshot.model_validate(second) == result
+    assert result.status == expected
     assert not h.manager.executions
     replay = (await h.api.get(f'/api/v1/runs/{run.id}/events')).text
     assert replay.count('event: sse_end') == 1
     assert replay.count('event: error') == (outcome == 'failed')
+    assert replay.count('event: response_incomplete') == (outcome == 'incomplete')
     event_status = 'completed' if outcome == 'success' else 'cancelled' if outcome == 'shutdown' else outcome
     assert f'"status": "{event_status}"' in replay
 
@@ -58,9 +69,9 @@ async def test_natural_failure_reply_keeps_snapshot_when_resumed_during_sse(chat
         await publish(event)
 
     monkeypatch.setattr(h.context.events, 'publish', blocked)
-    finalizer = RunFinalizer(h.context.repository, h.context.events)
+    finalizer = RunFinalizerV2(h.context.repository, h.context.events)
     async with h.manager.cancellation.results(run.id, 0) as sub:
-        finishing = asyncio.create_task(finalizer.fail(run.id, 0, make_run_error('agent_execution_failed')))
+        finishing = asyncio.create_task(finalizer.finish_execution_failed(run.id, 0, make_run_error('agent_execution_failed')))
         try:
             await asyncio.wait_for(publishing.wait(), 2)
             resumed = await h.context.repository.resume_run(run.user_id, run.id, 0)
@@ -72,7 +83,7 @@ async def test_natural_failure_reply_keeps_snapshot_when_resumed_during_sse(chat
             result = await h.manager.cancellation.wait_result(sub, CancelCommand(run_id=run.id, resume_time=0))
     assert result.resume_time == 0 and result.status == 'failed'
     with pytest.raises(DatabaseError) as stale:
-        await finalizer.finish(run.id, 0, cancelled=True)
+        await finalizer.finish_user_cancelled(run.id, 0)
     assert stale.value.status == 409
     current = await h.context.repository.get_run(run.id, run.user_id)
     assert current.resume_time == 1 and current.status == 'waiting'
@@ -91,19 +102,18 @@ async def test_finalization_timeout_still_replies_to_cancel_waiters(chat_api, mo
         monkeypatch.setattr(h.context.repository, 'finish_run', stuck)
     else:
         monkeypatch.setattr(h.context.events, 'publish', stuck)
-    finalizer = RunFinalizer(h.context.repository, h.context.events)
+    finalizer = RunFinalizerV2(h.context.repository, h.context.events)
     async with h.manager.cancellation.results(run.id, 0) as sub:
-        async with asyncio.timeout(2):
+        async with asyncio.timeout(8):
+            current = await finalizer.finish_execution_failed(run.id, 0, make_run_error('agent_execution_failed'))
             if phase == 'database':
-                with pytest.raises(TimeoutError):
-                    await finalizer.finish(run.id, 0, timeout=.02)
+                assert current is None
                 with pytest.raises(EventStoreError) as error:
                     await h.manager.cancellation.wait_result(sub, CancelCommand(run_id=run.id, resume_time=0))
                 assert error.value.status == 503
             else:
-                snapshot = await finalizer.finish(run.id, 0, timeout=.02)
                 result = await h.manager.cancellation.wait_result(sub, CancelCommand(run_id=run.id, resume_time=0))
-                assert result == snapshot and result.status == 'success'
+                assert result == RunSnapshot.model_validate(current) and result.status == 'failed'
 
 
 @pytest.mark.anyio

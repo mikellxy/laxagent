@@ -11,7 +11,6 @@ from laxcode.agent.context import AgentContext
 from laxcode.agent.state import AgentState
 from laxcode.run_errors import RunError, make_run_error, registered_run_error
 from laxcode.runtime.events import EventStoreError
-from laxcode.runtime.finalization import RunFinalizer
 from laxcode.runtime.finalization_v2 import RunFinalizerV2
 from laxcode.storage.database import DatabaseError
 
@@ -31,9 +30,7 @@ def classify_run_error(exc: Exception) -> RunError:
 
 async def run_agent(graph, run_id: int, context: AgentContext, *,
                     user_cancelled: Callable[[], bool] = lambda: False,
-                    finalizer: RunFinalizer | None = None,
                     finalizer_v2: RunFinalizerV2 | None = None) -> AgentState | None:
-    finalizer = finalizer if finalizer is not None else RunFinalizer(context.repository, context.events)
     finalizer_v2 = finalizer_v2 if finalizer_v2 is not None else RunFinalizerV2(context.repository, context.events)
     try:
         run = await context.repository.claim_run(run_id, context.resume_time)
@@ -68,7 +65,7 @@ async def run_agent(graph, run_id: int, context: AgentContext, *,
         raise
     except Exception as exc:
         error = classify_run_error(exc)
-        await finalizer.fail(run_id, context.resume_time, error)
+        await finalizer_v2.finish_execution_failed(run_id, context.resume_time, error)
         raise error from exc
 
     return result

@@ -39,9 +39,6 @@ async def test_submission_failure_confirms_concurrent_cancel(chat_api, monkeypat
     monkeypatch.setattr(h.context.events, 'create_run', blocked_create)
     if stage == 'dispatch':
         monkeypatch.setattr(h.manager, '_dispatch', broken_dispatch)
-    # All three paths must have migrated off the old finalizer.
-    legacy = AsyncMock(side_effect=AssertionError('legacy finalizer called'))
-    monkeypatch.setattr(h.manager.finalizer, 'fail', legacy)
     submitting = asyncio.create_task(h.manager.submit(
         user_id=h.conversation['user_id'], session_id=h.conversation['session_id'],
         user_query='hello', model='example:model-name',
@@ -66,7 +63,6 @@ async def test_submission_failure_confirms_concurrent_cancel(chat_api, monkeypat
         assert snapshot.status == 'failed' and snapshot.error_code == 'run_submission_failed'
         assert snapshot.started_at is None and snapshot.finished_at is not None
         assert not h.manager.executions
-        legacy.assert_not_called()
 
         # Retrying cleanup must not publish a second terminal event.
         await h.manager.finalizer_v2.finish_submission_failed(run_id, 0)
@@ -103,9 +99,6 @@ async def test_interruption_preserves_terminal_contract(chat_api, monkeypatch, u
         monkeypatch.setattr(h.context.repository, 'get_run', blocked_get)
     else:
         h.manager.graph = SimpleNamespace(ainvoke=blocked_get)
-    legacy = AsyncMock(side_effect=AssertionError('legacy failure finalizer called'))
-    monkeypatch.setattr(h.manager.finalizer, 'fail', legacy)
-    monkeypatch.setattr(h.manager.finalizer, 'finish', legacy)
     method = f'finish_{stage}_interrupted'
     interrupted = AsyncMock(wraps=getattr(h.manager.finalizer_v2, method))
     monkeypatch.setattr(h.manager.finalizer_v2, method, interrupted)
@@ -131,7 +124,6 @@ async def test_interruption_preserves_terminal_contract(chat_api, monkeypatch, u
     assert (current.started_at is None) == (stage == 'startup')
     assert current.finished_at is not None
     assert not h.manager.executions
-    legacy.assert_not_called()
     if user_cancelled:
         interrupted.assert_not_called()
     else:
@@ -162,8 +154,6 @@ async def test_startup_failure_preserves_error_and_confirms_cancel(
     await h.context.repository.request_cancellation(run.user_id, run.id, run.resume_time)
     get_run = h.context.repository.get_run
     monkeypatch.setattr(h.context.repository, 'get_run', AsyncMock(side_effect=failure))
-    legacy = AsyncMock(side_effect=AssertionError('legacy finalizer called'))
-    monkeypatch.setattr(h.manager.finalizer, 'fail', legacy)
     if storage_fails:
         monkeypatch.setattr(h.context.repository, 'finish_run', AsyncMock(side_effect=DatabaseError()))
     command = CancelCommand(run_id=run.id, resume_time=run.resume_time)
@@ -181,7 +171,6 @@ async def test_startup_failure_preserves_error_and_confirms_cancel(
             result = await asyncio.wait_for(h.manager.cancellation.wait_result(sub, command), 3)
             assert result.status == 'failed' and result.error_code == code
     monkeypatch.setattr(h.context.repository, 'get_run', get_run)
-    legacy.assert_not_called()
     assert not h.manager.executions
     current = await get_run(run.id, run.user_id)
     assert current.started_at is None
@@ -200,6 +189,7 @@ async def test_startup_failure_preserves_error_and_confirms_cancel(
 @pytest.mark.anyio
 @pytest.mark.parametrize('method', [
     'finish_submission_failed', 'finish_startup_interrupted', 'finish_execution_interrupted',
+    'finish_execution_failed',
 ])
 @pytest.mark.parametrize('failure,status', [(DatabaseError(), 503), (DatabaseError('stale', 409), 409),
                                           (TimeoutError(), 503)])
@@ -209,7 +199,8 @@ async def test_failure_cleanup_storage_failure_notifies_waiters(failure, status,
     cancellation = SimpleNamespace(reply=AsyncMock())
     finalizer = RunFinalizerV2(repository, events, cancellation)
 
-    assert await getattr(finalizer, method)(1, 0) is None
+    args = (make_run_error('agent_execution_failed'),) if method == 'finish_execution_failed' else ()
+    assert await getattr(finalizer, method)(1, 0, *args) is None
     events.publish.assert_not_called()
     result = cancellation.reply.call_args.args[0]
     assert result.status == status and result.run_id == 1 and result.resume_time == 0
@@ -218,6 +209,7 @@ async def test_failure_cleanup_storage_failure_notifies_waiters(failure, status,
 @pytest.mark.anyio
 @pytest.mark.parametrize('method', [
     'finish_submission_failed', 'finish_startup_interrupted', 'finish_execution_interrupted',
+    'finish_execution_failed',
     'finish_user_cancelled', 'finish_succeeded',
 ])
 async def test_failure_cleanup_survives_host_cancellation(method):
@@ -230,7 +222,8 @@ async def test_failure_cleanup_survives_host_cancellation(method):
 
     cancellation = SimpleNamespace(reply=AsyncMock())
     finalizer = RunFinalizerV2(SimpleNamespace(finish_run=blocked_finish), None, cancellation)
-    finishing = asyncio.create_task(getattr(finalizer, method)(1, 0))
+    args = (make_run_error('agent_execution_failed'),) if method == 'finish_execution_failed' else ()
+    finishing = asyncio.create_task(getattr(finalizer, method)(1, 0, *args))
     try:
         await asyncio.wait_for(entered.wait(), 2)
         finishing.cancel()
@@ -311,7 +304,7 @@ async def test_terminal_commit_replies_and_propagates_storage_errors(failure, st
 
 @pytest.mark.anyio
 @pytest.mark.parametrize('storage_fails', [False, True])
-async def test_runner_uses_v2_success_and_legacy_failure_boundary(chat_api, monkeypatch, storage_fails):
+async def test_runner_success_commit_failure_uses_execution_failure_boundary(chat_api, monkeypatch, storage_fails):
     h = chat_api
     run = await h.context.repository.create_run(
         user_id=h.conversation['user_id'], session_id=h.conversation['session_id'],
@@ -320,9 +313,9 @@ async def test_runner_uses_v2_success_and_legacy_failure_boundary(chat_api, monk
     await h.context.events.create_run(run.id)
     h.manager.graph = SimpleNamespace(ainvoke=AsyncMock(return_value={}))
     succeeded = AsyncMock(wraps=h.manager.finalizer_v2.finish_succeeded)
-    failed = AsyncMock(wraps=h.manager.finalizer.fail)
+    failed = AsyncMock(wraps=h.manager.finalizer_v2.finish_execution_failed)
     monkeypatch.setattr(h.manager.finalizer_v2, 'finish_succeeded', succeeded)
-    monkeypatch.setattr(h.manager.finalizer, 'fail', failed)
+    monkeypatch.setattr(h.manager.finalizer_v2, 'finish_execution_failed', failed)
     finish = h.context.repository.finish_run
 
     async def fail_success_commit(*args, **kwargs):

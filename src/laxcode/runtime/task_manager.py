@@ -4,7 +4,6 @@ from dataclasses import dataclass, field, replace
 
 from laxcode.runtime.cancellation import CancellationBus, CancelCommand, RunSnapshot
 from laxcode.runtime.events import EventStoreError
-from laxcode.runtime.finalization import RunFinalizer
 from laxcode.runtime.finalization_v2 import RunFinalizerV2
 from laxcode.runtime.runner import classify_run_error, run_agent
 from laxcode.storage.database import DatabaseError
@@ -35,7 +34,6 @@ class TaskManager:
         self.context = context
         self.cancel_timeout = cancel_timeout
         self.cancellation = CancellationBus(context.events)
-        self.finalizer = RunFinalizer(context.repository, context.events, self.cancellation)
         self.finalizer_v2 = RunFinalizerV2(context.repository, context.events, self.cancellation)
         self.executions: dict[tuple[int, int], LocalExecution] = {}
         self.submissions: set[asyncio.Task] = set()
@@ -118,7 +116,7 @@ class TaskManager:
             raise
         # run_agent alone owns execution errors; the block above handles startup only.
         await run_agent(self.graph, run.id, context, user_cancelled=lambda: execution.user_cancelled,
-                        finalizer=self.finalizer, finalizer_v2=self.finalizer_v2)
+                        finalizer_v2=self.finalizer_v2)
 
     async def resume(self, user_id: str, run_id: int, resume_time: int):
         return await self.control(self._resume, user_id, run_id, resume_time)

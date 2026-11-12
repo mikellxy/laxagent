@@ -114,7 +114,7 @@ it('keeps both disclosures open through chunks, completion and durable reconcili
   await h.event('message_chunk', 2, '我先检查相关文件。')
   expect(screen.getByRole('button', { name: '已工作' })).toHaveAttribute('aria-expanded', 'true')
   expect(screen.getByRole('button', { name: '已思考' })).toHaveAttribute('aria-expanded', 'true')
-  expect(within(screen.getByLabelText('工作过程')).queryByText('我先检查相关文件。')).toBeNull()
+  expect(screen.getAllByLabelText('工作过程').every(group => within(group).queryByText('我先检查相关文件。') === null)).toBe(true)
   const reasoning = [{ channel: 'text' as const, text: '**第一步**，第二步' }]
   await h.event('message_end', 2, { text: '我先检查相关文件。', reasoning })
   await h.event('tool_start', 3, { tool_name: 'read_file', arguments: '{"path":"hello.txt"}' })
@@ -166,4 +166,59 @@ it('retains expansion when an older page adds a boundary and merges a leading wo
   expect(groups[1]).toHaveAttribute('aria-expanded', 'true')
   expect(screen.getByText('现有思考')).toBeVisible()
   expect(screen.getByRole('button', { name: 'read_file' })).toBeVisible()
+})
+
+
+it.each(['waiting', 'running'] as const)('shows working from %s status before the first SSE event', async status => {
+  setup([{ seq: 1, role: 'user', content: '等待首 token' }], status)
+  const work = await screen.findByRole('status', { name: '正在工作' })
+  const user = screen.getByLabelText('用户消息')
+  expect(user.compareDocumentPosition(work) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+  expect(screen.queryByRole('button', { name: '正在工作' })).toBeNull()
+})
+
+it('keeps working after assistant text while question arguments are hidden, then removes it on pause', async () => {
+  const h = setup([{ seq: 1, role: 'user', content: '提问' }, { seq: 2, role: 'assistant', content: '我先确认几个问题。' }])
+  const work = await screen.findByRole('status', { name: '正在工作' })
+  expect(screen.getByLabelText('助手消息').compareDocumentPosition(work) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+  await h.event('tool_call_start', 2, { tool_call_id: 'q', tool_name: 'ask_user_question' })
+  await h.event('tool_call_delta', 2, { tool_call_id: 'q', arguments_delta: '{"questions":[' })
+  expect(screen.getAllByLabelText('工作过程')).toHaveLength(1)
+  expect(screen.queryByText(/ask_user_question/)).toBeNull()
+  expect(screen.getByRole('status', { name: '正在工作' })).toBeVisible()
+  h.state.status = 'paused'
+  await h.event('sse_end', null, { status: 'paused' })
+  await waitFor(() => expect(screen.queryByRole('status', { name: '正在工作' })).toBeNull())
+})
+
+it('replaces the placeholder with one real work group and stops when status refresh reports completion', async () => {
+  const h = setup([{ seq: 1, role: 'user', content: '检查' }])
+  await screen.findByRole('status', { name: '正在工作' })
+  await h.event('reasoning_chunk', 2, '检查中')
+  expect(screen.queryByRole('status', { name: '正在工作' })).toBeNull()
+  expect(screen.getByRole('button', { name: '正在工作' })).toBeVisible()
+  expect(screen.getAllByLabelText('工作过程')).toHaveLength(1)
+  h.state.status = 'success'
+  h.state.messages.push({ seq: 2, role: 'assistant', content: '', reasoning: [{ channel: 'text', text: '检查中' }] })
+  await act(async () => document.dispatchEvent(new Event('visibilitychange')))
+  await screen.findByRole('button', { name: '已工作' })
+  expect(screen.queryByRole('button', { name: '正在工作' })).toBeNull()
+})
+
+it.each(['paused', 'success', 'failed', 'cancelled'] as const)('does not show a working placeholder for %s', async status => {
+  setup([{ seq: 1, role: 'user', content: 'question' }], status)
+  await screen.findByLabelText('用户消息')
+  expect(screen.queryByRole('status', { name: '正在工作' })).toBeNull()
+})
+
+it('shows working after an accepted user message before its durable row or SSE arrives', async () => {
+  const h = setup([], 'success')
+  vi.spyOn(api, 'chat').mockResolvedValue({ run_id: 11, session_id: 1, status: 'waiting', resume_time: 0 })
+  await waitFor(() => expect(screen.getByRole('combobox', { name: '模型' })).toHaveValue('p:m'))
+  await h.user.type(screen.getByRole('textbox', { name: '消息输入' }), '开始任务')
+  await h.user.click(screen.getByRole('button', { name: '发送消息' }))
+  const work = await screen.findByRole('status', { name: '正在工作' })
+  const user = screen.getByLabelText('待确认用户消息')
+  expect(user.compareDocumentPosition(work) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+  expect(screen.getAllByLabelText('工作过程')).toHaveLength(1)
 })

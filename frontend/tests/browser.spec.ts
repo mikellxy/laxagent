@@ -232,6 +232,22 @@ test('streams nested reasoning disclosures and preserves expansion when history 
   const emit = async (type: string, msg_seq: number | null, content: unknown) => page.evaluate(event => {
     ;(window as any).reasoningEvent(event)
   }, { run_id: 10, type, msg_seq, content, role: 'assistant', error: null, channel: 'text' })
+  const waiting = page.getByRole('status', { name: '正在工作', exact: true })
+  await expect(waiting).toBeVisible()
+  const colors = await waiting.evaluate(element => {
+    const animation = element.getAnimations()[0]
+    animation.pause(); animation.currentTime = 0
+    const initial = getComputedStyle(element).color
+    animation.currentTime = 1000
+    const peak = getComputedStyle(element).color
+    animation.play()
+    return { initial, peak }
+  })
+  expect(colors).toEqual({ initial: 'rgb(104, 108, 99)', peak: 'rgb(227, 173, 125)' })
+  await page.emulateMedia({ reducedMotion: 'reduce' })
+  await expect(waiting).toHaveCSS('animation-name', 'none')
+  await page.emulateMedia({ reducedMotion: 'no-preference' })
+  await page.screenshot({ path: 'test-results/work-before-first-token.png', fullPage: true })
   await emit('reasoning_chunk', 2, '先检查 **消息链路**。')
   const work = page.getByRole('button', { name: '正在工作', exact: true })
   await expect(work).toHaveAttribute('aria-expanded', 'false')
@@ -265,6 +281,8 @@ test('streams nested reasoning disclosures and preserves expansion when history 
   const reasoning = [{ channel: 'text' as const, text: '先检查 **消息链路**。\n\n再核对历史消息与流式事件。' }]
   const content = '我先读取相关文件，核对 reasoning 的传递过程。'
   await emit('message_end', 2, { text: content, reasoning })
+  await expect(page.getByRole('status', { name: '正在工作', exact: true })).toBeVisible()
+  await page.screenshot({ path: 'test-results/work-after-assistant.png', fullPage: true })
   await emit('tool_start', 3, { tool_name: 'read_file', arguments: '{"path":"example.py"}' })
   await page.getByRole('button', { name: '正在工作', exact: true }).click()
   await page.getByRole('button', { name: 'read_file' }).click()

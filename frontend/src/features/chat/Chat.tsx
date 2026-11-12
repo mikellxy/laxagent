@@ -63,7 +63,13 @@ function MessageCard({ message }: { message: Message }) {
 }
 
 function WorkCard({ group, fold }: { group: WorkGroup; fold: (keys: string[]) => Fold }) {
-  return <section className={styles.work} aria-label="工作过程">
+  if (!group.items.length) return <section className={`${styles.work} ${styles.workActive}`} aria-label="工作过程">
+    <div className={`${styles.toolTitle} ${styles.workPlaceholder}`} role="status" aria-label="正在工作">
+      <span className={styles.processIcon} aria-hidden="true"><Layers size={16} /></span>
+      <span className={styles.processLabel}>正在工作</span>
+    </div>
+  </section>
+  return <section className={`${styles.work} ${group.active ? styles.workActive : ''}`} aria-label="工作过程">
     <Disclosure label={group.active ? '正在工作' : '已工作'} icon={<Layers size={16} />} active={group.active}
       preview={group.active ? latestWorkLine(group) : null}
       fold={fold(group.items.map(item => `work:${processKey(item.message)}`))}>
@@ -183,13 +189,18 @@ export function Chat({ owner, sessionId, onMissing }: { owner: string; sessionId
     }
   }
   const latestRun = snapshot.detail?.latest_run
+  const working = latestRun?.status === 'waiting' || latestRun?.status === 'running'
   const canResume = latestRun?.status === 'failed' || latestRun?.status === 'cancelled'
-  const rows: { key: string; seq: number; members: string; node: React.ReactNode }[] = groupTimeline(snapshot.messages, snapshot.pending ? null : snapshot.activity, snapshot.generatingTools).map(row => ({
-    key: row.key, seq: row.seq, members: row.kind === 'work' ? row.items.map(item => `process:${processKey(item.message)}`).join(',') : `message:${row.seq}`,
+  const rows: { key: string; seq: number; members: string; node: React.ReactNode }[] = groupTimeline(snapshot.messages, snapshot.pending ? null : snapshot.activity, snapshot.generatingTools, working && !snapshot.pending).map(row => ({
+    key: row.key, seq: row.seq, members: row.kind === 'work' ? row.items.map(item => `process:${processKey(item.message)}`).join(',') || row.key : `message:${row.seq}`,
     node: row.kind === 'work' ? <WorkCard group={row} fold={fold} /> : <MessageCard message={row.message} />,
   }))
   if (snapshot.pending) rows.push({ key: 'pending', seq: snapshot.pending.afterSeq + 0.5, members: 'pending',
     node: <article className={`${styles.message} ${styles.user} ${snapshot.pending.failed ? styles.failed : ''}`} aria-label="待确认用户消息">{snapshot.pending.content}<MessageAttachments items={snapshot.pending.appendix} /></article> })
+  if (snapshot.pending && working) {
+    const group: WorkGroup = { kind: 'work', key: 'work:pending', seq: snapshot.pending.afterSeq + 0.75, items: [], active: true }
+    rows.push({ key: group.key, seq: group.seq, members: group.key, node: <WorkCard group={group} fold={fold} /> })
+  }
   rows.sort((a, b) => a.seq - b.seq)
   return <main className={styles.chat} aria-label="聊天">
     <div className={styles.scrollArea} ref={scroller} aria-label="消息列表" tabIndex={0}

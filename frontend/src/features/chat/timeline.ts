@@ -30,7 +30,7 @@ export function latestWorkLine(group: WorkGroup): string | null {
 }
 
 /** Body text and user messages delimit work; empty assistant messages do not. */
-export function groupTimeline(messages: Message[], activity: Activity | null, generatingTools: ToolMessage[] = []): TimelineRow[] {
+export function groupTimeline(messages: Message[], activity: Activity | null, generatingTools: ToolMessage[] = [], working = false): TimelineRow[] {
   const rows: TimelineRow[] = []
   let group: WorkGroup | null = null
   let boundary = 'start'
@@ -70,6 +70,12 @@ export function groupTimeline(messages: Message[], activity: Activity | null, ge
     }
   }
   const tail = rows.at(-1)
-  if (tail?.kind === 'work' && activity) tail.active = tail.items.some(item => item.message.seq >= activity.firstSeq)
+  if (tail?.kind === 'work') {
+    tail.active = working || !!activity && tail.items.some(item => item.message.seq >= activity.firstSeq)
+  } else if (working) {
+    // Run status supplies immediate feedback before any streamed process details arrive.
+    const lastSeq = Math.max(0, ...messages.map(message => message.seq))
+    rows.push({ kind: 'work', key: `work:${boundary}`, seq: lastSeq + 0.5, items: [], active: true })
+  }
   return rows
 }

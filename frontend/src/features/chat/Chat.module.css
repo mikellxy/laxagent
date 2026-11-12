@@ -50,6 +50,15 @@
 .tool pre { margin: 7px 0 0; }
 .work { margin: 0 0 14px; padding: 8px 3px; color: #686c63; }
 .work > .toolTitle { font-size: 13px; }
+.workActive > .toolTitle, .thinking > .processActive { animation: workColorBreathe 2s ease-in-out infinite; }
+.workActive > .toolTitle .processIcon, .workActive > .toolTitle .processLabel,
+.thinking > .processActive .processIcon, .thinking > .processActive .processLabel { animation: none; }
+.workPlaceholder { cursor: default; }
+@keyframes workColorBreathe {
+  0%, 100% { color: #686c63; }
+  50% { color: #e3ad7d; }
+}
+@media (prefers-reduced-motion: reduce) { .workActive > .toolTitle, .thinking > .processActive { animation: none; } }
 .workContents { margin: 10px 0 0 7px; padding-left: 15px; border-left: 1px solid #d8d9d2; }
 .workContents > * + * { margin-top: 10px; }
 .workContents .tool { border-radius: 8px; }

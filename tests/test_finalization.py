@@ -22,20 +22,24 @@ async def unstarted_run(h):
 
 
 @pytest.mark.anyio
-@pytest.mark.parametrize('outcome', ['success', 'failed', 'incomplete', 'cancelled', 'shutdown'])
-async def test_finalization_without_local_worker_is_idempotent_and_replies(chat_api, outcome):
+@pytest.mark.parametrize('outcome,method_name', [
+    ('success', 'finish_succeeded'),
+    ('failed', 'finish_submission_failed'),
+    ('failed', 'finish_startup_failed'),
+    ('failed', 'finish_execution_failed'),
+    ('incomplete', 'finish_startup_failed'),
+    ('incomplete', 'finish_execution_failed'),
+    ('cancelled', 'finish_user_cancelled'),
+    ('shutdown', 'finish_startup_interrupted'),
+    ('shutdown', 'finish_execution_interrupted'),
+])
+async def test_finalization_without_local_worker_is_idempotent_and_replies(chat_api, outcome, method_name):
     h = chat_api
     run = await unstarted_run(h)
     finalizer = RunFinalizer(h.context.repository, h.context.events)
-    method = {
-        'success': finalizer.finish_succeeded,
-        'failed': finalizer.finish_execution_failed,
-        'incomplete': finalizer.finish_execution_failed,
-        'cancelled': finalizer.finish_user_cancelled,
-        'shutdown': finalizer.finish_execution_interrupted,
-    }[outcome]
+    method = getattr(finalizer, method_name)
     options = {}
-    if outcome in ('failed', 'incomplete'):
+    if method_name in ('finish_startup_failed', 'finish_execution_failed'):
         options['error'] = make_run_error(
             'model_incomplete_max_output_tokens' if outcome == 'incomplete' else 'agent_execution_failed',
         )

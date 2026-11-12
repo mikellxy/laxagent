@@ -189,17 +189,17 @@ async def test_startup_failure_preserves_error_and_confirms_cancel(
 @pytest.mark.anyio
 @pytest.mark.parametrize('method', [
     'finish_submission_failed', 'finish_startup_interrupted', 'finish_execution_interrupted',
-    'finish_execution_failed',
+    'finish_startup_failed', 'finish_execution_failed',
 ])
 @pytest.mark.parametrize('failure,status', [(DatabaseError(), 503), (DatabaseError('stale', 409), 409),
-                                          (TimeoutError(), 503)])
+                                          (TimeoutError(), 503), (RuntimeError('private detail'), 503)])
 async def test_failure_cleanup_storage_failure_notifies_waiters(failure, status, method):
     repository = SimpleNamespace(finish_run=AsyncMock(side_effect=failure))
     events = SimpleNamespace(publish=AsyncMock())
     cancellation = SimpleNamespace(reply=AsyncMock())
     finalizer = RunFinalizer(repository, events, cancellation)
 
-    args = (make_run_error('agent_execution_failed'),) if method == 'finish_execution_failed' else ()
+    args = (make_run_error('agent_execution_failed'),) if method in ('finish_startup_failed', 'finish_execution_failed') else ()
     assert await getattr(finalizer, method)(1, 0, *args) is None
     events.publish.assert_not_called()
     result = cancellation.reply.call_args.args[0]
@@ -209,7 +209,7 @@ async def test_failure_cleanup_storage_failure_notifies_waiters(failure, status,
 @pytest.mark.anyio
 @pytest.mark.parametrize('method', [
     'finish_submission_failed', 'finish_startup_interrupted', 'finish_execution_interrupted',
-    'finish_execution_failed',
+    'finish_startup_failed', 'finish_execution_failed',
     'finish_user_cancelled', 'finish_succeeded',
 ])
 async def test_failure_cleanup_survives_host_cancellation(method):
@@ -222,7 +222,7 @@ async def test_failure_cleanup_survives_host_cancellation(method):
 
     cancellation = SimpleNamespace(reply=AsyncMock())
     finalizer = RunFinalizer(SimpleNamespace(finish_run=blocked_finish), None, cancellation)
-    args = (make_run_error('agent_execution_failed'),) if method == 'finish_execution_failed' else ()
+    args = (make_run_error('agent_execution_failed'),) if method in ('finish_startup_failed', 'finish_execution_failed') else ()
     finishing = asyncio.create_task(getattr(finalizer, method)(1, 0, *args))
     try:
         await asyncio.wait_for(entered.wait(), 2)

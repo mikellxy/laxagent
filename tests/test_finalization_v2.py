@@ -7,6 +7,7 @@ import pytest
 from laxcode.runtime.cancellation import CancelCommand
 from laxcode.runtime.events import EventStoreError
 from laxcode.runtime.finalization_v2 import RunFinalizerV2
+from laxcode.runtime.runner import classify_run_error
 from laxcode.storage.database import DatabaseError
 from test_chat import chat_api
 
@@ -133,6 +134,59 @@ async def test_startup_interruption_preserves_terminal_contract(chat_api, monkey
     assert replay.count('event: sse_end') == 1
     assert 'event: error' not in replay
     assert '"status": "cancelled"' in replay
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize('failure,code', [
+    (DatabaseError('private storage detail'), 'run_storage_failed'),
+    (RuntimeError('private startup detail'), 'agent_execution_failed'),
+])
+@pytest.mark.parametrize('storage_fails', [False, True])
+async def test_startup_failure_preserves_error_and_confirms_cancel(
+    chat_api, monkeypatch, failure, code, storage_fails,
+):
+    h = chat_api
+    run = await h.context.repository.create_run(
+        user_id=h.conversation['user_id'], session_id=h.conversation['session_id'],
+        user_query='hello', model='example:model-name', context_limit=100, output_limit=10,
+    )
+    await h.context.events.create_run(run.id)
+    await h.context.repository.request_cancellation(run.user_id, run.id, run.resume_time)
+    get_run = h.context.repository.get_run
+    monkeypatch.setattr(h.context.repository, 'get_run', AsyncMock(side_effect=failure))
+    legacy = AsyncMock(side_effect=AssertionError('legacy finalizer called'))
+    monkeypatch.setattr(h.manager.finalizer, 'fail', legacy)
+    if storage_fails:
+        monkeypatch.setattr(h.context.repository, 'finish_run', AsyncMock(side_effect=DatabaseError()))
+    command = CancelCommand(run_id=run.id, resume_time=run.resume_time)
+    async with h.manager.cancellation.results(run.id, run.resume_time) as sub:
+        h.manager._dispatch(run)
+        execution = h.manager.executions[run.id, run.resume_time]
+        with pytest.raises(type(failure)) as caught:
+            await asyncio.wait_for(execution.task, 3)
+        assert caught.value is failure
+        if storage_fails:
+            with pytest.raises(EventStoreError) as reply_error:
+                await asyncio.wait_for(h.manager.cancellation.wait_result(sub, command), 3)
+            assert reply_error.value.status == 503
+        else:
+            result = await asyncio.wait_for(h.manager.cancellation.wait_result(sub, command), 3)
+            assert result.status == 'failed' and result.error_code == code
+    monkeypatch.setattr(h.context.repository, 'get_run', get_run)
+    legacy.assert_not_called()
+    assert not h.manager.executions
+    current = await get_run(run.id, run.user_id)
+    assert current.started_at is None
+    if storage_fails:
+        assert current.status == 'waiting' and current.finished_at is None
+    else:
+        assert current.status == 'failed' and current.error_code == code
+        assert current.finished_at is not None
+        await h.manager.finalizer_v2.finish_startup_failed(run.id, run.resume_time, classify_run_error(failure))
+        replay = (await h.api.get(f'/api/v1/runs/{run.id}/events')).text
+        assert replay.count('event: error') == replay.count('event: sse_end') == 1
+        assert '"status": "failed"' in replay
+        assert 'private' not in replay
 
 
 @pytest.mark.anyio

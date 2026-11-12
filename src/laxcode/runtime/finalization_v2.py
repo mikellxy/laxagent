@@ -27,7 +27,7 @@ class RunFinalizerV2:
         try:
             return await drain(asyncio.create_task(self._commit_failure(
                 run_id, resume_time, error=make_run_error("run_submission_failed"),
-                publish_events=self._submission_failure_events,
+                publish_events=self._failure_events,
             )))
         except Exception:
             logger.error("Could not persist failed run %s", run_id)
@@ -42,7 +42,16 @@ class RunFinalizerV2:
         except Exception:
             logger.error("Could not persist interrupted run %s", run_id)
 
-    async def _submission_failure_events(self, current: Run):
+    async def finish_startup_failed(self, run_id: int, resume_time: int, error: RunError):
+        """Finish a startup check that failed with a classified run error."""
+        try:
+            return await drain(asyncio.create_task(self._commit_failure(
+                run_id, resume_time, error=error, publish_events=self._failure_events,
+            )))
+        except Exception:
+            logger.error("Could not persist failed run %s", run_id)
+
+    async def _failure_events(self, current: Run):
         try:
             await self.events.publish(make_event(
                 current.id, "error", {}, error=current.error, resume_time=current.resume_time,

@@ -115,7 +115,7 @@ class TaskManager:
                 await self.finalizer_v2.finish_startup_interrupted(*execution.key)
             raise
         except Exception as exc:
-            await self.finalizer.fail(*execution.key, classify_run_error(exc))
+            await self.finalizer_v2.finish_startup_failed(*execution.key, classify_run_error(exc))
             raise
         # run_agent alone owns execution errors; the block above handles startup only.
         await run_agent(self.graph, run.id, context, user_cancelled=lambda: execution.user_cancelled,

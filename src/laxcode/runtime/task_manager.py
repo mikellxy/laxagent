@@ -118,7 +118,7 @@ class TaskManager:
             raise
         # run_agent alone owns execution errors; the block above handles startup only.
         await run_agent(self.graph, run.id, context, user_cancelled=lambda: execution.user_cancelled,
-                        finalizer=self.finalizer)
+                        finalizer=self.finalizer, finalizer_v2=self.finalizer_v2)
 
     async def resume(self, user_id: str, run_id: int, resume_time: int):
         return await self.control(self._resume, user_id, run_id, resume_time)

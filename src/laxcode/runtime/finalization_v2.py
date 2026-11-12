@@ -59,6 +59,32 @@ class RunFinalizerV2:
         """
         return await drain(asyncio.create_task(self._commit_user_cancellation(run_id, resume_time)))
 
+    async def finish_succeeded(self, run_id: int, resume_time: int) -> Run:
+        """Finalize a normally returned Graph; propagate persistence errors to the runner."""
+        return await drain(asyncio.create_task(self._commit_success(run_id, resume_time)))
+
+    async def _commit_success(self, run_id: int, resume_time: int) -> Run:
+        try:
+            current, changed = await self.repository.finish_run(run_id, resume_time=resume_time)
+        except Exception as exc:
+            conflict = isinstance(exc, DatabaseError) and exc.status == 409
+            await self._reply(CancelResult(
+                run_id=run_id, resume_time=resume_time, status=409 if conflict else 503,
+                error=("任务执行次数已变化，请刷新状态" if conflict else
+                       "取消收尾状态保存失败，请重试" if isinstance(exc, (DatabaseError, TimeoutError)) else
+                       "取消收尾失败，请重试"),
+            ))
+            raise
+        try:
+            if changed:
+                await self._success_events(current)
+        finally:
+            if current.cancel_requested_at is not None:
+                await self._reply(CancelResult(
+                    run_id=run_id, resume_time=resume_time, run=RunSnapshot.model_validate(current),
+                ))
+        return current
+
     async def _commit_user_cancellation(self, run_id: int, resume_time: int) -> Run:
         try:
             current, changed = await self.repository.finish_run(
@@ -81,6 +107,15 @@ class RunFinalizerV2:
                 run_id=run_id, resume_time=resume_time, run=RunSnapshot.model_validate(current),
             ))
         return current
+
+    async def _success_events(self, current: Run):
+        try:
+            await self.events.publish(make_event(
+                current.id, "sse_end", {"status": "completed"},
+                error=current.error, resume_time=current.resume_time,
+            ))
+        except EventStoreError:
+            logger.warning("Could not publish terminal SSE for run %s", current.id)
 
     async def _failure_events(self, current: Run):
         try:

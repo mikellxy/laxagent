@@ -12,6 +12,7 @@ from laxcode.agent.state import AgentState
 from laxcode.run_errors import RunError, make_run_error, registered_run_error
 from laxcode.runtime.events import EventStoreError
 from laxcode.runtime.finalization import RunFinalizer
+from laxcode.runtime.finalization_v2 import RunFinalizerV2
 from laxcode.storage.database import DatabaseError
 
 
@@ -30,8 +31,10 @@ def classify_run_error(exc: Exception) -> RunError:
 
 async def run_agent(graph, run_id: int, context: AgentContext, *,
                     user_cancelled: Callable[[], bool] = lambda: False,
-                    finalizer: RunFinalizer | None = None) -> AgentState | None:
+                    finalizer: RunFinalizer | None = None,
+                    finalizer_v2: RunFinalizerV2 | None = None) -> AgentState | None:
     finalizer = finalizer if finalizer is not None else RunFinalizer(context.repository, context.events)
+    finalizer_v2 = finalizer_v2 if finalizer_v2 is not None else RunFinalizerV2(context.repository, context.events)
     try:
         run = await context.repository.claim_run(run_id, context.resume_time)
         if run is None:
@@ -57,7 +60,7 @@ async def run_agent(graph, run_id: int, context: AgentContext, *,
         result = await graph.ainvoke(state, config={
             "recursion_limit": recursion_limit, "configurable": {"thread_id": run.thread_id},
         }, context=context, durability="sync" if getattr(graph, "checkpointer", None) else None)
-        await finalizer.finish(run_id, context.resume_time)
+        await finalizer_v2.finish_succeeded(run_id, context.resume_time)
     except asyncio.CancelledError:
         # User cancellation is terminalized by the manager after this worker fully exits.
         if not user_cancelled():

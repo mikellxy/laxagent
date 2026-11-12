@@ -1,0 +1,23 @@
+.card { margin: 16px 0; overflow: hidden; border: 1px solid #dddeda; border-radius: 12px; background: #fff; min-width: 0; }
+.header { display: flex; align-items: center; gap: 10px; padding: 12px 14px; border-bottom: 1px solid #eeeee9; font-size: 12px; color: #686c63; }
+.path { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-family: ui-monospace, monospace; }
+.header button { display: flex; align-items: center; gap: 4px; padding: 5px; border-radius: 5px; flex-shrink: 0; }
+.header button:hover { background: #edeee8; }
+.caption { padding: 8px 14px 0; font-size: 12px; color: #686c63; }
+.caption span { color: #85897e; }
+.card .snippet { margin: 0; padding: 12px 16px; border-radius: 0; background: #fff; max-height: 260px; overflow: hidden; mask-image: linear-gradient(to bottom, #000 85%, transparent); }
+.footer { display: block; width: 100%; text-align: center; padding: 12px; font-size: 13px; color: #6b7066; border-top: 1px solid #f0f0eb; }
+.footer:hover { background: #f6f7f2; }
+.placeholder { padding: 24px 16px; color: #85897e; font-size: 13px; }
+.image { display: block; width: 100%; padding: 12px; }
+.image img { display: block; max-width: 100%; max-height: 480px; object-fit: contain; border-radius: 6px; margin: auto; }
+.inline { display: inline; color: #3674ba; text-decoration: underline; text-underline-offset: 3px; padding: 0; font: inherit; }
+.error { display: block; color: #b66b6b; font-size: 12px; padding: 10px 14px; }
+.error button { text-decoration: underline; margin-left: 6px; }
+.dialog { width: min(1000px, 92vw); max-width: 92vw; max-height: 88vh; padding: 0; border: 1px solid #dddeda; border-radius: 12px; background: #fcfcfa; color: #33382f; }
+.dialog::backdrop { background: #171e2566; }
+.dialog[open] { display: flex; flex-direction: column; }
+.full { overflow: auto; padding: 16px; min-height: 80px; }
+.full pre { white-space: pre; margin: 0; padding: 0; background: transparent; font: 13px/1.65 ui-monospace, monospace; }
+.full img { display: block; max-width: 100%; margin: auto; }
+@media (max-width: 600px) { .header { gap: 5px; padding: 10px; } .full { padding: 10px; } }

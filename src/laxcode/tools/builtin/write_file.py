@@ -13,7 +13,7 @@ from laxcode.skills import parse_metadata
 class WriteFileArgs(BaseModel):
     model_config = ConfigDict(strict=True, extra="forbid")
 
-    skill_name: str | None = Field(default=None, description="Skill name to modify; null selects workspace.")
+    skill_name: str | None = Field(default=None, description="Skill name to modify; JSON null selects workspace; the string 'null' selects a skill named null.")
     operation: Literal["write", "delete"] = Field(default="write", description="Delete is only allowed for skill files.")
 
     path: str = Field(min_length=1, description="File path relative to the selected workspace or skill; no symlinks or '..'.")
@@ -54,6 +54,8 @@ def write_file(context: ToolContext, args: WriteFileArgs) -> dict:
                 return scope_result(root, args.skill_name, {"path": relative.as_posix(), "deleted": deleted})
             with open_parent(root, relative, create=True) as directory:
                 atomic_replace(directory, relative.name, content)
+            if args.skill_name is None:
+                context.record_workspace_path(relative.as_posix())
             return scope_result(root, args.skill_name, {"path": relative.as_posix(), "bytes_written": len(content)})
     except ToolError as exc:
         raise WriteFileError(str(exc)) from None

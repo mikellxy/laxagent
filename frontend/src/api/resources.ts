@@ -1,8 +1,12 @@
 import { json, request } from './http'
 import { streamRun } from './sse'
-import type { Answer, AppendixReference, UserConfigs, Memories, MessagePage, Models, Project, Run, Session, SessionDetail, SubmittedRun } from './types'
+import type { Answer, AppendixReference, UserConfigs, Memories, MessagePage, Models, Project, Run, Session, SessionDetail, SubmittedRun, WorkspaceFilePreview } from './types'
 
 export const api = {
+  workspacePreview: (session: number, path: string, signal?: AbortSignal) => json<WorkspaceFilePreview>(
+    `/sessions/${session}/workspace-files/preview?${new URLSearchParams({ path })}`, { signal }),
+  workspaceContent: async (session: number, path: string, download: boolean, signal?: AbortSignal) => (await request(
+    `/sessions/${session}/workspace-files/content?${new URLSearchParams({ path, download: String(download) })}`, { signal })).blob(),
   uploadAppendix: (file: File, signal?: AbortSignal) => {
     const body = new FormData(); body.append('file', file)
     return json<AppendixReference>('/appendices', { method: 'POST', body, signal })

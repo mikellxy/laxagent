@@ -22,7 +22,7 @@ class TextEdit(BaseModel):
 class EditFileArgs(BaseModel):
     model_config = ConfigDict(strict=True, extra="forbid")
 
-    skill_name: str | None = Field(default=None, description="Skill name to edit; null selects workspace.")
+    skill_name: str | None = Field(default=None, description="Skill name to edit; JSON null selects workspace; the string 'null' selects a skill named null.")
 
     path: str = Field(min_length=1, description="Existing file relative to the selected workspace or skill; no symlinks or '..'.")
     edits: list[TextEdit] = Field(min_length=1, description="Non-overlapping edits, all matched against the original file.")
@@ -131,6 +131,8 @@ def edit_file(context: ToolContext, args: EditFileArgs) -> dict:
             if changed:
                 failure = "WRITE_FAILED"
                 atomic_replace(directory, relative.name, updated, allow_missing=False)
+            if args.skill_name is None:
+                context.record_workspace_path(relative.as_posix())
             return scope_result(root, args.skill_name, {
                 "path": relative.as_posix(), "edits_applied": len(edits),
                 "bytes_written": len(updated) if changed else 0,

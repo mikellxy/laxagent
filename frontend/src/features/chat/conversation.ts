@@ -270,10 +270,10 @@ export class Conversation {
     }
     if (seq <= this.boundary) { this.emit(); return }
     const previous = this.live.get(seq)
-    const old = previous?.role === 'assistant' ? previous : { seq, role: 'assistant' as const, content: '' }
+    const old = previous?.role === 'assistant' ? previous : { seq, role: 'assistant' as const, content: '', complete: false }
     if (event.type === 'message_chunk' || event.type === 'refusal_chunk') {
       const text = old.content + (typeof event.content === 'string' ? event.content : '')
-      this.live.set(seq, { ...old, content: text })
+      this.live.set(seq, { ...old, content: text, complete: false })
       if (text && this.activity) this.activity.thinkingSeq = null
     } else if (event.type === 'tool_call_start' || event.type === 'tool_call_delta') {
       if (this.activity) this.activity.thinkingSeq = null
@@ -289,7 +289,7 @@ export class Conversation {
         if (this.activity && !old.content) this.activity.thinkingSeq = seq
       }
     } else if (event.type === 'message_end') {
-      this.live.set(seq, { ...old, content: typeof content.text === 'string' ? content.text : '',
+      this.live.set(seq, { ...old, complete: true, content: typeof content.text === 'string' ? content.text : '',
         ...(Array.isArray(content.reasoning) ? { reasoning: content.reasoning as ReasoningPart[] } : {}) })
       if (this.activity) this.activity.thinkingSeq = null
     } else if (event.type === 'tool_start') {

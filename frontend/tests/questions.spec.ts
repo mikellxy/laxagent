@@ -57,7 +57,7 @@ test('question tabs submit answers, hide generic tool cards and restore answer h
   await expect(page.getByText('已回答 1/2 · 第 1/2 页')).toBeVisible()
   await page.screenshot({ path: 'test-results/questions-tabs.png', fullPage: true })
   await page.getByRole('button', { name: '下一题' }).click()
-  await page.getByRole('button', { name: '提交答案' }).click()
+  await page.getByRole('button', { name: '提交', exact: true }).click()
   await expect(page.getByLabel('回答问题', { exact: true })).toHaveCount(0)
   await expect(page.getByLabel('问答记录')).toContainText('PostgreSQL')
   await expect(page.getByLabel('问答记录')).toContainText('用户未回答')

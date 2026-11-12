@@ -1,9 +1,8 @@
 import { useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { ArrowDown, ArrowUp, Check, ChevronDown, Copy, Layers, LoaderCircle, Sparkles, Square, Wrench } from 'lucide-react'
-import Markdown from 'react-markdown'
-import remarkGfm from 'remark-gfm'
 import { api } from '../../api/resources'
+import { AssistantMarkdown, WorkspaceFilesProvider } from './WorkspaceFiles'
 import { chooseModel, sessionModel } from '../../lib/preferences'
 import { messageOf } from '../../api/errors'
 import { QuestionCard, AnswerCard } from './QuestionCard'
@@ -37,11 +36,6 @@ function Disclosure({ label, icon, fold, active = false, preview, children }: { 
     <div id={id} hidden={!fold.open}>{fold.open && children}</div>
   </>
 }
-function AssistantMarkdown({ text }: { text: string }) {
-  return <Markdown remarkPlugins={[remarkGfm]} skipHtml components={{
-    a: ({ children, ...props }) => <a {...props} target="_blank" rel="noopener noreferrer">{children}</a>,
-  }}>{text}</Markdown>
-}
 function ToolCall({ message, fold }: { message: ToolMessage; fold: Fold }) {
   const text = argumentsText(message.arguments)
   const status = message.status && { generating: '正在生成参数', running: '正在执行', completed: '已完成',
@@ -57,7 +51,7 @@ function MessageCard({ message }: { message: Message }) {
   if (message.role === 'assistant' && !message.content) return null
   return <article data-seq={message.seq} aria-label={message.role === 'user' ? '用户消息' : message.role === 'assistant' ? '助手消息' : '工具调用'}
     className={`${styles.message} ${styles[message.role]}`}>
-    {message.role === 'assistant' ? <AssistantMarkdown text={message.content} /> : message.content}
+    {message.role === 'assistant' ? <AssistantMarkdown text={message.content} complete={message.complete !== false} files /> : message.content}
     {message.role === 'user' && <MessageAttachments items={message.appendix} />}
   </article>
 }
@@ -164,6 +158,28 @@ export function Chat({ owner, sessionId, onMissing }: { owner: string; sessionId
       if (!snapshot.loadingOlder) anchor.current = null
     } else if (follow.current) moveScroll(el => { el.scrollTop = el.scrollHeight })
   }, [snapshot.messages, snapshot.generatingTools, snapshot.pending, snapshot.loadingOlder])
+  useEffect(() => {
+    const element = scroller.current
+    const timeline = element?.firstElementChild
+    if (!element || !timeline || typeof ResizeObserver === 'undefined') return
+    let reading: { node: Element; offset: number } | null = null
+    const remember = () => {
+      const top = element.getBoundingClientRect().top
+      const node = [...timeline.children].find(row => row.getBoundingClientRect().bottom > top)
+      reading = node ? { node, offset: node.getBoundingClientRect().top - top } : null
+    }
+    const observer = new ResizeObserver(() => {
+      if (follow.current) moveScroll(el => { el.scrollTop = el.scrollHeight })
+      else if (!anchor.current && reading?.node.isConnected) {
+        const delta = reading.node.getBoundingClientRect().top - element.getBoundingClientRect().top - reading.offset
+        if (Math.abs(delta) > 1) moveScroll(el => { el.scrollTop += delta })
+      }
+      remember()
+    })
+    remember(); observer.observe(timeline)
+    element.addEventListener('scroll', remember)
+    return () => { observer.disconnect(); element.removeEventListener('scroll', remember) }
+  }, [sessionId, snapshot.ready])
   useLayoutEffect(() => {
     if (textarea.current) { textarea.current.style.height = 'auto'; textarea.current.style.height = `${Math.min(textarea.current.scrollHeight, 200)}px` }
   }, [draft])
@@ -202,7 +218,7 @@ export function Chat({ owner, sessionId, onMissing }: { owner: string; sessionId
     rows.push({ key: group.key, seq: group.seq, members: group.key, node: <WorkCard group={group} fold={fold} /> })
   }
   rows.sort((a, b) => a.seq - b.seq)
-  return <main className={styles.chat} aria-label="聊天">
+  return <WorkspaceFilesProvider key={`${owner}:${sessionId}`} sessionId={sessionId}><main className={styles.chat} aria-label="聊天">
     <div className={styles.scrollArea} ref={scroller} aria-label="消息列表" tabIndex={0}
       onWheel={event => { if (event.deltaY < 0 && scroller.current && scroller.current.scrollHeight > scroller.current.clientHeight) setFollow(false) }}
       onScroll={() => {
@@ -256,5 +272,5 @@ export function Chat({ owner, sessionId, onMissing }: { owner: string; sessionId
         </div>
       </div>
     </div>
-  </main>
+  </main></WorkspaceFilesProvider>
 }

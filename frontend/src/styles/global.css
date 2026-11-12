@@ -20,3 +20,5 @@ button:focus-visible, select:focus-visible { outline: 2px solid #83afe2; outline
 .mainColumn { display: flex; flex-direction: column; flex: 1; min-width: 0; min-height: 0; }
 .mainHeader { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 16px; padding: 10px 40px 2px; flex: none; }
 @media (max-width: 700px) { .mainHeader { padding: 8px 16px 2px; } }
+
+@media (max-width: 700px) { .shell { flex-direction: column; } }

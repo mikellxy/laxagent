@@ -11,3 +11,8 @@ class ToolContext:
     repository: Repository
     workspace: str
     loaded_skills: dict[str, dict] = field(default_factory=dict)
+    written_workspace_paths: list[str] = field(default_factory=list)
+
+    def record_workspace_path(self, path: str) -> None:
+        if path not in self.written_workspace_paths:
+            self.written_workspace_paths.append(path)

@@ -10,7 +10,11 @@ export interface SessionDetail extends Session { latest_run: Run | null; has_app
 export interface AppendixReference { id: number; name: string }
 export interface AppendixDisplay extends AppendixReference { kind: 'image' | 'file'; thumbnail_data_url: string | null }
 export interface ReasoningPart { channel: 'text' | 'summary'; text: string }
-export interface TextMessage { seq: number; role: 'user' | 'assistant'; content: string; reasoning?: ReasoningPart[]; appendix?: AppendixDisplay[] }
+export interface TextMessage { seq: number; role: 'user' | 'assistant'; content: string; reasoning?: ReasoningPart[]; appendix?: AppendixDisplay[]; complete?: boolean }
+export interface WorkspaceFilePreview {
+  path: string; name: string; size: number; kind: 'text' | 'image' | 'download'
+  language: string | null; text: string | null; truncated: boolean; can_expand: boolean
+}
 export type ToolStatus = 'generating' | 'running' | 'completed' | 'failed' | 'interrupted' | 'unknown'
 export interface ToolMessage {
   seq: number; role: 'tool'; tool_name: string; arguments: string

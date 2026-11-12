@@ -20,3 +20,8 @@
 .emptyCreate { display: flex; justify-content: center; align-items: center; gap: 6px; width: calc(100% - 24px); height: 29px; margin: 6px 12px 8px; border: 1px solid #d9dad4; border-radius: 6px; color: #858780; font-size: 12px; }
 .sidebar button:hover, .sessionRow:hover:not(.selected) { background: #e3e4de; }
 @media (max-width: 700px) { .sidebar { width: 210px; flex-basis: 210px; padding-inline: 10px; } .newSession { font-size: 10px; } }
+@media (max-width: 700px) {
+  .sidebar { width: 100%; height: auto; max-height: 28dvh; flex: 0 0 auto; padding: 8px 12px; border-right: 0; border-bottom: 1px solid var(--border); }
+  .heading { margin-bottom: 4px; }
+  .project { margin-bottom: 4px; }
+}

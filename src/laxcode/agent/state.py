@@ -11,6 +11,7 @@ class Message(TypedDict):
 
 
 class AgentState(TypedDict):
+    written_workspace_paths: NotRequired[list[str]]
     loaded_skills: NotRequired[dict[str, dict]]
     tool_node_state_uncertain: NotRequired[bool]
     pending_model_response: NotRequired[dict | None]

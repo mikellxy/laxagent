@@ -4,7 +4,7 @@ import { Conversation, type Transport } from '../src/features/chat/conversation'
 import type { Message, MessagePage, TextMessage, Run, SessionDetail, StreamEvent } from '../src/api/types'
 
 const user = (seq: number, content = `user ${seq}`): Message => ({ seq, role: 'user', content })
-const assistant = (seq: number, content: string): TextMessage => ({ seq, role: 'assistant', content })
+const assistant = (seq: number, content: string, complete?: boolean): TextMessage => ({ seq, role: 'assistant', content, ...(complete === undefined ? {} : { complete }) })
 const page = (items: Message[], has_more = false): MessagePage => ({ items, has_more, next_before_seq: has_more ? items[0].seq : null })
 const run = (status: Run['status'] = 'running'): Run => ({ run_id: 10, session_id: 1, model: 'p:m', status, error: null, error_code: null, error_desc: null, resume_time: 0 })
 const detail = (next_msg_seq = 2, latest_run: Run | null = run()): SessionDetail => ({ id: 1, user_id: 'owner', name: 'session', project_id: 1, next_msg_seq, latest_run })
@@ -86,11 +86,11 @@ describe('conversation synchronization', () => {
     h.event('message_chunk', 2, 'lo')
     h.event('reasoning_chunk', 2, 'public reasoning')
     const reasoning = [{ channel: 'text', text: 'public reasoning' }]
-    expect(h.controller.getSnapshot().messages).toEqual([user(1), { ...assistant(2, 'hello'), reasoning }])
+    expect(h.controller.getSnapshot().messages).toEqual([user(1), { ...assistant(2, 'hello', false), reasoning }])
     h.event('message_end', 2, { text: 'Hello!' })
     h.event('tool_start', 3, { tool_name: 'read_file', arguments: '{"path":"hello.txt"}' })
     h.event('tool_end', 3, { tool_name: 'read_file', result: 'private output' })
-    expect(h.controller.getSnapshot().messages).toEqual([user(1), { ...assistant(2, 'Hello!'), reasoning }, { seq: 3, role: 'tool', tool_name: 'read_file', arguments: '{"path":"hello.txt"}' }])
+    expect(h.controller.getSnapshot().messages).toEqual([user(1), { ...assistant(2, 'Hello!', true), reasoning }, { seq: 3, role: 'tool', tool_name: 'read_file', arguments: '{"path":"hello.txt"}' }])
     h.event('message_chunk', 1, 'replay')
     expect(h.controller.getSnapshot().messages[0]).toEqual(user(1))
     h.controller.dispose()
@@ -107,7 +107,7 @@ describe('conversation synchronization', () => {
     h.event('message_chunk', 4, 'new')
     pending.resolve(page([user(1), assistant(2, 'complete'), user(3)]))
     await syncing
-    expect(h.controller.getSnapshot().messages).toEqual([user(1), assistant(2, 'complete'), user(3), assistant(4, 'new')])
+    expect(h.controller.getSnapshot().messages).toEqual([user(1), assistant(2, 'complete'), user(3), assistant(4, 'new', false)])
     expect(h.transport.messages).toHaveBeenLastCalledWith(1, 4, expect.any(AbortSignal))
     h.controller.dispose()
   })
@@ -121,7 +121,7 @@ describe('conversation synchronization', () => {
     h.event('message_chunk', 2, 'still visible')
     pending.reject(new Error('offline'))
     await syncing
-    expect(h.controller.getSnapshot().messages).toEqual([user(1), assistant(2, 'still visible')])
+    expect(h.controller.getSnapshot().messages).toEqual([user(1), assistant(2, 'still visible', false)])
     h.controller.dispose()
   })
   it('retains a 202 pending user across empty reads and never matches equal old text', async () => {
@@ -137,7 +137,7 @@ describe('conversation synchronization', () => {
     h.event('message_chunk', 4, 'answer')
     await waitFor(() => expect(h.controller.getSnapshot().pending).toBeNull())
     expect(h.controller.getSnapshot().messages.filter(m => m.role === 'user')).toHaveLength(2)
-    expect(h.controller.getSnapshot().messages.at(-1)).toEqual(assistant(4, 'answer'))
+    expect(h.controller.getSnapshot().messages.at(-1)).toEqual(assistant(4, 'answer', false))
     expect(h.transport.chat).toHaveBeenCalledOnce()
     h.controller.dispose()
   })
@@ -353,7 +353,7 @@ it.each(['failed', 'cancelled'] as const)('resumes %s once, preserves history an
   oldCallback(event); callback(event)
   expect(h.controller.getSnapshot().messages).toEqual([user(1)])
   callback({ ...event, resume_time: 1, content: 'new' })
-  await waitFor(() => expect(h.controller.getSnapshot().messages.at(-1)).toEqual(assistant(2, 'new')))
+  await waitFor(() => expect(h.controller.getSnapshot().messages.at(-1)).toEqual(assistant(2, 'new', false)))
   expect(h.transport.stream).toHaveBeenLastCalledWith(10, expect.any(Function), expect.any(AbortSignal), 1)
   expect(h.transport.chat).not.toHaveBeenCalled()
   h.controller.dispose()

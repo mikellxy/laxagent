@@ -15,7 +15,7 @@ describe('question cards', () => {
   it('uses tabs, preserves drafts, allows custom answers and submits skipped questions', async () => {
     const user = userEvent.setup(), submit = vi.fn()
     render(<QuestionCard pending={pending} submitting={false} onSubmit={submit} />)
-    expect(screen.queryByRole('button', { name: '提交答案' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /^提交$/ })).not.toBeInTheDocument()
     await user.click(screen.getByRole('button', { name: 'PostgreSQL' }))
     expect(screen.getByText('已回答 1/2 · 第 1/2 页')).toBeInTheDocument()
     await user.type(screen.getByRole('textbox'), '自己的方案')
@@ -24,7 +24,7 @@ describe('question cards', () => {
     await user.click(screen.getByRole('tab', { name: '问题 1 ✓' }))
     expect(screen.getByRole('textbox')).toHaveValue('自己的方案')
     await user.click(screen.getByRole('button', { name: '下一题' }))
-    await user.click(screen.getByRole('button', { name: '提交答案' }))
+    await user.click(screen.getByRole('button', { name: /^提交$/ }))
     expect(submit).toHaveBeenCalledExactlyOnceWith([
       { question: '选择数据库？', answer: '自己的方案' }, { question: '补充说明？', answer: '用户未回答' },
     ])

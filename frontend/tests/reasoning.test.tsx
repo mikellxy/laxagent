@@ -222,3 +222,21 @@ it('shows working after an accepted user message before its durable row or SSE a
   expect(user.compareDocumentPosition(work) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
   expect(screen.getAllByLabelText('工作过程')).toHaveLength(1)
 })
+
+it('fetches workspace references only at message_end, and reloads completed history without waiting for run end', async () => {
+  const read = vi.spyOn(api, 'workspacePreview').mockResolvedValue({ path: 'code.py', name: 'code.py', size: 5,
+    kind: 'text', language: 'python', text: 'hello', truncated: false, can_expand: true })
+  const h = setup([{ seq: 1, role: 'user', content: 'question' }])
+  await waitFor(() => expect(api.stream).toHaveBeenCalled())
+  await h.event('message_chunk', 2, '[源码](workspace:/code')
+  await h.event('message_chunk', 2, '.py)')
+  expect(screen.getByText('回答完成后加载文件')).toBeVisible()
+  expect(read).not.toHaveBeenCalled()
+  await h.event('message_end', 2, { text: '[源码](workspace:/code.py)' })
+  expect(await screen.findByText('hello')).toBeVisible()
+  expect(read).toHaveBeenCalledTimes(1)
+  await h.event('message_chunk', 3, '[未完成](workspace:/unfinished.py)')
+  expect(read).toHaveBeenCalledTimes(1)
+  await h.event('reasoning_chunk', 4, '[思考](workspace:/reasoning.py)')
+  expect(read).toHaveBeenCalledTimes(1)
+})

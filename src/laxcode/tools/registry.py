@@ -11,6 +11,7 @@ from laxcode.tools.builtin.skills import LoadSkillArgs, RunSkillScriptsArgs, loa
 from laxcode.tools.builtin.edit_file import EditFileArgs, edit_file
 from laxcode.tools.builtin.read_file import ReadFileArgs, read_file
 from laxcode.tools.builtin.write_file import WriteFileArgs, write_file
+from laxcode.tools.builtin.list_written_files import ListWrittenFilesArgs, list_written_files
 from laxcode.tools.builtin.memory import (
     GetMemoryDetailsArgs, ListMemoryAbstractsArgs, WriteMemoryArgs,
     get_memory_details, list_memory_abstracts, write_memory,
@@ -24,6 +25,7 @@ class Tool:
 
 
 TOOLS = {
+    "list_written_files": Tool(ListWrittenFilesArgs, list_written_files),
     "ask_user_question": Tool(AskUserQuestionArgs, ask_user_question),
     "read_file": Tool(ReadFileArgs, read_file),
     "write_file": Tool(WriteFileArgs, write_file),
@@ -70,6 +72,15 @@ def _strict_schema(value):
 
 def _all_tool_definitions() -> list[dict]:
     return [{
+        "type": "function", "name": "list_written_files", "strict": True,
+        "description": (
+            "List candidate workspace paths recorded by successful write_file/edit_file calls in this run, "
+            "including unchanged writes/edits. Ordered and deduplicated; no disk scan or diff. "
+            "Other tools' outputs and uncertain writes may be absent; files may since have changed or disappeared. "
+            "Use when helpful to select key files to explain. You may reference other known workspace files too."
+        ),
+        "parameters": ListWrittenFilesArgs.model_json_schema(),
+    }, {
         "type": "function", "name": "ask_user_question", "strict": True,
         "description": (
             "Ask the user 1–5 questions when their input is needed before continuing. "

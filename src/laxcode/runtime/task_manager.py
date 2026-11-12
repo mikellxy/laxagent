@@ -36,7 +36,6 @@ class TaskManager:
         self.cancellation = CancellationBus(context.events)
         self.finalizer = RunFinalizer(context.repository, context.events, self.cancellation)
         self.executions: dict[tuple[int, int], LocalExecution] = {}
-        self.submissions: set[asyncio.Task] = set()
         self.controls: set[asyncio.Task] = set()
         self.closing = False
         self._listener = None
@@ -51,13 +50,7 @@ class TaskManager:
             logger.warning("Background task failed (%s)", type(task.exception()).__name__)
 
     async def submit(self, **values):
-        if self.closing:
-            raise DatabaseError("Agent runtime is shutting down")
-        task = asyncio.create_task(self._submit(values), name="submit-run")
-        self.submissions.add(task)
-        task.add_done_callback(self.submissions.discard)
-        task.add_done_callback(self.consume)
-        return await asyncio.shield(task)
+        return await self.control(self._submit, values)
 
     async def _submit(self, values):
         run = await self.context.repository.create_run(**values)
@@ -143,6 +136,7 @@ class TaskManager:
         return run
 
     async def control(self, operation, *args):
+        """Own API operations through request cancellation and drain them before shutdown."""
         if self.closing:
             raise DatabaseError("Agent runtime is shutting down")
         task = asyncio.create_task(operation(*args), name="run-control")
@@ -215,8 +209,6 @@ class TaskManager:
 
     async def close(self):
         self.closing = True
-        if self.submissions:
-            await asyncio.gather(*self.submissions, return_exceptions=True)
         if self.controls:
             await asyncio.gather(*self.controls, return_exceptions=True)
         await self._drain_cancel_jobs()

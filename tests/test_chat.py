@@ -261,9 +261,9 @@ async def test_cancelled_http_submission_is_still_owned(chat_api, monkeypatch):
     request.cancel()
     with pytest.raises(asyncio.CancelledError):
         await request
-    assert len(h.manager.submissions) == 1
+    assert len(h.manager.controls) == 1
     release.set()
-    await asyncio.gather(*h.manager.submissions)
+    await asyncio.gather(*h.manager.controls)
     async with h.context.repository.db.transaction() as tx:
         run_id = await tx.scalar(select(Run.id))
     assert (await wait_run(h, run_id))["status"] == "success"
@@ -332,7 +332,8 @@ async def test_failed_terminal_commit_does_not_emit_success(chat_api, monkeypatc
 
 
 @pytest.mark.anyio
-async def test_shutdown_during_submission_marks_it_failed(chat_api, monkeypatch):
+@pytest.mark.parametrize('request_cancelled', [False, True])
+async def test_shutdown_during_submission_marks_it_failed(chat_api, monkeypatch, request_cancelled):
     h = chat_api
     entered, release = asyncio.Event(), asyncio.Event()
     create = h.context.events.create_run
@@ -343,12 +344,18 @@ async def test_shutdown_during_submission_marks_it_failed(chat_api, monkeypatch)
     monkeypatch.setattr(h.context.events, "create_run", blocked_create)
     request = asyncio.create_task(h.api.post(chat_path(h), json=payload()))
     await asyncio.wait_for(entered.wait(), 2)
+    if request_cancelled:
+        request.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await request
     closing = asyncio.create_task(h.manager.close())
     await asyncio.sleep(0)
+    assert not closing.done() and len(h.manager.controls) == 1
     release.set()
-    assert (await request).status_code == 503
+    if not request_cancelled:
+        assert (await request).status_code == 503
     await closing
     async with h.context.repository.db.transaction() as tx:
         run = await tx.scalar(select(Run))
         assert run.status == "failed"
-    assert not h.captured and not h.manager.executions
+    assert not h.captured and not h.manager.executions and not h.manager.controls

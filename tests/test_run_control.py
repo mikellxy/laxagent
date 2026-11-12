@@ -118,7 +118,8 @@ async def test_delete_waits_for_submission_and_survives_request_disconnect(chat_
     await asyncio.wait_for(entered.wait(), 2)
     deleting = asyncio.create_task(h.api.delete(f"/api/v1/sessions/{h.conversation['session_id']}"))
     async with asyncio.timeout(2):
-        while not h.manager.controls:
+        # Submission is still blocked; wait until deletion is also owned.
+        while len(h.manager.controls) < 2:
             await asyncio.sleep(0)
     deleting.cancel()
     with pytest.raises(asyncio.CancelledError):

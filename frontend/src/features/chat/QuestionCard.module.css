@@ -4,15 +4,18 @@
 .progress { display: flex; align-items: center; gap: 8px; margin-left: auto; color: var(--muted); font-size: 12px; white-space: nowrap; }
 .tabs, .choices, .actions { display: flex; flex-wrap: wrap; gap: 6px; }
 .choices { flex-direction: column; align-items: flex-start; }
-.actions { justify-content: flex-end; align-items: center; }
+.actions { flex: none; align-items: center; }
+.composer { display: flex; align-items: center; gap: 8px; margin-top: 8px; padding: 4px 6px 4px 10px; border: 1px solid #d9ddd2; border-radius: 9px; background: white; }
+.pen { flex: none; color: var(--muted); }
+.composer input { flex: 1; min-width: 60px; border: none; outline: none; background: transparent; font: inherit; padding: 4px 2px; }
+.card button.primary { background: #8caa76; border-color: #8caa76; color: white; }
 .card button { border-radius: 6px; padding: 3px 7px; border: 1px solid #d9ddd2; }
 .card .close { display: grid; place-items: center; padding: 3px; }
 .card button[aria-selected=true], .card button[aria-pressed=true] { background: #e3ebdc; border-color: #8caa76; }
 .card button:disabled { opacity: .6; cursor: wait; }
-.card button:focus-visible, .card textarea:focus-visible { outline: 2px solid #71895f; outline-offset: 2px; }
+.card button:focus-visible, .composer:focus-within { outline: 2px solid #71895f; outline-offset: 2px; }
 .question { margin: 8px 0; font-weight: 500; white-space: pre-wrap; }
 .choices button { max-width: 100%; text-align: left; white-space: pre-wrap; }
-.card textarea { display: block; width: 100%; box-sizing: border-box; resize: vertical; margin: 8px 0; padding: 6px; border: 1px solid #d9ddd2; border-radius: 7px; background: white; font: inherit; }
 .answers { margin-bottom: 14px; white-space: pre-wrap; }
 .answers > div + div { border-top: 1px solid #e9e9e4; margin-top: 12px; padding-top: 12px; }
 .answers p { color: var(--muted); margin: 0 0 5px; font-size: 13px; }

@@ -141,7 +141,7 @@ class TaskManager:
         try:
             self._dispatch(run)
         except BaseException:
-            await self.finalizer.fail(run.id, run.resume_time, make_run_error("run_submission_failed"))
+            await self.finalizer_v2.finish_submission_failed(run.id, run.resume_time)
             raise
         return run
 

@@ -67,16 +67,16 @@ class TaskManager:
         try:
             await self.context.events.create_run(run.id)
         except BaseException:
-            await self.finalizer_v2.finish_stream_creation_failed(run.id, run.resume_time)
+            await self.finalizer_v2.finish_submission_failed(run.id, run.resume_time)
             raise
         if self.closing:
-            await self.finalizer_v2.finish_submission_closed(run.id, run.resume_time)
+            await self.finalizer_v2.finish_submission_failed(run.id, run.resume_time)
             raise DatabaseError("Agent runtime is shutting down")
         try:
             self._dispatch(run)
             return run
         except BaseException:
-            await self.finalizer_v2.finish_dispatch_failed(run.id, run.resume_time)
+            await self.finalizer_v2.finish_submission_failed(run.id, run.resume_time)
             raise
 
     def _remove_execution(self, execution):
@@ -112,7 +112,7 @@ class TaskManager:
                 return
         except asyncio.CancelledError:
             if not execution.user_cancelled:
-                await self.finalizer.fail(*execution.key, make_run_error("execution_cancelled"), interrupted=True)
+                await self.finalizer_v2.finish_startup_interrupted(*execution.key)
             raise
         except Exception as exc:
             await self.finalizer.fail(*execution.key, classify_run_error(exc))

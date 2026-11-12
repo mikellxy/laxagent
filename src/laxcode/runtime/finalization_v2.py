@@ -1,10 +1,11 @@
 """Scenario-specific run finalization, migrated one caller at a time."""
 import asyncio
 import logging
+from collections.abc import Awaitable, Callable
 
 import anyio
 
-from laxcode.run_errors import make_run_error
+from laxcode.run_errors import RunError, make_run_error
 from laxcode.runtime.cancellation import CancellationBus, CancelResult, RunSnapshot
 from laxcode.runtime.events import EventStoreError, make_event
 from laxcode.runtime.finalization import drain
@@ -20,31 +21,58 @@ class RunFinalizerV2:
         self.events = events
         self.cancellation = cancellation if cancellation is not None else CancellationBus(events)
 
-    async def finish_stream_creation_failed(self, run_id: int, resume_time: int):
-        """Finish a submission whose event stream could not be prepared."""
-        return await self._finish_submission_failure(run_id, resume_time)
-
-    async def finish_submission_closed(self, run_id: int, resume_time: int):
-        """Finish a submission rejected by shutdown before dispatch."""
-        return await self._finish_submission_failure(run_id, resume_time)
-
-    async def finish_dispatch_failed(self, run_id: int, resume_time: int):
-        """Finish a submission whose local dispatch raised."""
-        return await self._finish_submission_failure(run_id, resume_time)
-
-    async def _finish_submission_failure(self, run_id: int, resume_time: int):
-        # These submission failures share one outcome, independent of their trigger.
+    async def finish_submission_failed(self, run_id: int, resume_time: int):
+        """Finish a submission rejected during stream creation, shutdown, or dispatch."""
         # Bound cleanup and preserve the original submission exception on failure.
         try:
-            return await drain(asyncio.create_task(self._commit_submission_failure(run_id, resume_time)))
+            return await drain(asyncio.create_task(self._commit_failure(
+                run_id, resume_time, error=make_run_error("run_submission_failed"),
+                publish_events=self._submission_failure_events,
+            )))
         except Exception:
             logger.error("Could not persist failed run %s", run_id)
 
-    async def _commit_submission_failure(self, run_id: int, resume_time: int) -> Run:
+    async def finish_startup_interrupted(self, run_id: int, resume_time: int):
+        """Finish a startup check interrupted independently of user cancellation."""
+        try:
+            return await drain(asyncio.create_task(self._commit_failure(
+                run_id, resume_time, error=make_run_error("execution_cancelled"),
+                publish_events=self._startup_interrupted_events,
+            )))
+        except Exception:
+            logger.error("Could not persist interrupted run %s", run_id)
+
+    async def _submission_failure_events(self, current: Run):
+        try:
+            await self.events.publish(make_event(
+                current.id, "error", {}, error=current.error, resume_time=current.resume_time,
+            ))
+            await self.events.publish(make_event(
+                current.id, "sse_end", {"status": "failed"},
+                error=current.error, resume_time=current.resume_time,
+            ))
+        except EventStoreError:
+            logger.warning("Could not publish terminal SSE for run %s", current.id)
+
+    async def _startup_interrupted_events(self, current: Run):
+        # Preserve interruption's failed DB state and cancelled SSE contract.
+        try:
+            await self.events.publish(make_event(
+                current.id, "sse_end", {"status": "cancelled"},
+                error=current.error, resume_time=current.resume_time,
+            ))
+        except EventStoreError:
+            logger.warning("Could not publish terminal SSE for run %s", current.id)
+
+    async def _commit_failure(
+        self, run_id: int, resume_time: int, *,
+        error: RunError, publish_events: Callable[[Run], Awaitable[None]],
+    ) -> Run:
+        """Commit a failure, publish its scenario's events, and acknowledge cancellation."""
         try:
             with anyio.fail_after(5):
                 current, changed = await self.repository.finish_run(
-                    run_id, resume_time=resume_time, error=make_run_error("run_submission_failed"),
+                    run_id, resume_time=resume_time, error=error,
                 )
         except Exception as exc:
             # Storage failure can prevent reading a concurrent cancellation intent.
@@ -59,7 +87,7 @@ class RunFinalizerV2:
         try:
             if changed:
                 with anyio.move_on_after(5) as scope:
-                    await self._submission_failure_events(current)
+                    await publish_events(current)
                 if scope.cancelled_caught:
                     logger.warning("Terminal SSE timed out for run %s", run_id)
         finally:
@@ -69,18 +97,6 @@ class RunFinalizerV2:
                     run_id=run_id, resume_time=resume_time, run=RunSnapshot.model_validate(current),
                 ))
         return current
-
-    async def _submission_failure_events(self, current: Run):
-        try:
-            await self.events.publish(make_event(
-                current.id, "error", {}, error=current.error, resume_time=current.resume_time,
-            ))
-            await self.events.publish(make_event(
-                current.id, "sse_end", {"status": "failed"},
-                error=current.error, resume_time=current.resume_time,
-            ))
-        except EventStoreError:
-            logger.warning("Could not publish terminal SSE for run %s", current.id)
 
     async def _reply(self, result: CancelResult):
         try:

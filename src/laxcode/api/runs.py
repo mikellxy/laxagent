@@ -23,10 +23,16 @@ async def chat(session_id: ResourceId, body: ChatRequest, request: Request,
     manager = getattr(request.app.state, "task_manager", None)
     if manager is None:
         raise DatabaseError("Agent runtime is not initialized")
-    run = await manager.submit(user_id=user_id, session_id=session_id, user_query=body.user_query,
-                               model=body.model, context_limit=model.limit.context, output_limit=model.limit.output,
-                               appendix=[item.model_dump() for item in body.appendix],
-                               supports_multimodal=model.supports_multimodal)
+    run = await manager.submit(
+        user_id=user_id,
+        session_id=session_id,
+        user_query=body.user_query,
+        model=body.model,
+        context_limit=model.limit.context,
+        output_limit=model.limit.output,
+        appendix=[item.model_dump() for item in body.appendix],
+        supports_multimodal=model.supports_multimodal,
+    )
     return {"run_id": run.id, "session_id": run.session_id, "status": "waiting", "resume_time": run.resume_time}
 
 

@@ -6,6 +6,7 @@ from laxcode.run_errors import make_run_error
 from laxcode.runtime.cancellation import CancellationBus, CancelCommand, RunSnapshot
 from laxcode.runtime.events import EventStoreError
 from laxcode.runtime.finalization import RunFinalizer
+from laxcode.runtime.finalization_v2 import RunFinalizerV2
 from laxcode.runtime.runner import classify_run_error, run_agent
 from laxcode.storage.database import DatabaseError
 from laxcode.storage.models import Run
@@ -36,6 +37,7 @@ class TaskManager:
         self.cancel_timeout = cancel_timeout
         self.cancellation = CancellationBus(context.events)
         self.finalizer = RunFinalizer(context.repository, context.events, self.cancellation)
+        self.finalizer_v2 = RunFinalizerV2(context.repository, context.events, self.cancellation)
         self.executions: dict[tuple[int, int], LocalExecution] = {}
         self.submissions: set[asyncio.Task] = set()
         self.controls: set[asyncio.Task] = set()
@@ -64,12 +66,17 @@ class TaskManager:
         run = await self.context.repository.create_run(**values)
         try:
             await self.context.events.create_run(run.id)
-            if self.closing:
-                raise DatabaseError("Agent runtime is shutting down")
+        except BaseException:
+            await self.finalizer_v2.finish_stream_creation_failed(run.id, run.resume_time)
+            raise
+        if self.closing:
+            await self.finalizer_v2.finish_submission_closed(run.id, run.resume_time)
+            raise DatabaseError("Agent runtime is shutting down")
+        try:
             self._dispatch(run)
             return run
         except BaseException:
-            await self.finalizer.fail(run.id, run.resume_time, make_run_error("run_submission_failed"))
+            await self.finalizer_v2.finish_dispatch_failed(run.id, run.resume_time)
             raise
 
     def _remove_execution(self, execution):

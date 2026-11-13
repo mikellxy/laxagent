@@ -9,7 +9,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from laxagent.tools.context import ToolContext
 from laxagent.tools.errors import ToolError
-from laxagent.tools.file_scope import file_scope
+from laxagent.tools.file_scope import FileSkillName, file_scope
 
 MAX_LINES = 2000
 MAX_BYTES = 50 * 1024
@@ -18,7 +18,7 @@ MAX_BYTES = 50 * 1024
 class ReadFileArgs(BaseModel):
     model_config = ConfigDict(strict=True, extra="forbid")
 
-    skill_name: str | None = Field(default=None, description="Skill name to read; JSON null selects workspace; the string 'null' is invalid and the operation will be rejected.")
+    skill_name: FileSkillName = Field(default=None, description="Skill name to read; Omitting it, JSON null, or the string 'null' selects workspace.")
 
     path: str = Field(min_length=1, description="File path relative to the selected workspace or skill; no symlinks or '..'.")
     start_line_no: int = Field(ge=1, description="First line to read, 1-based.")

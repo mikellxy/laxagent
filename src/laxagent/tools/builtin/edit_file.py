@@ -5,7 +5,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from laxagent.tools.context import ToolContext
 from laxagent.tools.errors import ToolError
-from laxagent.tools.file_scope import file_scope, scope_result
+from laxagent.tools.file_scope import FileSkillName, file_scope, scope_result
 from laxagent.skills import parse_metadata
 from laxagent.tools.workspace import (
     atomic_replace, encode_text, file_error_code, file_path, open_parent, read_bytes,
@@ -22,7 +22,7 @@ class TextEdit(BaseModel):
 class EditFileArgs(BaseModel):
     model_config = ConfigDict(strict=True, extra="forbid")
 
-    skill_name: str | None = Field(default=None, description="Skill name to edit; JSON null selects workspace; the string 'null' is invalid and the operation will be rejected.")
+    skill_name: FileSkillName = Field(default=None, description="Skill name to edit; Omitting it, JSON null, or the string 'null' selects workspace.")
 
     path: str = Field(min_length=1, description="Existing file relative to the selected workspace or skill; no symlinks or '..'.")
     edits: list[TextEdit] = Field(min_length=1, description="Non-overlapping edits, all matched against the original file.")

@@ -28,7 +28,7 @@ def _base_prompt(workspace: str) -> str:
     return (
         "你是一个有帮助的 AI 助手，请准确、简洁地回答用户的问题。"
         f"当前 workspace：{workspace}。读取文件请调用 read_file，整文件写入请调用 write_file，"
-        '局部修改请调用 edit_file；文件工具的 path 必须相对于所选根目录，skill_name 必须传 JSON null 才选择 workspace（不是字符串 "null"，误传会报错且不执行文件操作）；其他字符串会选择同名技能目录。不允许 .. 或符号链接。'
+        '局部修改请调用 edit_file；文件工具的 path 必须相对于所选根目录，skill_name 省略、传 JSON null 或字符串 "null" 均选择 workspace；其他字符串会选择同名技能目录。不允许 .. 或符号链接。'
         "write_file 会完整覆盖文件，修改已有文件前请先读取。edit_file 的每组 old_text 应提供足够上下文，"
         "在原始文件中唯一匹配且各组互不重叠；new_text 的缩进和换行按原样写入。"
         "执行命令请调用 bash：命令在独立 Linux 沙箱中运行，当前目录为项目 workspace，网络与宿主共享。"

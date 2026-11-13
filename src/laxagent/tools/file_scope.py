@@ -1,18 +1,18 @@
 """Resolve a file-tool scope without exposing arbitrary filesystem roots."""
 
 from contextlib import contextmanager
+from typing import Annotated
+
+from pydantic import AfterValidator
 
 from laxagent.skills import file_tree, skill_directory
 from laxagent.tools.context import ToolContext
-from laxagent.tools.errors import ToolError
+
+FileSkillName = Annotated[str | None, AfterValidator(lambda value: None if value == "null" else value)]
 
 
 @contextmanager
 def file_scope(context: ToolContext, skill_name: str | None, *, create=False):
-    # A common model mistake must not silently create a skill directory and
-    # report a successful workspace deliverable. Reject before touching disk.
-    if skill_name == "null":
-        raise ToolError("INVALID_FILE_SCOPE")
     if skill_name is None:
         yield context.workspace
     else:

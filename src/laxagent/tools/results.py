@@ -12,7 +12,6 @@ ERROR_GUIDANCE = {
     "SEARCH_UPSTREAM_FAILED": "联网搜索服务返回错误，未获得搜索结果，请稍后再试。",
     "SEARCH_INVALID_RESPONSE": "联网搜索返回格式异常，不能将其视为有效搜索结果。",
     "SEARCH_RESPONSE_TOO_LARGE": "联网搜索响应过大，请减少结果条数或缩小查询范围。",
-    "INVALID_FILE_SCOPE": 'skill_name 不能是字符串 "null"。本次未执行文件操作。若操作 workspace 文件，请使用 JSON null（例如 "skill_name": null）后重试；若操作技能文件，请传真实技能名。',
     "INVALID_SKILL_NAME": "技能名称须为不超过 64 字符的小写字母、数字和单连字符，且不能以连字符开头或结尾。",
     "INVALID_SKILL_METADATA": "SKILL.md 元数据无效或缺失，请使用 skill-creator 指导修复；name 必须与技能目录名一致。",
     "INVALID_SKILL_FILE": "技能只能包含普通目录和文件，不允许符号链接、硬链接或特殊文件。",

@@ -14,7 +14,6 @@ from laxagent.skills import builtin_snapshots, initialize_skills, parse_metadata
 from laxagent.tools.builtin.skills import LoadSkillArgs, load_skill
 from laxagent.tools.executor import execute_tool
 from laxagent.tools.registry import tool_definitions
-from laxagent.tools.results import format_result
 from tool_helpers import tool_context
 from test_chat import chat_api, chat_path, payload, wait_run
 from model_helpers import ModelStream, client_for, completed
@@ -44,30 +43,35 @@ async def write(context, path, content, name="example", **extra):
 
 
 @pytest.mark.anyio
-async def test_string_null_scope_rejects_without_side_effects_and_json_null_recovers(skill_context):
+@pytest.mark.parametrize("scope", [{}, {"skill_name": None}, {"skill_name": "null"}])
+async def test_null_scope_uses_workspace(skill_context, scope):
     context = skill_context
-    root = layout.get_skills_dir(context.user_id) / "null"
-    result = await call(context, "write_file", skill_name="null", path="page.html", content="new")
-    assert result == {"error_code": "INVALID_FILE_SCOPE", "result": {}}
-    assert '"skill_name": null' in format_result(result)
-    assert not root.exists()
-    assert not (Path(context.workspace) / "page.html").exists()
-    assert context.written_workspace_paths == []
-    # Even leftover files from earlier mistaken calls must not make this scope valid.
-    root.mkdir()
-    (root / "page.html").write_text("old")
-    for tool, args in [
-        ("read_file", {"start_line_no": 1, "start_byte_no": 1, "total_lines": 10}),
-        ("write_file", {"content": "new"}),
-        ("edit_file", {"edits": [{"old_text": "old", "new_text": "new"}]}),
-        ("write_file", {"operation": "delete", "content": None}),
-    ]:
-        assert (await call(context, tool, skill_name="null", path="page.html", **args))["error_code"] == "INVALID_FILE_SCOPE"
-        assert (root / "page.html").read_text() == "old"
-    result = await call(context, "write_file", skill_name=None, path="page.html", content="workspace")
+    workspace = Path(context.workspace)
+    # Workspace SKILL.md is ordinary text, with no skill metadata validation.
+    result = await call(context, "write_file", **scope, path="SKILL.md", content="old")
+    assert result == {"error_code": None, "result": {"path": "SKILL.md", "bytes_written": 3}}
+    assert (workspace / "SKILL.md").read_text() == "old"
+    assert context.written_workspace_paths == ["SKILL.md"]
+
+    context.written_workspace_paths.clear()
+    result = await call(context, "edit_file", **scope, path="SKILL.md",
+                        edits=[{"old_text": "old", "new_text": "new"}])
     assert result["error_code"] is None
-    assert (Path(context.workspace) / "page.html").read_text() == "workspace"
-    assert context.written_workspace_paths == ["page.html"]
+    assert "skill_name" not in result["result"] and "files" not in result["result"]
+    assert (workspace / "SKILL.md").read_text() == "new"
+    assert context.written_workspace_paths == ["SKILL.md"]
+
+    result = await call(context, "read_file", **scope, path="SKILL.md",
+                        start_line_no=1, start_byte_no=1, total_lines=10)
+    assert result["error_code"] is None
+    assert result["result"]["text"] == "new"
+    assert not (layout.get_skills_dir(context.user_id) / "null").exists()
+
+    # Selecting workspace preserves the existing prohibition on workspace deletion.
+    (workspace / "page.html").write_text("keep")
+    result = await call(context, "write_file", **scope, path="page.html", operation="delete", content=None)
+    assert result["error_code"] == "INVALID_ARGUMENTS"
+    assert (workspace / "page.html").read_text() == "keep"
 
 
 @pytest.mark.parametrize("content", [

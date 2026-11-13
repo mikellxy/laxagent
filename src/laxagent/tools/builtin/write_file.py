@@ -6,14 +6,14 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 from laxagent.tools.context import ToolContext
 from laxagent.tools.errors import ToolError
 from laxagent.tools.workspace import atomic_replace, encode_text, file_error_code, file_path, file_mode, open_parent
-from laxagent.tools.file_scope import file_scope, scope_result
+from laxagent.tools.file_scope import FileSkillName, file_scope, scope_result
 from laxagent.skills import parse_metadata
 
 
 class WriteFileArgs(BaseModel):
     model_config = ConfigDict(strict=True, extra="forbid")
 
-    skill_name: str | None = Field(default=None, description="Skill name to modify; JSON null selects workspace; the string 'null' is invalid and the operation will be rejected.")
+    skill_name: FileSkillName = Field(default=None, description="Skill name to modify; Omitting it, JSON null, or the string 'null' selects workspace.")
     operation: Literal["write", "delete"] = Field(default="write", description="Delete is only allowed for skill files.")
 
     path: str = Field(min_length=1, description="File path relative to the selected workspace or skill; no symlinks or '..'.")

@@ -15,6 +15,10 @@ from laxcode.tools.registry import tool_definitions
 from laxcode.tools.results import format_result
 
 
+WEB_SEARCH_REMINDER_THRESHOLD = 20
+WEB_SEARCH_LIMIT = 30
+
+
 async def call_model(state: AgentState, runtime: Runtime[AgentContext]):
     # Reaching the model means the previous tool turn has been accounted for.
     # Do not mutate the checkpoint input; persist this reset with the new response.
@@ -90,18 +94,33 @@ async def tool_node(state: AgentState, runtime: Runtime[AgentContext]):
         web_search=runtime.context.web_search,
     )
     call = state["pending_tool_calls"][0]
+    # Commit the history with this tool's result, never mutate the input checkpoint.
+    # Resumed unknown calls consume one attempt too, without re-executing them.
+    tool_call_history = [*state.get("tool_call_history", []), call["name"]]
+    search_count = tool_call_history.count("web_search") if call["name"] == "web_search" else 0
     msg_seq = next_seq
     details = {"tool_call_id": call["call_id"], "tool_name": call["name"]}
     await runtime.context.events.publish(make_event(
         state["run_id"], "tool_start", {**details, "arguments": call["arguments"]},
         role="tool", msg_seq=msg_seq, resume_time=runtime.context.resume_time,
     ))
-    if state.get("tool_node_state_uncertain"):
+    if search_count >= WEB_SEARCH_LIMIT:
+        result = {"error_code": "SEARCH_LIMIT_REACHED", "result": {
+            "call_count": search_count, "limit": WEB_SEARCH_LIMIT,
+        }}
+    elif state.get("tool_node_state_uncertain"):
         result = {"error_code": "TOOL_STATE_UNCERTAIN", "result": {}}
     else:
         result = await execute_tool(call["name"], call["arguments"],
                                     context=tool_context, user_configs=state.get("user_configs"))
     content = format_result(result)
+    if WEB_SEARCH_REMINDER_THRESHOLD <= search_count < WEB_SEARCH_LIMIT:
+        content = (
+            f"本轮 ReAct 循环已调用 web_search {search_count} 次（含失败及恢复时的未知调用）。"
+            "次数限制仅适用于本轮执行，不是整个会话的累计限制；同一轮暂停或恢复仍沿用计数，新一轮执行重新计数。"
+            f"请收敛联网搜索流程，优先基于已有来源整理答案，仅补充必要证据；"
+            f"第 {WEB_SEARCH_LIMIT} 次起将停止联网搜索。\n" + content
+        )
     metadata = {**details, "tool_call": call}
     next_seq, _ = await runtime.context.repository.append_message(
         user_id=state["user_id"], project_id=state["project_id"], session_id=state["session_id"],
@@ -114,6 +133,6 @@ async def tool_node(state: AgentState, runtime: Runtime[AgentContext]):
     message = {"role": "tool", "content": content, **metadata}
     messages.append(message)
     model_input = append_tool_message(model_input, message)
-    return {"messages": messages, "next_msg_seq": next_seq,
+    return {"messages": messages, "next_msg_seq": next_seq, "tool_call_history": tool_call_history,
             "model_input": model_input, "pending_tool_calls": state["pending_tool_calls"][1:], "loaded_skills": tool_context.loaded_skills,
             "written_workspace_paths": tool_context.written_workspace_paths}

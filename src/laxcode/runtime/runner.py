@@ -53,7 +53,7 @@ async def run_agent(graph, run_id: int, context: AgentContext, *,
                 "run_id": run.id, "user_query": run.user_query, "model": run.model,
                 "appendix": run.appendix or [],
                 "messages": [], "model_input": [], "pending_tool_calls": [],
-                "written_workspace_paths": [],
+                "written_workspace_paths": [], "tool_call_history": [],
                 "next_msg_seq": session.next_msg_seq, "tool_node_state_uncertain": False,
             }
         # LangGraph rejects -1; infinity disables its step cutoff without a finite substitute.

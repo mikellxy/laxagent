@@ -11,6 +11,7 @@ class Message(TypedDict):
 
 
 class AgentState(TypedDict):
+    tool_call_history: NotRequired[list[str]]
     written_workspace_paths: NotRequired[list[str]]
     loaded_skills: NotRequired[dict[str, dict]]
     tool_node_state_uncertain: NotRequired[bool]

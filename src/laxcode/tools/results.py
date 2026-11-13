@@ -1,6 +1,7 @@
 import json
 
 ERROR_GUIDANCE = {
+    "SEARCH_LIMIT_REACHED": "本轮 ReAct 循环的联网搜索已达到调用上限，本次未请求搜索服务。此限制仅适用于本轮执行，不是整个会话的累计限制；同一轮暂停或恢复仍沿用计数，新一轮执行重新计数。请在本轮停止调用 web_search，基于已有来源完成回答，并说明仍未确认的信息。",
     "SEARCH_AUTH_FAILED": "联网搜索鉴权失败，请由管理员检查服务端搜索 Key 和服务权限；不要在聊天中索取密钥。",
     "SEARCH_RATE_LIMITED": "联网搜索受到限流，请稍后再试，避免连续重复请求。",
     "SEARCH_QUOTA_EXCEEDED": "联网搜索额度不足或付费状态不可用，请由管理员检查搜索账户。",

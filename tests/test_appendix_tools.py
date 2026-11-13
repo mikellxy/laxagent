@@ -15,7 +15,7 @@ from pptx.util import Inches
 from pypdf import PdfWriter
 from sqlalchemy import update
 
-from laxagent.appendices import materialize_input
+from laxagent.appendices import DOCUMENT_TYPES, IMAGE_TYPES, materialize_input
 from laxagent.appendix_text import MAX_TEXT_BYTES, extract_text
 from laxagent.config import AppConfig
 from laxagent.storage.database import DatabaseError
@@ -38,7 +38,8 @@ def row(tmp_path, name='note.txt', data=b'attachment text', identifier=1):
     path = tmp_path / name
     path.write_bytes(data)
     return SimpleNamespace(id=identifier, name=name, path=str(path), size_bytes=len(data),
-                           media_type='image/png' if name.endswith('.png') else 'application/pdf')
+                           media_type=(IMAGE_TYPES[Path(name).suffix][1] if Path(name).suffix in IMAGE_TYPES
+                                       else DOCUMENT_TYPES[Path(name).suffix]))
 
 
 @pytest.mark.anyio
@@ -53,6 +54,28 @@ async def test_wire_metadata_latest_user_and_no_history_io():
     assert await materialize_input(result, 'owner', None) == result
     # A non-multimodal main model receives metadata even for its latest message.
     assert (await materialize_input(original[:1], 'owner', None, supports_multimodal=False))[0] == result[0]
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize('extension', [suffix for suffix in DOCUMENT_TYPES if suffix != '.pdf'])
+async def test_other_formats_are_metadata_only_and_ask_rejects_without_io(tmp_path, extension):
+    file = row(tmp_path, 'document' + extension)
+    Path(file.path).unlink()  # Metadata-only input must not even read the original.
+    refs = [{'id': file.id, 'name': file.name}]
+    original = [{'role': 'user', 'content': 'explain', 'appendix': refs}]
+    before = copy.deepcopy(original)
+    repo = SimpleNamespace(get_appendices=AsyncMock(return_value={file.id: file}))
+    wire = await materialize_input(original, 'owner', repo)
+    assert wire == [{'role': 'user', 'content': 'explain\n\n---\n用户附件：\n' + json.dumps(refs, ensure_ascii=False) + '\n---'}]
+    assert original == before
+    captured = []
+    async with client_for(ModelStream([completed()]), captured) as client:
+        image = row(tmp_path, 'image.png', identifier=2)
+        ctx = context(tmp_path, [file, image], client=client, appendix_model='p:vision', appendix_supports_multimodal=True)
+        for ids in ([1], [2, 1]):
+            result = await execute_tool('ask_appendices', json.dumps({'ids': ids, 'question': 'q'}), context=ctx)
+            assert result['error_code'] == 'APPENDIX_FORMAT_UNSUPPORTED'
+    assert not captured
 
 
 @pytest.mark.anyio
@@ -187,7 +210,7 @@ async def test_ask_invalid_arguments(tmp_path, body):
 
 @pytest.mark.anyio
 async def test_ask_size_limit_and_upstream_failure(tmp_path):
-    file = row(tmp_path)
+    file = row(tmp_path, 'note.pdf')
     captured = []
     async with client_for(ModelStream([]), captured, status=400) as client:
         ctx = context(tmp_path, [file], client=client, appendix_model='p:vision', appendix_supports_multimodal=True)
@@ -204,7 +227,7 @@ async def test_ask_cancel_closes_stream_without_result(tmp_path):
     entered = asyncio.Event()
     stream = ModelStream([], wait=entered)
     async with client_for(stream, []) as client:
-        ctx = context(tmp_path, [row(tmp_path)], client=client, appendix_model='p:vision', appendix_supports_multimodal=True)
+        ctx = context(tmp_path, [row(tmp_path, 'note.pdf')], client=client, appendix_model='p:vision', appendix_supports_multimodal=True)
         task = asyncio.create_task(execute_tool('ask_appendices', '{"ids":[1],"question":"q"}', context=ctx))
         await asyncio.wait_for(entered.wait(), 2)
         task.cancel()

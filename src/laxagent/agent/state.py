@@ -1,4 +1,9 @@
-from typing import Literal, NotRequired, TypedDict
+from typing import Annotated, Literal, NotRequired, TypedDict
+
+
+def replace_value(old, new):
+    """Resume commands can replay updates before a failed step advances."""
+    return new
 
 
 class Message(TypedDict):
@@ -14,7 +19,7 @@ class AgentState(TypedDict):
     tool_call_history: NotRequired[list[str]]
     written_workspace_paths: NotRequired[list[str]]
     loaded_skills: NotRequired[dict[str, dict]]
-    tool_node_state_uncertain: NotRequired[bool]
+    tool_node_state_uncertain: NotRequired[Annotated[bool, replace_value]]
     pending_model_response: NotRequired[dict | None]
     user_configs: dict[str, str]
     workspace: str
@@ -24,7 +29,7 @@ class AgentState(TypedDict):
     appendix: NotRequired[list[dict]]
     messages: list[Message]
     model: str
-    appendix_model: NotRequired[str]
+    appendix_model: NotRequired[Annotated[str, replace_value]]
     run_id: int
     next_msg_seq: int
     user_id: str

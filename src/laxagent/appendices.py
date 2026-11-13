@@ -124,10 +124,16 @@ async def enrich_history(items: list[dict], user_id: str, repository) -> None:
     await asyncio.to_thread(enrich)
 
 
+def supports_multimodal_file(media_type: str) -> bool:
+    return media_type.startswith("image/") or media_type == "application/pdf"
+
+
 def appendix_blocks(rows: list) -> list[dict]:
-    """Encode originals only for the lifetime of a model request."""
+    """Encode only image/PDF originals for the lifetime of a model request."""
     blocks = []
     for row in rows:
+        if not supports_multimodal_file(row.media_type):
+            continue
         data_url = f"data:{row.media_type};base64," + base64.b64encode(Path(row.path).read_bytes()).decode("ascii")
         blocks.append({"type": "input_image", "image_url": data_url}
                       if row.media_type.startswith("image/") else
@@ -161,9 +167,9 @@ async def materialize_input(messages: list[dict], user_id: str, repository, *,
                 item = {key: value for key, value in message.items() if key != "appendix"}
                 if message.get("role") == "user" and message.get("appendix"):
                     content = message["content"] + appendix_description(message["appendix"])
-                    item["content"] = ([{"type": "input_text", "text": content}]
-                                       + appendix_blocks([rows[ref["id"]] for ref in refs])
-                                       if index == latest and supports_multimodal else content)
+                    blocks = (appendix_blocks([rows[ref["id"]] for ref in refs])
+                              if index == latest and supports_multimodal else [])
+                    item["content"] = [{"type": "input_text", "text": content}, *blocks] if blocks else content
                 result.append(item)
             return result
         except OSError:

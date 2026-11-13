@@ -101,8 +101,9 @@ async def test_chat_history_model_input_and_checkpoint_references(chat_api):
     h.config.llm.provider_list[0].model_list[0].supports_multimodal = True
     image = await upload(h)
     document = await upload(h, 'notes.txt', b'the answer is 42')
-    references = [image, document]
-    response = await h.api.post(chat_path(h), json=payload(user_query='', appendix=[{**image, 'name': 'forged.png'}, document]))
+    pdf = await upload(h, 'notes.pdf', b'%PDF-original')
+    references = [image, document, pdf]
+    response = await h.api.post(chat_path(h), json=payload(user_query='', appendix=[{**image, 'name': 'forged.png'}, document, pdf]))
     assert response.status_code == 202
     run_id = response.json()['run_id']
     assert (await wait_run(h, run_id))['status'] == 'success'
@@ -112,7 +113,9 @@ async def test_chat_history_model_input_and_checkpoint_references(chat_api):
     assert [part['type'] for part in user_input['content']] == ['input_text', 'input_image', 'input_file']
     assert '用户附件：' in user_input['content'][0]['text']
     assert base64.b64decode(user_input['content'][1]['image_url'].split(',', 1)[1]) == picture()
-    assert user_input['content'][2]['filename'] == 'notes.txt'
+    assert user_input['content'][2]['filename'] == 'notes.pdf'
+    assert base64.b64decode(user_input['content'][2]['file_data'].split(',', 1)[1]) == b'%PDF-original'
+    assert 'notes.txt' in user_input['content'][0]['text']
     assert 'appendix' not in user_input
     snapshot = await h.graph.aget_state({'configurable': {'thread_id': run.thread_id}})
     assert 'base64' not in json.dumps(snapshot.values)

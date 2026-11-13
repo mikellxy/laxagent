@@ -87,20 +87,28 @@ async def test_cancelled_tool_gets_unknown_results_then_new_tools_execute(chat_a
 @pytest.mark.anyio
 async def test_postgres_checkpoint_survives_connection_and_graph_recreation(chat_api, migrated_database):
     h = chat_api
-    async with client_for([ModelStream([]), ModelStream([completed('after restart')])], []) as client:
+    async with client_for([ModelStream([]) for _ in range(4)] + [ModelStream([completed('after restart')])], []) as client:
         h.context.client = client
         async with open_checkpointer(migrated_database) as saver:
             h.manager.graph = build_graph(saver)
             run_id = (await h.api.post(chat_path(h), json=payload())).json()['run_id']
             assert (await wait_run(h, run_id))['status'] == 'failed'
-        async with open_checkpointer(migrated_database) as saver:
-            h.manager.graph = build_graph(saver)
-            assert (await resume(h, run_id)).status_code == 202
-            assert (await wait_run(h, run_id))['status'] == 'success'
-            run = await h.context.repository.get_run(run_id, h.conversation['user_id'])
-            state = await h.manager.graph.aget_state({'configurable': {'thread_id': run.thread_id}})
-            assert not state.next and state.values['messages'][-1]['content'] == 'after restart'
-            await saver.adelete_thread(run.thread_id)
+        for attempt in range(4):
+            async with open_checkpointer(migrated_database) as saver:
+                h.manager.graph = build_graph(saver)
+                assert (await resume(h, run_id, attempt)).status_code == 202
+                ended = await wait_run(h, run_id)
+                assert ended['status'] == ('success' if attempt == 3 else 'failed')
+                assert ended['resume_time'] == attempt + 1
+                if attempt < 3:
+                    assert ended['error_code'] == 'model_stream_ended'
+                run = await h.context.repository.get_run(run_id, h.conversation['user_id'])
+                state = await h.manager.graph.aget_state({'configurable': {'thread_id': run.thread_id}})
+                assert state.values['appendix_model'] == run.model
+                if attempt == 3:
+                    assert not state.next and state.values['messages'][-1]['content'] == 'after restart'
+                    assert state.values['tool_node_state_uncertain'] is False
+                    await saver.adelete_thread(run.thread_id)
 
 
 @pytest.mark.anyio
@@ -210,7 +218,8 @@ async def test_repeated_failed_resumes_increment_once_and_reject_stale_attempts(
         assert (await wait_run(h, run_id))['status'] == 'failed'
         assert (await resume(h, run_id)).status_code == 409
         assert (await resume(h, run_id, 1)).status_code == 202
-        assert (await wait_run(h, run_id))['resume_time'] == 2
+        ended = await wait_run(h, run_id)
+        assert ended['resume_time'] == 2 and ended['status'] == 'success'
         async with h.context.repository.db.transaction() as tx:
             assert len(list(await tx.scalars(select(Run)))) == 1
 

@@ -83,16 +83,17 @@ def _all_tool_definitions() -> list[dict]:
             "Read local text from an uploaded attachment by its ID in 用户附件. "
             "Returns id, name and content, at most 50 KiB with explicit truncation. "
             "Text files return source; PDF/Office extract text without OCR or visual layout. "
-            "Use ask_appendices for images, scans, visual details or focused questions beyond truncated text."
+            "Use ask_appendices for images or PDFs needing visual analysis or questions beyond truncated text."
         ),
         "parameters": ReadAppendixArgs.model_json_schema(),
     }, {
         "type": "function", "name": "ask_appendices", "strict": True,
         "description": (
             "Ask a separate model a focused question about uploaded attachments identified by IDs in 用户附件. "
+            "Only images and PDFs are supported; use read_appendix for all other formats. "
             "At most 5 IDs and 20 MiB total; originals are sent without conversion. "
             "Only the question and selected attachments are available to that model: include needed context. "
-            "Returns answer text. Format support depends on the configured attachment model."
+            "Returns answer text. If any selected file has an unsupported format, no model request is made."
         ),
         "parameters": AskAppendicesArgs.model_json_schema(),
     }, {

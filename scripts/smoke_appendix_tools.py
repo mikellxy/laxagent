@@ -98,6 +98,11 @@ async def smoke(config, text_model):
                    '不要直接根据历史回答。', [image_ref], model=text_model,
                    tool='ask_appendices', markers=[image_marker])
         print('PASS text-main capability path with configured attachment model', flush=True)
+        html_marker = 'HTML' + uuid4().hex[:6].upper()
+        html_ref = await upload('synthetic.html', f'<html><body><p>{html_marker}</p></body></html>'.encode())
+        await chat(f'请使用 read_appendix 读取本次 HTML 附件 ID={html_ref["id"]}，返回段落中的代码。',
+                   [html_ref], tool='read_appendix', markers=[html_marker])
+        print('PASS latest HTML metadata and local text reading with real provider', flush=True)
         print(json.dumps({'session_id': session_id, 'appendix_model': config.llm.appendix_model,
                           'text_main_alias': text_model}), flush=True)
 

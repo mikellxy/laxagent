@@ -6,7 +6,7 @@ from typing import Annotated
 from anyio import BrokenWorkerProcess, to_process
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
-from laxagent.appendices import MAX_ATTACHMENTS, MAX_MESSAGE_BYTES, appendix_blocks, appendix_description
+from laxagent.appendices import MAX_ATTACHMENTS, MAX_MESSAGE_BYTES, appendix_blocks, appendix_description, supports_multimodal_file
 from laxagent.appendix_text import extract_text
 from laxagent.models.responses import stream_response
 from laxagent.run_errors import ModelError
@@ -67,6 +67,8 @@ async def ask_appendices(context: ToolContext, args: AskAppendicesArgs) -> dict:
     if context.client is None or context.appendix_model is None:
         raise ToolError("APPENDIX_MODEL_FAILED")
     rows = await _rows(context, args.ids)
+    if any(not supports_multimodal_file(row.media_type) for row in rows):
+        raise ToolError("APPENDIX_FORMAT_UNSUPPORTED")
 
     def encode():
         if sum(row.size_bytes for row in rows) > MAX_MESSAGE_BYTES:

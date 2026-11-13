@@ -40,14 +40,16 @@ async def run_agent(graph, run_id: int, context: AgentContext, *,
         context = replace(context, resume_time=run.resume_time)
         # Recheck ownership after dispatch; API validation is not execution authorization.
         await context.repository.get_run(run_id, run.user_id)
+        model_snapshot = {"appendix_model": getattr(run, "appendix_model", None) or run.model}
         if answer_command is not None:
-            state = answer_command
+            state = replace(answer_command, update=model_snapshot)
         elif run.resume_time:
-            state = Command(update={"tool_node_state_uncertain": True})
+            state = Command(update={"tool_node_state_uncertain": True, **model_snapshot})
         else:
             user_configs = await context.repository.get_user_configs(run.user_id)
             session, _ = await context.repository.session_detail(run.user_id, run.session_id)
             state = {
+                **model_snapshot,
                 "user_configs": user_configs,
                 "user_id": run.user_id, "project_id": run.project_id, "session_id": run.session_id,
                 "run_id": run.id, "user_query": run.user_query, "model": run.model,

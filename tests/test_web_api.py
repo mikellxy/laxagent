@@ -71,7 +71,7 @@ async def test_guest_failure_rolls_back_user_project_session(web_api, repository
 async def test_model_catalog_and_resource_ownership(web_api, repository, conversation):
     await login(web_api, str(uuid4()))
     catalog = (await web_api.get("/api/v1/models")).json()
-    assert catalog == {"default_model": "example:model-name", "models": [
+    assert catalog == {"default_model": "example:model-name", "appendix_model": None, "models": [
         {"id": "example:model-name", "provider": "example", "name": "model-name", "supports_multimodal": False},
     ]}
     assert (await web_api.get("/api/v1/projects")).json() == []

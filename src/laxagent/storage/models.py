@@ -105,6 +105,7 @@ class Run(Base):
     user_query: Mapped[str] = mapped_column(Text)
     appendix: Mapped[list[dict]] = mapped_column(JSONB, server_default=text("'[]'::jsonb"))
     model: Mapped[str] = mapped_column(Text)
+    appendix_model: Mapped[str | None] = mapped_column(Text)
     context_limit: Mapped[int] = mapped_column(Integer)
     output_limit: Mapped[int] = mapped_column(Integer)
     thread_id: Mapped[str] = mapped_column(String(36), unique=True)

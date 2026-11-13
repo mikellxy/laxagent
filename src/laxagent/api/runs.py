@@ -32,6 +32,8 @@ async def chat(session_id: ResourceId, body: ChatRequest, request: Request,
         output_limit=model.limit.output,
         appendix=[item.model_dump() for item in body.appendix],
         supports_multimodal=model.supports_multimodal,
+        appendix_model=config.llm.appendix_model or body.model,
+        appendix_supports_multimodal=config.llm.supports_multimodal(config.llm.appendix_model or body.model),
     )
     return {"run_id": run.id, "session_id": run.session_id, "status": "waiting", "resume_time": run.resume_time}
 

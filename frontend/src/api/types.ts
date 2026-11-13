@@ -24,7 +24,7 @@ export interface ToolMessage {
 }
 export type Message = TextMessage | ToolMessage
 export interface MessagePage { items: Message[]; has_more: boolean; next_before_seq: number | null }
-export interface Models { default_model: string; models: { id: string; provider: string; name: string; supports_multimodal?: boolean }[] }
+export interface Models { default_model: string; appendix_model?: string | null; models: { id: string; provider: string; name: string; supports_multimodal?: boolean }[] }
 export interface StreamEvent {
   run_id: number; msg_seq: number | null; type: string; role: string; error: string | null
   content: string | Record<string, unknown>

@@ -4,6 +4,7 @@ from dataclasses import dataclass
 from pydantic import BaseModel
 
 from laxagent.memory import memory_enabled
+from laxagent.tools.builtin.appendices import ReadAppendixArgs, AskAppendicesArgs, read_appendix, ask_appendices
 
 from laxagent.tools.builtin.ask_user_question import AskUserQuestionArgs, ask_user_question
 from laxagent.tools.builtin.bash import BashArgs, bash
@@ -26,6 +27,8 @@ class Tool:
 
 
 TOOLS = {
+    "read_appendix": Tool(ReadAppendixArgs, read_appendix),
+    "ask_appendices": Tool(AskAppendicesArgs, ask_appendices),
     "web_search": Tool(WebSearchArgs, web_search),
     "list_written_files": Tool(ListWrittenFilesArgs, list_written_files),
     "ask_user_question": Tool(AskUserQuestionArgs, ask_user_question),
@@ -75,6 +78,24 @@ def _strict_schema(value):
 
 def _all_tool_definitions() -> list[dict]:
     return [{
+        "type": "function", "name": "read_appendix", "strict": True,
+        "description": (
+            "Read local text from an uploaded attachment by its ID in 用户附件. "
+            "Returns id, name and content, at most 50 KiB with explicit truncation. "
+            "Text files return source; PDF/Office extract text without OCR or visual layout. "
+            "Use ask_appendices for images, scans, visual details or focused questions beyond truncated text."
+        ),
+        "parameters": ReadAppendixArgs.model_json_schema(),
+    }, {
+        "type": "function", "name": "ask_appendices", "strict": True,
+        "description": (
+            "Ask a separate model a focused question about uploaded attachments identified by IDs in 用户附件. "
+            "At most 5 IDs and 20 MiB total; originals are sent without conversion. "
+            "Only the question and selected attachments are available to that model: include needed context. "
+            "Returns answer text. Format support depends on the configured attachment model."
+        ),
+        "parameters": AskAppendicesArgs.model_json_schema(),
+    }, {
         "type": "function", "name": "web_search", "strict": True,
         "description": (
             "Search the internet for current information, facts needing verification, sources, or images. "

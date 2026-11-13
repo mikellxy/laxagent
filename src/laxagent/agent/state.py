@@ -24,6 +24,7 @@ class AgentState(TypedDict):
     appendix: NotRequired[list[dict]]
     messages: list[Message]
     model: str
+    appendix_model: NotRequired[str]
     run_id: int
     next_msg_seq: int
     user_id: str

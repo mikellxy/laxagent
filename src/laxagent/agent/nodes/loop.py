@@ -32,7 +32,10 @@ async def call_model(state: AgentState, runtime: Runtime[AgentContext]):
 
     wire_input = state["model_input"]
     if any(message.get("appendix") for message in wire_input):
-        wire_input = await materialize_input(wire_input, state["user_id"], runtime.context.repository)
+        wire_input = await materialize_input(
+            wire_input, state["user_id"], runtime.context.repository,
+            supports_multimodal=bool(runtime.context.llm and runtime.context.llm.supports_multimodal(state["model"])),
+        )
     # Closing explicitly also releases the SDK stream if publishing fails or execution is cancelled.
     async with aclosing(stream_response(
         runtime.context.client, model=state["model"], messages=wire_input,
@@ -87,11 +90,14 @@ async def tool_node(state: AgentState, runtime: Runtime[AgentContext]):
     next_seq = state["next_msg_seq"]
     messages = list(state["messages"])
     model_input = state["model_input"]
+    appendix_model = state.get("appendix_model", state["model"])
     tool_context = ToolContext(
         user_id=state["user_id"], repository=runtime.context.repository, workspace=state["workspace"],
         loaded_skills=dict(state.get("loaded_skills", {})),
         written_workspace_paths=list(state.get("written_workspace_paths", [])),
         web_search=runtime.context.web_search,
+        client=runtime.context.client, appendix_model=appendix_model,
+        appendix_supports_multimodal=bool(runtime.context.llm and runtime.context.llm.supports_multimodal(appendix_model)),
     )
     call = state["pending_tool_calls"][0]
     # Commit the history with this tool's result, never mutate the input checkpoint.

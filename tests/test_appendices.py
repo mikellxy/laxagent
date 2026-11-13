@@ -109,9 +109,10 @@ async def test_chat_history_model_input_and_checkpoint_references(chat_api):
     run = await h.context.repository.get_run(run_id, h.conversation['user_id'])
     assert run.appendix == references
     user_input = next(message for message in h.captured[0]['input'] if message.get('role') == 'user')
-    assert [part['type'] for part in user_input['content']] == ['input_image', 'input_file']
-    assert base64.b64decode(user_input['content'][0]['image_url'].split(',', 1)[1]) == picture()
-    assert user_input['content'][1]['filename'] == 'notes.txt'
+    assert [part['type'] for part in user_input['content']] == ['input_text', 'input_image', 'input_file']
+    assert '用户附件：' in user_input['content'][0]['text']
+    assert base64.b64decode(user_input['content'][1]['image_url'].split(',', 1)[1]) == picture()
+    assert user_input['content'][2]['filename'] == 'notes.txt'
     assert 'appendix' not in user_input
     snapshot = await h.graph.aget_state({'configurable': {'thread_id': run.thread_id}})
     assert 'base64' not in json.dumps(snapshot.values)
@@ -128,7 +129,9 @@ async def test_chat_history_model_input_and_checkpoint_references(chat_api):
     assert 'path' not in json.dumps(history)
     second = await h.api.post(chat_path(h), json=payload(user_query='What about that image?'))
     assert (await wait_run(h, second.json()['run_id']))['status'] == 'success'
-    assert next(m for m in h.captured[-1]['input'] if m.get('role') == 'user') == user_input
+    older = next(m for m in h.captured[-1]['input'] if m.get('role') == 'user')
+    assert older['content'] == user_input['content'][0]['text']
+    assert 'base64,' not in json.dumps(h.captured[-1]['input'])
     h.config.llm.provider_list[0].model_list[0].supports_multimodal = False
     assert (await h.api.post(chat_path(h), json=payload())).status_code == 422
     # Even when the current page has only the last assistant message, the session flag persists.

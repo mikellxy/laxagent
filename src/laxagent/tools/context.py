@@ -1,4 +1,5 @@
 from dataclasses import dataclass, field
+from openai import AsyncOpenAI
 
 from laxagent.storage.repositories import Repository
 from laxagent.web_search import WebSearchService
@@ -14,6 +15,9 @@ class ToolContext:
     loaded_skills: dict[str, dict] = field(default_factory=dict)
     written_workspace_paths: list[str] = field(default_factory=list)
     web_search: WebSearchService | None = None
+    client: AsyncOpenAI | None = None
+    appendix_model: str | None = None
+    appendix_supports_multimodal: bool = False
 
     def record_workspace_path(self, path: str) -> None:
         if path not in self.written_workspace_paths:

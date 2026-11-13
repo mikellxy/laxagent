@@ -167,6 +167,7 @@ async def test_write_edit_read_round_trip(repository, conversation, writer):
     assert (workspace / path).read_bytes() == edited.encode()
     assert {tool["name"] for tool in captured[0]["tools"]} == {
         "read_file", "write_file", "edit_file", "bash", "load_skill", "run_skill_scripts", "ask_user_question", "list_written_files",
+        "read_appendix", "ask_appendices",
     }
     _, tables = await message_snapshot(repository, conversation["session_id"])
     assert tables[0] == tables[1]

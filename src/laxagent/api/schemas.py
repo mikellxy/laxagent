@@ -205,5 +205,6 @@ class ModelResponse(BaseModel):
 
 
 class ModelCatalogResponse(BaseModel):
+    appendix_model: str | None = None
     default_model: str
     models: list[ModelResponse]

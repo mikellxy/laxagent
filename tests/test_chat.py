@@ -40,7 +40,7 @@ async def chat_api(repository, conversation, config_data, monkeypatch):
                 created.append(run_id)
 
         monkeypatch.setattr(events, "create_run", tracked_create)
-        context = AgentContext(client, events, repository)
+        context = AgentContext(client, events, repository, llm=config.llm)
         graph = build_graph(InMemorySaver())
         manager = TaskManager(graph, context)
         await manager.start()

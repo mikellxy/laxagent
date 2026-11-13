@@ -6,7 +6,7 @@ from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from laxagent.config import DatabaseConfig
 
-SCHEMA_REVISION = "0010"
+SCHEMA_REVISION = "0011"
 
 
 class DatabaseError(Exception):

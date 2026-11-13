@@ -127,7 +127,7 @@ async def smoke(args, config=None):
         holding = original.with_suffix('.smoke-held')
         original.rename(holding)
         try:
-            failed = await chat('Repeat the text in the image only. Do not use tools.', expected='failed')
+            failed = await chat('Repeat the text in the image only. Do not use tools.', [image_ref], expected='failed')
             assert (await api.get(f'/api/v1/runs/{failed}')).json()['error_code'] == 'attachment_read_failed'
         finally:
             holding.rename(original)

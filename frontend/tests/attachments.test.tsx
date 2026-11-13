@@ -15,11 +15,11 @@ beforeEach(() => {
 })
 afterEach(() => { cleanup(); vi.restoreAllMocks() })
 
-function setup(messages: Message[] = [], hasAppendix = false) {
+function setup(messages: Message[] = [], hasAppendix = false, appendixModel: string | null = null) {
   vi.spyOn(api, 'detail').mockResolvedValue({ id: 1, user_id: 'attachment-owner', name: 'chat', project_id: 1,
     next_msg_seq: 5, latest_run: null, has_appendix: hasAppendix })
   vi.spyOn(api, 'messages').mockResolvedValue({ items: messages, has_more: false, next_before_seq: null })
-  vi.spyOn(api, 'models').mockResolvedValue({ default_model: 'p:vision', models: [
+  vi.spyOn(api, 'models').mockResolvedValue({ default_model: 'p:vision', appendix_model: appendixModel, models: [
     { id: 'p:vision', provider: 'p', name: 'vision', supports_multimodal: true },
     { id: 'p:text', provider: 'p', name: 'text', supports_multimodal: false },
   ] })
@@ -85,6 +85,22 @@ it('uses the full-history flag even when the loaded page contains no attachments
   await h.user.selectOptions(model, 'p:text')
   expect(screen.getByRole('button', { name: '发送消息' })).toBeDisabled()
   expect(screen.getByText('此会话包含附件，请选择支持多模态的模型，或新建会话')).toBeVisible()
+})
+
+it('allows text main models with a configured attachment model for new and historical attachments', async () => {
+  const h = setup([], true, 'p:vision')
+  vi.spyOn(api, 'uploadAppendix').mockResolvedValue({ id: 1, name: 'hello.txt' })
+  const chat = vi.spyOn(api, 'chat').mockResolvedValue({ run_id: 10, session_id: 1, status: 'waiting', resume_time: 0 })
+  const model = await vision()
+  await h.user.selectOptions(model, 'p:text')
+  await h.user.type(screen.getByRole('textbox', { name: '消息输入' }), '继续')
+  expect(screen.getByRole('button', { name: '添加附件' })).toBeEnabled()
+  expect(screen.getByRole('button', { name: '发送消息' })).toBeEnabled()
+  select()
+  await screen.findByText('已上传')
+  await h.user.click(screen.getByRole('button', { name: '发送消息' }))
+  await waitFor(() => expect(chat).toHaveBeenCalled())
+  expect(chat.mock.calls[0][2]).toBe('p:text')
 })
 
 it('reads originals only on click and releases image preview URLs', async () => {

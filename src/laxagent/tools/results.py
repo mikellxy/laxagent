@@ -1,6 +1,16 @@
 import json
 
 ERROR_GUIDANCE = {
+    "APPENDIX_NOT_FOUND": "附件 ID 不存在，请核对用户附件列表。",
+    "APPENDIX_STORAGE_FAILED": "附件记录暂时无法读取，请稍后重试。",
+    "APPENDIX_READ_FAILED": "附件原件读取失败，请确认文件仍然可用。",
+    "APPENDIX_NO_TEXT": "附件没有可直接读取的文本；图片或扫描文档请使用 ask_appendices。",
+    "APPENDIX_EXTRACTION_FAILED": "无法提取附件文本，可能为扫描件、加密或格式不支持；可尝试 ask_appendices。",
+    "APPENDIX_EXTRACTION_TIMEOUT": "附件文本提取超时；可尝试 ask_appendices 或拆分文档。",
+    "APPENDIX_TOO_LARGE": "一次附件问答的原件合计不能超过 20 MiB，请减少附件。",
+    "APPENDIX_MODEL_UNSUPPORTED": "本次附件问答模型不支持多模态；可用 read_appendix 读取文本，或请管理员配置附件模型。",
+    "APPENDIX_MODEL_TIMEOUT": "附件问答超时，未得到完整回答；如需重试请明确重新调用。",
+    "APPENDIX_MODEL_FAILED": "附件问答失败或格式不被模型支持，未得到完整回答；可尝试 read_appendix，不会自动转换或切换模型。",
     "SEARCH_LIMIT_REACHED": "本轮 ReAct 循环的联网搜索已达到调用上限，本次未请求搜索服务。此限制仅适用于本轮执行，不是整个会话的累计限制；同一轮暂停或恢复仍沿用计数，新一轮执行重新计数。请在本轮停止调用 web_search，基于已有来源完成回答，并说明仍未确认的信息。",
     "SEARCH_AUTH_FAILED": "联网搜索鉴权失败，请由管理员检查服务端搜索 Key 和服务权限；不要在聊天中索取密钥。",
     "SEARCH_RATE_LIMITED": "联网搜索受到限流，请稍后再试，避免连续重复请求。",

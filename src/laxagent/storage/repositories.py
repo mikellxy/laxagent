@@ -29,6 +29,12 @@ class Repository:
             rows = await transaction.scalars(select(Appendix).where(Appendix.user_id == user_id, Appendix.id.in_(ids)))
             return {row.id: row for row in rows}
 
+    async def get_tool_appendices(self, ids: list[int]) -> dict[int, Appendix]:
+        """Builtin tools deliberately resolve IDs without user/session ownership checks."""
+        async with self.db.transaction() as transaction:
+            rows = await transaction.scalars(select(Appendix).where(Appendix.id.in_(ids)))
+            return {row.id: row for row in rows}
+
     @staticmethod
     def appendix_history_query(session_id: int):
         return select(SessionMessage.id).where(
@@ -168,7 +174,8 @@ class Repository:
 
     async def create_run(self, *, user_id: str, session_id: int, user_query: str,
                          model: str, context_limit: int, output_limit: int,
-                         appendix: list[dict] | None = None, supports_multimodal: bool = False) -> Run:
+                         appendix: list[dict] | None = None, supports_multimodal: bool = False,
+                         appendix_model: str | None = None, appendix_supports_multimodal: bool = False) -> Run:
         async with self.db.transaction() as transaction:
             session = await transaction.scalar(self.owned_session(user_id, session_id).with_for_update(of=Session))
             if session is None:
@@ -185,10 +192,11 @@ class Repository:
                 raise DatabaseError("附件不存在", 404)
             if sum(row.size_bytes for row in rows.values()) > MAX_MESSAGE_BYTES:
                 raise DatabaseError("附件合计不能超过 20 MiB", 422)
-            if not supports_multimodal and (ids or await transaction.scalar(self.appendix_history_query(session.id))):
+            if not (supports_multimodal or appendix_supports_multimodal) and (ids or await transaction.scalar(self.appendix_history_query(session.id))):
                 raise DatabaseError("此会话包含附件，请选择支持多模态的模型，或新建会话", 422)
             run = Run(user_id=user_id, session_id=session.id, project_id=session.project_id,
                       user_query=user_query, model=model, context_limit=context_limit,
+                      appendix_model=appendix_model or model,
                       appendix=[{"id": identifier, "name": rows[identifier].name} for identifier in ids],
                       output_limit=output_limit, thread_id=str(uuid4()))
             transaction.add(run)

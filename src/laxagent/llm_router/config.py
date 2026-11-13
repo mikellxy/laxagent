@@ -42,6 +42,7 @@ class ProviderConfig(ConfigModel):
 
 class LLMConfig(ConfigModel):
     default_model: str
+    appendix_model: str | None = None
     provider_list: Annotated[list[ProviderConfig], Field(min_length=1)]
 
     @model_validator(mode="after")
@@ -56,4 +57,13 @@ class LLMConfig(ConfigModel):
         }
         if self.default_model not in models:
             raise ValueError("default_model must refer to a configured model")
+        if self.appendix_model is not None:
+            if self.appendix_model not in models:
+                raise ValueError("appendix_model must refer to a configured model")
+            if not self.supports_multimodal(self.appendix_model):
+                raise ValueError("appendix_model must support multimodal input")
         return self
+
+    def supports_multimodal(self, identifier: str) -> bool:
+        return any(model.supports_multimodal for provider in self.provider_list
+                   for model in provider.model_list if f"{provider.name}:{model.name}" == identifier)

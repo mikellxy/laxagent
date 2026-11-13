@@ -108,7 +108,8 @@ export function Chat({ owner, sessionId, onMissing }: { owner: string; sessionId
   const [model, setModel] = useState('')
   const [draft, setDraft] = useState('')
   const attachments = useAppendices()
-  const multimodal = catalog.data?.models.find(item => item.id === model)?.supports_multimodal ?? false
+  const multimodal = !!catalog.data?.models.some(item =>
+    (item.id === model || item.id === catalog.data?.appendix_model) && item.supports_multimodal)
   const incompatible = !multimodal && (!!attachments.items.length || !!snapshot.detail?.has_appendix)
   const uploadPending = attachments.items.some(item => item.status !== 'ready')
   const sendDisabled = (!draft.trim() && !attachments.items.length) || !model || snapshot.busy || !snapshot.ready || incompatible || uploadPending

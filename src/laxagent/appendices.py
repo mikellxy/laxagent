@@ -2,6 +2,7 @@
 import asyncio
 import base64
 import io
+import json
 import warnings
 from pathlib import Path
 from uuid import uuid4
@@ -123,29 +124,46 @@ async def enrich_history(items: list[dict], user_id: str, repository) -> None:
     await asyncio.to_thread(enrich)
 
 
-async def materialize_input(messages: list[dict], user_id: str, repository) -> list[dict]:
+def appendix_blocks(rows: list) -> list[dict]:
+    """Encode originals only for the lifetime of a model request."""
+    blocks = []
+    for row in rows:
+        data_url = f"data:{row.media_type};base64," + base64.b64encode(Path(row.path).read_bytes()).decode("ascii")
+        blocks.append({"type": "input_image", "image_url": data_url}
+                      if row.media_type.startswith("image/") else
+                      {"type": "input_file", "filename": row.name, "file_data": data_url})
+    return blocks
+
+
+def appendix_description(refs: list[dict]) -> str:
+    return "\n\n---\n用户附件：\n" + json.dumps(
+        [{"id": ref["id"], "name": ref["name"]} for ref in refs], ensure_ascii=False,
+    ) + "\n---"
+
+
+async def materialize_input(messages: list[dict], user_id: str, repository, *,
+                            supports_multimodal: bool = True) -> list[dict]:
     """Build a temporary wire request without modifying checkpoint-owned dictionaries."""
-    ids = {ref["id"] for message in messages for ref in message.get("appendix", [])}
-    if not ids:
+    if not any(message.get("appendix") for message in messages):
         return messages
-    rows = await repository.get_appendices(user_id, list(ids))
+    latest = next((index for index in range(len(messages) - 1, -1, -1)
+                   if messages[index].get("role") == "user"), None)
+    refs = messages[latest].get("appendix", []) if latest is not None and supports_multimodal else []
+    ids = {ref["id"] for ref in refs}
+    rows = await repository.get_appendices(user_id, list(ids)) if ids else {}
     if ids - rows.keys():
         raise make_run_error("attachment_read_failed")
 
     def build():
         try:
-            blocks = {}
-            for identifier, row in rows.items():
-                data_url = f"data:{row.media_type};base64," + base64.b64encode(Path(row.path).read_bytes()).decode("ascii")
-                blocks[identifier] = ({"type": "input_image", "image_url": data_url}
-                                      if row.media_type.startswith("image/") else
-                                      {"type": "input_file", "filename": row.name, "file_data": data_url})
             result = []
-            for message in messages:
+            for index, message in enumerate(messages):
                 item = {key: value for key, value in message.items() if key != "appendix"}
-                if message.get("appendix"):
-                    content = [{"type": "input_text", "text": message["content"]}] if message["content"].strip() else []
-                    item["content"] = content + [blocks[ref["id"]] for ref in message["appendix"]]
+                if message.get("role") == "user" and message.get("appendix"):
+                    content = message["content"] + appendix_description(message["appendix"])
+                    item["content"] = ([{"type": "input_text", "text": content}]
+                                       + appendix_blocks([rows[ref["id"]] for ref in refs])
+                                       if index == latest and supports_multimodal else content)
                 result.append(item)
             return result
         except OSError:

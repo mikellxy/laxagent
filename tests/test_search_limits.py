@@ -5,10 +5,10 @@ import httpx2
 import pytest
 from langgraph.checkpoint.memory import InMemorySaver
 
-from laxcode.agent.context import AgentContext
-from laxcode.agent.graph import build_graph
-from laxcode.storage.checkpoints import open_checkpointer
-from laxcode.web_search import WebSearchService
+from laxagent.agent.context import AgentContext
+from laxagent.agent.graph import build_graph
+from laxagent.storage.checkpoints import open_checkpointer
+from laxagent.web_search import WebSearchService
 from model_helpers import ModelStream, client_for, completed
 from storage_helpers import message_snapshot, run_agent
 from test_agent import MemoryEvents, state

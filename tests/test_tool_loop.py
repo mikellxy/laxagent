@@ -9,19 +9,19 @@ from langgraph.checkpoint.memory import InMemorySaver
 from sqlalchemy import event
 from sqlalchemy.exc import IntegrityError
 
-from laxcode.layout import get_project_workdir
-from laxcode.agent.context import AgentContext
-from laxcode.agent.graph import build_graph
-from laxcode.models.responses import messages_to_input
-from laxcode.models.errors import ModelError
-from laxcode.run_errors import RunError
-from laxcode.runtime.task_manager import TaskManager
+from laxagent.layout import get_project_workdir
+from laxagent.agent.context import AgentContext
+from laxagent.agent.graph import build_graph
+from laxagent.models.responses import messages_to_input
+from laxagent.models.errors import ModelError
+from laxagent.run_errors import RunError
+from laxagent.runtime.task_manager import TaskManager
 from storage_helpers import run_agent
-from laxcode.storage.models import SessionMessage
+from laxagent.storage.models import SessionMessage
 from model_helpers import ModelStream, client_for, completed
 from storage_helpers import message_snapshot
 from test_agent import MemoryEvents, state
-from laxcode.web_search import WebSearchService
+from laxagent.web_search import WebSearchService
 
 
 @pytest.fixture(autouse=True)
@@ -293,7 +293,7 @@ async def test_cancelling_tool_does_not_persist_partial_result(monkeypatch, repo
         entered.set()
         await asyncio.Event().wait()
 
-    monkeypatch.setattr("laxcode.agent.nodes.loop.execute_tool", wait)
+    monkeypatch.setattr("laxagent.agent.nodes.loop.execute_tool", wait)
     events = MemoryEvents()
     async with client_for(ModelStream([tool_response()]), []) as client:
         task = asyncio.create_task(run_agent(build_graph(), state(conversation), AgentContext(client, events, repository)))

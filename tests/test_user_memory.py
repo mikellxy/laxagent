@@ -5,16 +5,16 @@ from uuid import uuid4
 import pytest
 from sqlalchemy import inspect, select
 
-from laxcode.agent.context import AgentContext
-from laxcode.agent.graph import build_graph
-from laxcode.context.prompts import system_prompt
-from laxcode.memory import MEMORY_CATEGORY_LABELS, MemoryUnavailableError
-from laxcode.storage.database import DatabaseError
-from laxcode.run_errors import RunError
-from laxcode.storage.models import UserConfig
-from laxcode.tools.context import ToolContext
-from laxcode.tools.executor import execute_tool
-from laxcode.tools.registry import MEMORY_TOOLS, tool_definitions
+from laxagent.agent.context import AgentContext
+from laxagent.agent.graph import build_graph
+from laxagent.context.prompts import system_prompt
+from laxagent.memory import MEMORY_CATEGORY_LABELS, MemoryUnavailableError
+from laxagent.storage.database import DatabaseError
+from laxagent.run_errors import RunError
+from laxagent.storage.models import UserConfig
+from laxagent.tools.context import ToolContext
+from laxagent.tools.executor import execute_tool
+from laxagent.tools.registry import MEMORY_TOOLS, tool_definitions
 from model_helpers import ModelStream, client_for, completed
 from storage_helpers import message_snapshot, run_agent
 from test_agent import MemoryEvents, state

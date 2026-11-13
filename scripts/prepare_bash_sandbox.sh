@@ -40,4 +40,4 @@ else:
     subprocess.run(['apparmor_parser', '-r', str(target)], check=True)
 PY
 echo "Dependencies prepared. As the service user run:"
-echo "python3 src/laxcode/sandbox/bubblewrap.py --probe"
+echo "python3 src/laxagent/sandbox/bubblewrap.py --probe"

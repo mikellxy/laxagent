@@ -4,12 +4,12 @@ from unittest.mock import AsyncMock
 
 import pytest
 
-from laxcode.run_errors import RunError, make_run_error
-from laxcode.runtime.cancellation import CancelCommand
-from laxcode.runtime.events import EventStoreError
-from laxcode.runtime.finalization import RunFinalizer
-from laxcode.runtime.runner import classify_run_error
-from laxcode.storage.database import DatabaseError
+from laxagent.run_errors import RunError, make_run_error
+from laxagent.runtime.cancellation import CancelCommand
+from laxagent.runtime.events import EventStoreError
+from laxagent.runtime.finalization import RunFinalizer
+from laxagent.runtime.runner import classify_run_error
+from laxagent.storage.database import DatabaseError
 from test_chat import chat_api
 
 

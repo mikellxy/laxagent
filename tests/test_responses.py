@@ -3,8 +3,8 @@ from copy import deepcopy
 
 import pytest
 
-from laxcode.models.errors import ModelError
-from laxcode.models.responses import (
+from laxagent.models.errors import ModelError
+from laxagent.models.responses import (
     ModelEvent, append_model_response, append_tool_message, messages_to_input, stream_response,
 )
 from model_helpers import ModelStream, client_for, completed

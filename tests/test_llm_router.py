@@ -7,8 +7,8 @@ import httpx2
 import pytest
 from fastapi.testclient import TestClient
 
-from laxcode.llm_router import app as router_module
-from laxcode.llm_router.config import LLMConfig
+from laxagent.llm_router import app as router_module
+from laxagent.llm_router.config import LLMConfig
 
 
 SSE = (

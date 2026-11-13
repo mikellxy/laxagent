@@ -19,12 +19,12 @@ import httpx2
 from PIL import Image, ImageDraw
 from sqlalchemy import select
 
-from laxcode.config import load_config
-from laxcode.layout import get_project_workdir
-from laxcode.storage.database import Database
-from laxcode.storage.models import Message, SessionMessage
-from laxcode.storage.repositories import Repository
-from laxcode.storage.checkpoints import open_checkpointer
+from laxagent.config import load_config
+from laxagent.layout import get_project_workdir
+from laxagent.storage.database import Database
+from laxagent.storage.models import Message, SessionMessage
+from laxagent.storage.repositories import Repository
+from laxagent.storage.checkpoints import open_checkpointer
 
 
 def pdf_document(marker: str) -> bytes:
@@ -157,7 +157,7 @@ async def main(args):
     if args.output_limit is None:
         return await smoke(args)
     # Isolate diagnostic quota overrides in memory and bind separate ports.
-    from laxcode.main import run_servers
+    from laxagent.main import run_servers
     config = load_config(args.config)
     with socket.socket() as api_socket, socket.socket() as router_socket:
         api_socket.bind(("127.0.0.1", 0)); router_socket.bind(("127.0.0.1", 0))

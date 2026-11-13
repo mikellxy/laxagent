@@ -4,12 +4,12 @@ from uuid import uuid4
 
 import pytest
 
-from laxcode import layout
-from laxcode.agent.context import AgentContext
-from laxcode.agent.graph import build_graph
-from laxcode.agent.nodes.preparation import initialize_workspace
-from laxcode.models.errors import ModelError
-from laxcode.runtime.runner import run_agent
+from laxagent import layout
+from laxagent.agent.context import AgentContext
+from laxagent.agent.graph import build_graph
+from laxagent.agent.nodes.preparation import initialize_workspace
+from laxagent.models.errors import ModelError
+from laxagent.runtime.runner import run_agent
 from model_helpers import ModelStream, client_for, completed
 from storage_helpers import message_snapshot
 from test_agent import MemoryEvents
@@ -78,7 +78,7 @@ async def test_initialization_failure_stops_before_messages_and_model(
     else:
         def denied(*args, **kwargs):
             raise PermissionError("private path")
-        monkeypatch.setattr("laxcode.agent.nodes.preparation.os.mkdir", denied)
+        monkeypatch.setattr("laxagent.agent.nodes.preparation.os.mkdir", denied)
     run = await repository.create_run(
         user_id=conversation["user_id"], session_id=conversation["session_id"], user_query="hello",
         model="test:model", context_limit=100, output_limit=10,

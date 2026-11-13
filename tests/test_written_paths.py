@@ -2,8 +2,8 @@ import json
 
 import pytest
 
-from laxcode.storage.checkpoints import open_checkpointer
-from laxcode.agent.graph import build_graph
+from laxagent.storage.checkpoints import open_checkpointer
+from laxagent.agent.graph import build_graph
 from model_helpers import ModelStream, client_for, completed
 from test_chat import chat_api, chat_path, payload, wait_run
 from test_questions import QUESTIONS, answer_body, paused

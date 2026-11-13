@@ -4,7 +4,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from laxcode.agent.nodes.loop import call_model
+from laxagent.agent.nodes.loop import call_model
 from model_helpers import ModelStream, client_for, completed
 
 

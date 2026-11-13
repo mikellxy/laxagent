@@ -4,11 +4,11 @@ from uuid import uuid4
 import pytest
 from sqlalchemy import select
 
-from laxcode.agent.graph import build_graph
-from laxcode.runtime.events import EventStoreError
-from laxcode.storage.checkpoints import open_checkpointer
-from laxcode.storage.database import DatabaseError
-from laxcode.storage.models import Run
+from laxagent.agent.graph import build_graph
+from laxagent.runtime.events import EventStoreError
+from laxagent.storage.checkpoints import open_checkpointer
+from laxagent.storage.database import DatabaseError
+from laxagent.storage.models import Run
 from model_helpers import ModelStream, client_for, completed
 from storage_helpers import message_snapshot
 from test_chat import chat_api, chat_path, payload, wait_run
@@ -62,7 +62,7 @@ async def test_cancelled_tool_gets_unknown_results_then_new_tools_execute(chat_a
             entered.set()
             await asyncio.Future()
         return {'error_code': None, 'result': 'checked'}
-    monkeypatch.setattr('laxcode.agent.nodes.loop.execute_tool', execute)
+    monkeypatch.setattr('laxagent.agent.nodes.loop.execute_tool', execute)
     second = tool_response(('check.txt',))
     second['response']['output'][-1]['call_id'] = 'new_call'
     captured = []

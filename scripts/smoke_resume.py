@@ -16,11 +16,11 @@ from uuid import uuid4
 import httpx2
 from sqlalchemy import select
 
-from laxcode.config import load_config
-from laxcode.layout import get_project_workdir
-from laxcode.storage.checkpoints import open_checkpointer
-from laxcode.storage.database import Database
-from laxcode.storage.models import Message, Run, SessionMessage
+from laxagent.config import load_config
+from laxagent.layout import get_project_workdir
+from laxagent.storage.checkpoints import open_checkpointer
+from laxagent.storage.database import Database
+from laxagent.storage.models import Message, Run, SessionMessage
 
 
 def free_port():
@@ -72,7 +72,7 @@ async def smoke(args):
         process = None
         with (root / 'server.log').open('w') as log:
             def start():
-                return subprocess.Popen([sys.executable, '-m', 'laxcode.main', '--config', str(private_config)],
+                return subprocess.Popen([sys.executable, '-m', 'laxagent.main', '--config', str(private_config)],
                                         stdout=log, stderr=log)
             try:
                 process = start()

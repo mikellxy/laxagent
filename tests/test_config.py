@@ -2,7 +2,7 @@ import json
 
 import pytest
 
-from laxcode.config import load_config
+from laxagent.config import load_config
 
 
 def test_load_config(config_data, tmp_path):

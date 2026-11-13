@@ -5,13 +5,13 @@ import pytest
 from langgraph.errors import GraphRecursionError
 from psycopg import OperationalError
 
-from laxcode.agent.context import AgentContext
-from laxcode.models.errors import ModelError
-from laxcode.run_errors import RUN_FAILURES, RunError, make_run_error, registered_run_error
-from laxcode.runtime.events import EventStoreError
-from laxcode.runtime.runner import classify_run_error, run_agent
-from laxcode.runtime.task_manager import TaskManager
-from laxcode.storage.database import DatabaseError
+from laxagent.agent.context import AgentContext
+from laxagent.models.errors import ModelError
+from laxagent.run_errors import RUN_FAILURES, RunError, make_run_error, registered_run_error
+from laxagent.runtime.events import EventStoreError
+from laxagent.runtime.runner import classify_run_error, run_agent
+from laxagent.runtime.task_manager import TaskManager
+from laxagent.storage.database import DatabaseError
 from test_agent import MemoryEvents
 
 

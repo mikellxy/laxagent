@@ -6,14 +6,14 @@ import stat
 
 import pytest
 
-from laxcode.tools.builtin.read_file import ReadFileArgs, read_file
-from laxcode.tools.builtin.write_file import WriteFileArgs, WriteFileError, write_file
-from laxcode.tools.executor import execute_tool
+from laxagent.tools.builtin.read_file import ReadFileArgs, read_file
+from laxagent.tools.builtin.write_file import WriteFileArgs, WriteFileError, write_file
+from laxagent.tools.executor import execute_tool
 from tool_helpers import tool_context
-from laxcode.tools.registry import TOOLS, tool_definitions
-from laxcode.tools.results import format_result
+from laxagent.tools.registry import TOOLS, tool_definitions
+from laxagent.tools.results import format_result
 
-module = importlib.import_module("laxcode.tools.workspace")
+module = importlib.import_module("laxagent.tools.workspace")
 
 
 def write(workspace, path="text.txt", content="中文🙂\r\nsecond\nlast"):

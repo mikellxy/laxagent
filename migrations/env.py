@@ -4,9 +4,9 @@ from alembic import context
 from sqlalchemy import create_engine, pool
 from sqlalchemy.exc import SQLAlchemyError
 
-from laxcode.config import load_config
-from laxcode.storage.database import database_url
-from laxcode.storage.models import Base
+from laxagent.config import load_config
+from laxagent.storage.database import database_url
+from laxagent.storage.models import Base
 
 config_path = Path(context.get_x_argument(as_dictionary=True).get("config", "config/config.json"))
 url = database_url(load_config(config_path).database)

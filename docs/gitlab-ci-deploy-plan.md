@@ -90,7 +90,7 @@ JSON 合法和结构校验不能证明远端凭据有效；实际连通性通过
 文件名为 `laxcode-<version>.zip`，解压后只有一个同名顶层目录：
 
 ```text
-src/laxcode/
+src/laxagent/
 frontend/dist/
 config/config.json          # GitLab CI File 变量注入的真实配置
 config/config.example.json
@@ -114,7 +114,7 @@ ZIP 含真实凭据，因此 GitLab 发布产物访问限定为 Maintainer，临
 目标机安装 uv、准备好配置引用的 PG/NATS 并完成业务数据库迁移后，预期运行命令为：
 
 ```bash
-uv run --locked --no-dev python -m laxcode.main --config config/config.json
+uv run --locked --no-dev python -m laxagent.main --config config/config.json
 ```
 
 首次运行联网下载 Python 和依赖，不分发 `.venv`。源码包不绑定 CPU 架构，但依赖必须支持目标平台；完整 Bash 工具仍依赖 bubblewrap、内核及系统工具。首期完整运行验收沿用 Ubuntu 24.04 ARM64。参见 [Python 虚拟环境可迁移性说明](https://docs.python.org/3/library/venv.html)。

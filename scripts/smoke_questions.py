@@ -14,7 +14,7 @@ from uuid import uuid4
 
 import httpx2
 
-from laxcode.config import load_config
+from laxagent.config import load_config
 from smoke_resume import free_port, ready, report
 
 
@@ -48,7 +48,7 @@ async def smoke(args):
         private_config.write_text(json.dumps(raw))
         private_config.chmod(0o600)
         with (root / 'server.log').open('w') as log:
-            process = subprocess.Popen([sys.executable, '-m', 'laxcode.main', '--config', str(private_config)],
+            process = subprocess.Popen([sys.executable, '-m', 'laxagent.main', '--config', str(private_config)],
                                        stdout=log, stderr=log)
             try:
                 async with httpx2.AsyncClient(base_url=f'http://127.0.0.1:{api_port}', trust_env=False, timeout=240) as api:

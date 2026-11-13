@@ -3,10 +3,10 @@ import os
 
 import pytest
 
-from laxcode.tools.builtin.read_file import MAX_BYTES, ReadFileArgs, ReadFileError, read_file
-from laxcode.tools.executor import execute_tool
+from laxagent.tools.builtin.read_file import MAX_BYTES, ReadFileArgs, ReadFileError, read_file
+from laxagent.tools.executor import execute_tool
 from tool_helpers import tool_context
-from laxcode.tools.results import format_result
+from laxagent.tools.results import format_result
 
 
 def read(workspace, path="text.txt", line=1, byte=1, lines=2000):

@@ -7,17 +7,17 @@ import pytest
 from sqlalchemy import event
 from sqlalchemy.exc import IntegrityError
 
-from laxcode.agent.context import AgentContext
-from laxcode.agent.graph import build_graph
-from laxcode.context.prompts import system_prompt
-from laxcode.models.errors import ModelError
-from laxcode.run_errors import RunError
-from laxcode.runtime.events import EventStoreError
+from laxagent.agent.context import AgentContext
+from laxagent.agent.graph import build_graph
+from laxagent.context.prompts import system_prompt
+from laxagent.models.errors import ModelError
+from laxagent.run_errors import RunError
+from laxagent.runtime.events import EventStoreError
 from storage_helpers import run_agent
-from laxcode.storage.models import Message
+from laxagent.storage.models import Message
 from model_helpers import ModelStream, client_for, completed
 from storage_helpers import message_snapshot
-from laxcode.tools.registry import tool_definitions
+from laxagent.tools.registry import tool_definitions
 
 
 def state(conversation):

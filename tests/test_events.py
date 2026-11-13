@@ -4,7 +4,7 @@ import json
 import nats
 import pytest
 
-from laxcode.runtime.events import EventStoreError, make_event, stream_events
+from laxagent.runtime.events import EventStoreError, make_event, stream_events
 
 
 @pytest.mark.anyio
@@ -90,7 +90,7 @@ async def test_consumer_error_is_sanitized():
 
 @pytest.mark.anyio
 async def test_cancellation_consumers_broadcast_new_messages_and_cleanup(run_store):
-    from laxcode.runtime.cancellation import CancellationBus, CancelCommand
+    from laxagent.runtime.cancellation import CancellationBus, CancelCommand
     from nats.js import api
     store, run_id = run_store
     bus = CancellationBus(store)

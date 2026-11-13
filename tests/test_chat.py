@@ -10,16 +10,16 @@ import pytest
 from langgraph.checkpoint.memory import InMemorySaver
 from sqlalchemy import delete, select
 
-from laxcode.agent.context import AgentContext
-from laxcode.agent.graph import build_graph
-from laxcode.api.app import create_app
-from laxcode.config import AppConfig
-from laxcode.runtime.events import EventStore, EventStoreError
-from laxcode.runtime.runner import run_agent
-from laxcode.runtime.task_manager import TaskManager
-from laxcode.storage.database import DatabaseError
-from laxcode.run_errors import RunError
-from laxcode.storage.models import Project, Run, User
+from laxagent.agent.context import AgentContext
+from laxagent.agent.graph import build_graph
+from laxagent.api.app import create_app
+from laxagent.config import AppConfig
+from laxagent.runtime.events import EventStore, EventStoreError
+from laxagent.runtime.runner import run_agent
+from laxagent.runtime.task_manager import TaskManager
+from laxagent.storage.database import DatabaseError
+from laxagent.run_errors import RunError
+from laxagent.storage.models import Project, Run, User
 from model_helpers import ModelStream, client_for, completed
 from storage_helpers import message_snapshot
 from test_tool_loop import tool_response

@@ -16,8 +16,8 @@ from uuid import uuid4
 
 import httpx2
 
-from laxcode.config import load_config
-from laxcode.layout import get_project_workdir
+from laxagent.config import load_config
+from laxagent.layout import get_project_workdir
 
 
 def free_port():
@@ -75,8 +75,8 @@ async def smoke(args):
         with (root / 'servers.log').open('w') as log:
             def launch(kind, port):
                 # Test-only independent processes; production startup remains unchanged.
-                code = ('import sys, uvicorn; from pathlib import Path; from laxcode.config import load_config; '
-                        'from laxcode.api.app import create_app; from laxcode.llm_router.app import create_router_app; '
+                code = ('import sys, uvicorn; from pathlib import Path; from laxagent.config import load_config; '
+                        'from laxagent.api.app import create_app; from laxagent.llm_router.app import create_router_app; '
                         'c=load_config(Path(sys.argv[1])); '
                         f'a=create_router_app(c.llm) if {kind!r} == "router" else create_app(c); '
                         'uvicorn.run(a, host="127.0.0.1", port=int(sys.argv[2]), timeout_graceful_shutdown=10)')

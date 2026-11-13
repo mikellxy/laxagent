@@ -1,11 +1,11 @@
 from sqlalchemy import select
 
-from laxcode.storage.models import Message, Session, SessionMessage
+from laxagent.storage.models import Message, Session, SessionMessage
 
 
 async def run_agent(graph, state, context):
     """Seed a persisted run for the existing graph/message regression scenarios."""
-    from laxcode.runtime.runner import run_agent as execute
+    from laxagent.runtime.runner import run_agent as execute
 
     run = await context.repository.create_run(
         user_id=state["user_id"], session_id=state["session_id"], user_query=state["user_query"],

@@ -30,7 +30,7 @@ ssh_with() { ssh "${SSH_OPTS[@]}" "$SSH_HOST" "$@"; }
 
 # Probe this checkout's exact production profile before copying deployment content.
 # Standard-library-only source is passed over stdin; no root or package installation.
-ssh_with "python3 - --probe" < "$SRC/src/laxcode/sandbox/bubblewrap.py"
+ssh_with "python3 - --probe" < "$SRC/src/laxagent/sandbox/bubblewrap.py"
 
 npm --prefix "$SRC/frontend" ci
 npm --prefix "$SRC/frontend" run build
@@ -73,4 +73,4 @@ echo
 echo "deployed to VM '$VM_NAME':~/code/laxcode"
 echo "start the service with:"
 echo "  limactl shell $VM_NAME"
-echo "  cd ~/code/laxcode && uv run python -m laxcode.main --config config/config.json"
+echo "  cd ~/code/laxcode && uv run python -m laxagent.main --config config/config.json"

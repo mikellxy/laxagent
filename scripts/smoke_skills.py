@@ -17,10 +17,10 @@ from uuid import uuid4
 import httpx2
 from sqlalchemy import select
 
-from laxcode.config import load_config
-from laxcode.layout import get_project_workdir, get_skills_dir
-from laxcode.storage.database import Database
-from laxcode.storage.models import Run
+from laxagent.config import load_config
+from laxagent.layout import get_project_workdir, get_skills_dir
+from laxagent.storage.database import Database
+from laxagent.storage.models import Run
 from smoke_chat import chat_round
 from smoke_resume import free_port, ready
 
@@ -46,7 +46,7 @@ async def smoke(args):
         private_config.chmod(0o600)
         shutil.copytree(config.builtin_skills_dir, root / "builtin_skills")
         with (root / "server.log").open("w") as log:
-            process = subprocess.Popen([sys.executable, "-m", "laxcode.main", "--config", str(private_config)],
+            process = subprocess.Popen([sys.executable, "-m", "laxagent.main", "--config", str(private_config)],
                                        stdout=log, stderr=log)
             try:
                 async with httpx2.AsyncClient(base_url=f"http://127.0.0.1:{ports[0]}", trust_env=False, timeout=400) as api:

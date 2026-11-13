@@ -5,11 +5,11 @@ from dataclasses import replace
 import httpx2
 import pytest
 
-from laxcode.config import load_config
-from laxcode.tools.executor import execute_tool
-from laxcode.tools.registry import tool_definitions
-from laxcode.tools.results import format_result
-from laxcode.web_search import MAX_RESPONSE_BYTES, MAX_RESULT_BYTES, SEARCH_URL, WebSearchService
+from laxagent.config import load_config
+from laxagent.tools.executor import execute_tool
+from laxagent.tools.registry import tool_definitions
+from laxagent.tools.results import format_result
+from laxagent.web_search import MAX_RESPONSE_BYTES, MAX_RESULT_BYTES, SEARCH_URL, WebSearchService
 from tool_helpers import tool_context
 
 

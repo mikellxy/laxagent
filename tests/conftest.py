@@ -10,10 +10,10 @@ from alembic import command
 from alembic.config import Config
 from sqlalchemy import text
 
-from laxcode.runtime.events import EventStore
-from laxcode.config import DatabaseConfig
-from laxcode.storage.database import Database
-from laxcode.storage.repositories import Repository
+from laxagent.runtime.events import EventStore
+from laxagent.config import DatabaseConfig
+from laxagent.storage.database import Database
+from laxagent.storage.repositories import Repository
 
 
 @pytest.fixture

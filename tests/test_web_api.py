@@ -6,11 +6,11 @@ import pytest
 from sqlalchemy import event, func, select
 from sqlalchemy.exc import IntegrityError
 
-from laxcode.agent.context import AgentContext
-from laxcode.api.app import create_app
-from laxcode.config import AppConfig
-from laxcode.layout import get_user_data_dir
-from laxcode.storage.models import Message, Project, Session, SessionMessage, User
+from laxagent.agent.context import AgentContext
+from laxagent.api.app import create_app
+from laxagent.config import AppConfig
+from laxagent.layout import get_user_data_dir
+from laxagent.storage.models import Message, Project, Session, SessionMessage, User
 
 
 @pytest.fixture

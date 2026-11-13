@@ -26,7 +26,7 @@ npm run build
 从仓库根目录启动：
 
 ```sh
-uv run python -m laxcode.main --config config/config.json
+uv run python -m laxagent.main --config config/config.json
 ```
 
 浏览器访问 API 端口的 `/`。`main.py` 保持原样，只启动 Router 和 API。

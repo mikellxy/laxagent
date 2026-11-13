@@ -7,14 +7,14 @@ from dataclasses import replace
 
 import pytest
 
-from laxcode.tools.builtin.edit_file import EditFileArgs, EditFileError, TextEdit, edit_file
-from laxcode.tools.executor import execute_tool
+from laxagent.tools.builtin.edit_file import EditFileArgs, EditFileError, TextEdit, edit_file
+from laxagent.tools.executor import execute_tool
 from tool_helpers import tool_context
-from laxcode.tools.registry import TOOLS, tool_definitions
-from laxcode.tools.results import format_result
+from laxagent.tools.registry import TOOLS, tool_definitions
+from laxagent.tools.results import format_result
 
-module = importlib.import_module("laxcode.tools.builtin.edit_file")
-filesystem = importlib.import_module("laxcode.tools.workspace")
+module = importlib.import_module("laxagent.tools.builtin.edit_file")
+filesystem = importlib.import_module("laxagent.tools.workspace")
 
 
 def edit(workspace, pairs, path="text.txt"):

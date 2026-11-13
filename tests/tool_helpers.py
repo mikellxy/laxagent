@@ -1,8 +1,8 @@
 from pathlib import Path
 from unittest.mock import Mock
 
-from laxcode.storage.repositories import Repository
-from laxcode.tools.context import ToolContext
+from laxagent.storage.repositories import Repository
+from laxagent.tools.context import ToolContext
 
 
 def tool_context(workspace: str | Path) -> ToolContext:

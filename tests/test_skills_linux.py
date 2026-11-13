@@ -12,9 +12,9 @@ from uuid import uuid4
 
 import pytest
 
-from laxcode import layout
-from laxcode.sandbox.bubblewrap import BWRAP
-from laxcode.tools.executor import execute_tool
+from laxagent import layout
+from laxagent.sandbox.bubblewrap import BWRAP
+from laxagent.tools.executor import execute_tool
 from tool_helpers import tool_context
 
 pytestmark = [pytest.mark.sandbox_linux, pytest.mark.anyio]

@@ -14,8 +14,8 @@ from uuid import uuid4
 
 import pytest
 
-from laxcode.sandbox import bubblewrap as backend
-from laxcode.tools.executor import execute_tool
+from laxagent.sandbox import bubblewrap as backend
+from laxagent.tools.executor import execute_tool
 from tool_helpers import tool_context
 
 pytestmark = [pytest.mark.sandbox_linux, pytest.mark.anyio]
@@ -257,8 +257,8 @@ async def test_status_is_drained_even_after_process_exit(area, monkeypatch):
 async def test_parent_crash_cleans_sandbox(area):
     token = "laxcode-" + uuid4().hex
     command = f"touch ready; setsid bash -c 'trap \"\" TERM; while :; do sleep 1; done' {token} & wait"
-    code = ("import asyncio,sys; from laxcode.tools.builtin.bash import BashArgs,bash; "
-            "from unittest.mock import Mock; from laxcode.tools.context import ToolContext; "
+    code = ("import asyncio,sys; from laxagent.tools.builtin.bash import BashArgs,bash; "
+            "from unittest.mock import Mock; from laxagent.tools.context import ToolContext; "
             "asyncio.run(bash(ToolContext('test-user',Mock(),sys.argv[1]),"
             "BashArgs(command=sys.argv[2],timeout_seconds=None)))")
     worker = await asyncio.create_subprocess_exec(sys.executable, "-c", code, str(area[1]), command,

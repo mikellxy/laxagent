@@ -7,9 +7,9 @@ from alembic.config import Config
 import pytest
 from sqlalchemy import text
 
-from laxcode.agent.context import AgentContext
-from laxcode.agent.graph import build_graph
-from laxcode.models.responses import append_reasoning, completed_reasoning
+from laxagent.agent.context import AgentContext
+from laxagent.agent.graph import build_graph
+from laxagent.models.responses import append_reasoning, completed_reasoning
 from model_helpers import ModelStream, client_for, completed
 from storage_helpers import message_snapshot, run_agent
 from test_agent import MemoryEvents, state

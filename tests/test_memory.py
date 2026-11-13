@@ -7,16 +7,16 @@ import pytest
 from sqlalchemy import event, inspect, select
 from sqlalchemy.exc import IntegrityError
 
-from laxcode.agent.context import AgentContext
-from laxcode.agent.graph import build_graph
-from laxcode.context.prompts import system_prompt
-from laxcode.memory import MEMORY_CATEGORY_DESCRIPTIONS, MemoryCategory, MemoryUnavailableError
-from laxcode.run_errors import RunError
-from laxcode.storage.database import DatabaseError
-from laxcode.storage.models import Memory, SessionMessage
-from laxcode.tools.context import ToolContext
-from laxcode.tools.executor import execute_tool
-from laxcode.tools.registry import tool_definitions
+from laxagent.agent.context import AgentContext
+from laxagent.agent.graph import build_graph
+from laxagent.context.prompts import system_prompt
+from laxagent.memory import MEMORY_CATEGORY_DESCRIPTIONS, MemoryCategory, MemoryUnavailableError
+from laxagent.run_errors import RunError
+from laxagent.storage.database import DatabaseError
+from laxagent.storage.models import Memory, SessionMessage
+from laxagent.tools.context import ToolContext
+from laxagent.tools.executor import execute_tool
+from laxagent.tools.registry import tool_definitions
 from tool_helpers import tool_context
 from model_helpers import ModelStream, client_for, completed
 from storage_helpers import message_snapshot, run_agent

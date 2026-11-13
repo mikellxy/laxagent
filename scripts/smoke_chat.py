@@ -11,11 +11,11 @@ from uuid import uuid4
 import httpx2
 from sqlalchemy import select
 
-from laxcode.config import load_config
-from laxcode.layout import get_project_workdir, get_session_config_dir, get_user_data_dir
-from laxcode.storage.database import Database
-from laxcode.storage.models import Message, Session, SessionMessage
-from laxcode.storage.repositories import Repository
+from laxagent.config import load_config
+from laxagent.layout import get_project_workdir, get_session_config_dir, get_user_data_dir
+from laxagent.storage.database import Database
+from laxagent.storage.models import Message, Session, SessionMessage
+from laxagent.storage.repositories import Repository
 
 
 async def chat_round(api, session_id, model, query):

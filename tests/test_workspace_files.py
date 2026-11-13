@@ -6,11 +6,11 @@ from uuid import uuid4
 import pytest
 from PIL import Image
 
-from laxcode.layout import get_project_workdir
-from laxcode.tools.builtin.edit_file import EditFileArgs, EditFileError, edit_file
-from laxcode.tools.builtin.write_file import WriteFileArgs, write_file
-from laxcode.tools.builtin.list_written_files import ListWrittenFilesArgs, list_written_files
-from laxcode.workspace_files import SHORT_BYTES, TEXT_BYTES, IMAGE_BYTES, open_file, preview, WorkspaceFileError
+from laxagent.layout import get_project_workdir
+from laxagent.tools.builtin.edit_file import EditFileArgs, EditFileError, edit_file
+from laxagent.tools.builtin.write_file import WriteFileArgs, write_file
+from laxagent.tools.builtin.list_written_files import ListWrittenFilesArgs, list_written_files
+from laxagent.workspace_files import SHORT_BYTES, TEXT_BYTES, IMAGE_BYTES, open_file, preview, WorkspaceFileError
 from test_chat import chat_api
 from tool_helpers import tool_context
 

@@ -9,13 +9,13 @@ from sqlalchemy import event, inspect, select
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.exc import IntegrityError
 
-from laxcode.agent.context import AgentContext
-from laxcode.agent.nodes.preparation import prepare
-from laxcode.context.prompts import system_prompt
-from laxcode.layout import get_project_workdir
-from laxcode.api.app import create_app
-from laxcode.storage.database import Database, DatabaseError
-from laxcode.storage.models import Message, Session, SessionMessage, User
+from laxagent.agent.context import AgentContext
+from laxagent.agent.nodes.preparation import prepare
+from laxagent.context.prompts import system_prompt
+from laxagent.layout import get_project_workdir
+from laxagent.api.app import create_app
+from laxagent.storage.database import Database, DatabaseError
+from laxagent.storage.models import Message, Session, SessionMessage, User
 from storage_helpers import message_snapshot
 
 
@@ -49,7 +49,7 @@ async def test_migration_has_no_foreign_keys_and_nullable_tool_columns(repositor
 
 @pytest.mark.anyio
 async def test_creation_apis_and_ownership(repository, config_data):
-    from laxcode.config import AppConfig
+    from laxagent.config import AppConfig
     app = create_app(AppConfig.model_validate(config_data))
     app.state.agent_context = AgentContext(None, None, repository)
     user_id = str(uuid4())
@@ -164,7 +164,7 @@ async def test_database_connect_failure_is_sanitized(migrated_database):
 
 @pytest.mark.anyio
 async def test_startup_rejects_wrong_migration_revision(monkeypatch, migrated_database):
-    monkeypatch.setattr("laxcode.storage.database.SCHEMA_REVISION", "future-revision")
+    monkeypatch.setattr("laxagent.storage.database.SCHEMA_REVISION", "future-revision")
     with pytest.raises(DatabaseError, match="schema is not current"):
         async with Database.open(migrated_database):
             pass

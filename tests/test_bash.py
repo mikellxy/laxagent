@@ -9,13 +9,13 @@ from types import SimpleNamespace
 
 import pytest
 
-from laxcode.sandbox.bubblewrap import OUTPUT_HALF, OutputBuffer, SandboxError, _StatusPipe
-from laxcode.tools.executor import execute_tool
+from laxagent.sandbox.bubblewrap import OUTPUT_HALF, OutputBuffer, SandboxError, _StatusPipe
+from laxagent.tools.executor import execute_tool
 from tool_helpers import tool_context
-from laxcode.tools.registry import tool_definitions
+from laxagent.tools.registry import tool_definitions
 
-tool = importlib.import_module("laxcode.tools.builtin.bash")
-backend = importlib.import_module("laxcode.sandbox.bubblewrap")
+tool = importlib.import_module("laxagent.tools.builtin.bash")
+backend = importlib.import_module("laxagent.sandbox.bubblewrap")
 
 
 @pytest.mark.parametrize("size", [0, 10, OUTPUT_HALF, OUTPUT_HALF * 2, OUTPUT_HALF * 2 + 1, 1_000_000])

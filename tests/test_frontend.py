@@ -4,8 +4,8 @@ from types import SimpleNamespace
 import httpx2
 import pytest
 
-from laxcode.api.app import create_app
-from laxcode.config import AppConfig, load_config
+from laxagent.api.app import create_app
+from laxagent.config import AppConfig, load_config
 
 
 def test_frontend_path_is_relative_to_config(config_data, tmp_path):

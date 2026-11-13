@@ -9,12 +9,12 @@ from uuid import uuid4
 
 import pytest
 
-from laxcode import layout
-from laxcode.skills import builtin_snapshots, initialize_skills, parse_metadata, skill_catalog, SkillError
-from laxcode.tools.builtin.skills import LoadSkillArgs, load_skill
-from laxcode.tools.executor import execute_tool
-from laxcode.tools.registry import tool_definitions
-from laxcode.tools.results import format_result
+from laxagent import layout
+from laxagent.skills import builtin_snapshots, initialize_skills, parse_metadata, skill_catalog, SkillError
+from laxagent.tools.builtin.skills import LoadSkillArgs, load_skill
+from laxagent.tools.executor import execute_tool
+from laxagent.tools.registry import tool_definitions
+from laxagent.tools.results import format_result
 from tool_helpers import tool_context
 from test_chat import chat_api, chat_path, payload, wait_run
 from model_helpers import ModelStream, client_for, completed
@@ -212,7 +212,7 @@ async def test_execution_requires_current_load_and_passes_literal_arguments(skil
         assert (Path(skill_dir) / "scripts/run.py").read_text() == "print('new')"
         assert not stop_event.is_set()
         return {"exit_code": 0}
-    monkeypatch.setattr(importlib.import_module("laxcode.tools.builtin.skills"), "run_bash", run)
+    monkeypatch.setattr(importlib.import_module("laxagent.tools.builtin.skills"), "run_bash", run)
     # A new ToolContext models a graph checkpoint round-trip.
     context = replace(context, loaded_skills=json.loads(json.dumps(context.loaded_skills)))
     assert (await call(context, "run_skill_scripts", **arguments))["result"] == {"exit_code": 0}
@@ -254,7 +254,7 @@ async def test_graph_load_survives_failed_model_and_resume(chat_api, monkeypatch
     def run(*args, **kwargs):
         executed.append(args)
         return {"exit_code": 0, "stdout": "restored"}
-    monkeypatch.setattr(importlib.import_module("laxcode.tools.builtin.skills"), "run_bash", run)
+    monkeypatch.setattr(importlib.import_module("laxagent.tools.builtin.skills"), "run_bash", run)
     streams = [response("load_skill", {"name": "manual"}, "load"), ModelStream([]),
                response("run_skill_scripts", {"name": "manual", "runner": "python3", "script": "scripts/run.py", "args": []}, "run"),
                ModelStream([completed("done")])]

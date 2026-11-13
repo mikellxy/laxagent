@@ -5,9 +5,9 @@ from uuid import uuid4
 import pytest
 from sqlalchemy import select
 
-from laxcode.storage.database import DatabaseError
-from laxcode.storage.models import Message, Run, Session, SessionMessage
-from laxcode.tools.executor import run_sync_tool
+from laxagent.storage.database import DatabaseError
+from laxagent.storage.models import Message, Run, Session, SessionMessage
+from laxagent.tools.executor import run_sync_tool
 from tool_helpers import tool_context
 from model_helpers import ModelStream, client_for, completed
 from storage_helpers import message_snapshot
@@ -51,7 +51,7 @@ async def test_cancel_before_worker_starts(chat_api):
     await h.context.events.create_run(run.id)
     await h.context.repository.request_cancellation(run.user_id, run.id, run.resume_time)
     async with h.manager.cancellation.results(run.id, run.resume_time) as sub:
-        from laxcode.runtime.cancellation import CancelCommand
+        from laxagent.runtime.cancellation import CancelCommand
         h.manager._dispatch(run)
         async with asyncio.timeout(3):
             await h.manager.cancellation.wait_result(sub, CancelCommand(run_id=run.id, resume_time=0))
@@ -251,7 +251,7 @@ async def test_guest_bootstrap_does_not_reuse_deleted_session(chat_api):
 
 @pytest.mark.anyio
 async def test_cancel_in_tool_turn_keeps_completed_pairs_for_next_chat(chat_api, monkeypatch):
-    from laxcode.tools.registry import TOOLS, Tool
+    from laxagent.tools.registry import TOOLS, Tool
     from test_tool_loop import tool_response
     h = chat_api
     entered = asyncio.Event()
@@ -281,7 +281,7 @@ async def test_cancel_in_tool_turn_keeps_completed_pairs_for_next_chat(chat_api,
 
 @pytest.mark.anyio
 async def test_cancel_status_survives_event_publish_failure(chat_api, monkeypatch):
-    from laxcode.runtime.events import EventStoreError
+    from laxagent.runtime.events import EventStoreError
     h = chat_api
     entered = asyncio.Event()
     async with client_for(ModelStream([], wait=entered), []) as client:

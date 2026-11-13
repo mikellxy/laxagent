@@ -9,10 +9,10 @@ import pytest
 from PIL import Image
 from sqlalchemy import select
 
-from laxcode.appendices import InvalidAppendix, MAX_FILE_BYTES, materialize_input, validate_file
-from laxcode.layout import get_appendices_dir, get_project_workdir
-from laxcode.storage.database import DatabaseError
-from laxcode.storage.models import Appendix, Message, Run, SessionMessage
+from laxagent.appendices import InvalidAppendix, MAX_FILE_BYTES, materialize_input, validate_file
+from laxagent.layout import get_appendices_dir, get_project_workdir
+from laxagent.storage.database import DatabaseError
+from laxagent.storage.models import Appendix, Message, Run, SessionMessage
 from test_chat import chat_api, chat_path, payload, wait_run
 
 

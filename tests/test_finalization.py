@@ -2,11 +2,11 @@ import asyncio
 
 import pytest
 
-from laxcode.run_errors import make_run_error
-from laxcode.runtime.cancellation import CancelCommand, RunSnapshot
-from laxcode.runtime.finalization import RunFinalizer
-from laxcode.runtime.events import EventStoreError
-from laxcode.storage.database import DatabaseError
+from laxagent.run_errors import make_run_error
+from laxagent.runtime.cancellation import CancelCommand, RunSnapshot
+from laxagent.runtime.finalization import RunFinalizer
+from laxagent.runtime.events import EventStoreError
+from laxagent.storage.database import DatabaseError
 from model_helpers import ModelStream, client_for
 from test_chat import chat_api, chat_path, payload
 

@@ -15,7 +15,7 @@ import httpx2
 import pytest
 from openai import DefaultHttpx2Client, OpenAI
 
-from laxcode.runtime.events import EventStore
+from laxagent.runtime.events import EventStore
 
 
 @pytest.fixture(autouse=True)
@@ -36,7 +36,7 @@ def launch(config_data, tmp_path):
     log_path = tmp_path / "server.log"
     with log_path.open("w") as log:
         process = subprocess.Popen(
-            [sys.executable, "-m", "laxcode.main", "--config", str(config_path)],
+            [sys.executable, "-m", "laxagent.main", "--config", str(config_path)],
             cwd=Path(__file__).parents[1], stdout=log, stderr=log,
         )
         try:
@@ -165,9 +165,9 @@ def test_chat_returns_before_model_finishes_and_sse_disconnect_does_not_cancel(c
     dist.mkdir()
     (dist / "index.html").write_text("<html>chat frontend</html>")
     config_data["frontend"] = {"dist_dir": str(dist)}
-    from laxcode.config import DatabaseConfig
-    from laxcode.storage.database import Database
-    from laxcode.storage.repositories import Repository
+    from laxagent.config import DatabaseConfig
+    from laxagent.storage.database import Database
+    from laxagent.storage.repositories import Repository
 
     release = threading.Event()
     run_id = None

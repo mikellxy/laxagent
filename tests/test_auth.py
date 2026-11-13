@@ -10,12 +10,12 @@ from sqlalchemy import event, func, select
 from sqlalchemy.exc import OperationalError
 from sqlalchemy.orm import Session as SyncSession
 
-from laxcode.agent.context import AgentContext
-from laxcode.api.app import create_app
-from laxcode.api.auth import get_current_user
-from laxcode.config import AppConfig
-from laxcode.layout import get_user_data_dir
-from laxcode.storage.models import Project, Session, User
+from laxagent.agent.context import AgentContext
+from laxagent.api.app import create_app
+from laxagent.api.auth import get_current_user
+from laxagent.config import AppConfig
+from laxagent.layout import get_user_data_dir
+from laxagent.storage.models import Project, Session, User
 
 
 @pytest.fixture
@@ -82,7 +82,7 @@ async def test_invalid_login_does_not_create_user(login_api, repository, body):
 async def test_database_failure_rolls_back_and_never_signs_token(login_api, repository, monkeypatch, stage):
     user_id = str(uuid4())
     encode = Mock(side_effect=AssertionError("Token must not be signed before commit"))
-    monkeypatch.setattr("laxcode.api.auth.jwt.encode", encode)
+    monkeypatch.setattr("laxagent.api.auth.jwt.encode", encode)
 
     def fail(*args):
         raise OperationalError("forced failure", {}, RuntimeError("private database error"))

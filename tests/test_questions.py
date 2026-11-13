@@ -4,9 +4,9 @@ import json
 import pytest
 from pydantic import ValidationError
 
-from laxcode.tools.builtin.ask_user_question import AskUserQuestionArgs
-from laxcode.tools.executor import execute_tool
-from laxcode.runtime.events import EventStoreError
+from laxagent.tools.builtin.ask_user_question import AskUserQuestionArgs
+from laxagent.tools.executor import execute_tool
+from laxagent.runtime.events import EventStoreError
 from model_helpers import ModelStream, client_for, completed
 from storage_helpers import message_snapshot
 from test_chat import chat_api, chat_path, payload, wait_run
@@ -50,7 +50,7 @@ async def test_ordered_questions_checkpoint_each_tool_and_expose_answers(chat_ap
     async def track(name, arguments, **kwargs):
         calls.append(name)
         return await execute_tool(name, arguments, **kwargs)
-    monkeypatch.setattr('laxcode.agent.nodes.loop.execute_tool', track)
+    monkeypatch.setattr('laxagent.agent.nodes.loop.execute_tool', track)
     captured = []
     async with client_for([ModelStream([question_response(('write_file', 'ask_user_question', 'ask_user_question', 'write_file'))]),
                            ModelStream([completed('done')])], captured) as client:

@@ -6,13 +6,13 @@ import httpx2
 import pytest
 from sqlalchemy import select
 
-from laxcode.api.app import create_app
-from laxcode.runtime.cancellation import CancelCommand, CancelResult, RunSnapshot
-from laxcode.runtime.events import EventStore
-from laxcode.runtime.task_manager import TaskManager
-from laxcode.storage.database import Database, DatabaseError
-from laxcode.storage.models import Run
-from laxcode.storage.repositories import Repository
+from laxagent.api.app import create_app
+from laxagent.runtime.cancellation import CancelCommand, CancelResult, RunSnapshot
+from laxagent.runtime.events import EventStore
+from laxagent.runtime.task_manager import TaskManager
+from laxagent.storage.database import Database, DatabaseError
+from laxagent.storage.models import Run
+from laxagent.storage.repositories import Repository
 from model_helpers import ModelStream, client_for
 from test_chat import chat_api, chat_path, payload
 

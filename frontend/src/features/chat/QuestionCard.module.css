@@ -1,5 +1,8 @@
 .card, .answers { border: 1px solid #d9ddd2; border-radius: 12px; background: #fcfcfa; padding: 16px; overflow-wrap: anywhere; }
-.card { padding: 12px; margin-bottom: 8px; max-height: 45vh; overflow-y: auto; }
+.card { display: flex; flex-direction: column; min-height: 0; padding: 12px; margin-bottom: 8px; max-height: 45vh; }
+.body { min-height: 0; overflow-y: auto; overscroll-behavior-y: contain; }
+.heading, .composer { flex-shrink: 0; }
+.answerInput { display: flex; align-items: center; gap: 8px; flex: 1; min-width: 0; }
 .heading { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 12px; }
 .progress { display: flex; align-items: center; gap: 8px; margin-left: auto; color: var(--muted); font-size: 12px; white-space: nowrap; }
 .tabs, .choices, .actions { display: flex; flex-wrap: wrap; gap: 6px; }
@@ -19,3 +22,18 @@
 .answers { margin-bottom: 14px; white-space: pre-wrap; }
 .answers > div + div { border-top: 1px solid #e9e9e4; margin-top: 12px; padding-top: 12px; }
 .answers p { color: var(--muted); margin: 0 0 5px; font-size: 13px; }
+@media (max-width: 700px), (max-width: 1000px) and (pointer: coarse) {
+  .card { padding: 8px; margin-bottom: 0; max-height: calc(var(--viewport-height, 100dvh) * .65); }
+  .heading { gap: 0 6px; flex-wrap: nowrap; }
+  .tabs { flex: 1; min-width: 0; flex-wrap: nowrap; overflow-x: auto; }
+  .tabs button { white-space: nowrap; }
+  .progress { margin-left: 0; }
+  .progress > span { display: none; }
+  .card button { min-height: 44px; min-width: 44px; }
+  .choices { align-items: stretch; }
+  .body { flex: 1 1 auto; }
+  .composer { flex-wrap: wrap; padding: 0; border: 0; background: transparent; gap: 4px; }
+  .answerInput { flex-basis: 100%; border: 1px solid #d9ddd2; border-radius: 8px; padding: 0 8px; background: white; }
+  .composer input { width: 100%; min-height: 44px; font-size: 16px; }
+  .actions { width: 100%; justify-content: flex-end; }
+}

@@ -1,8 +1,7 @@
-import { expect, test } from '@playwright/test'
+import { expect, test, type Page } from '@playwright/test'
 
-test('question tabs submit answers, hide generic tool cards and restore answer history', async ({ page }) => {
+async function mockQuestions(page: Page, questions = [{ question: '使用哪种数据库？', choice: ['PostgreSQL', 'SQLite'] }, { question: '补充说明？', choice: [] }]) {
   const owner = '12345678-1234-4234-8234-123456789abc'
-  const questions = [{ question: '使用哪种数据库？', choice: ['PostgreSQL', 'SQLite'] }, { question: '补充说明？', choice: [] }]
   let status = 'paused', resumeTime = 0
   let answers: { question: string; answer: string }[] = []
   const run = () => ({ run_id: 1, session_id: 1, status, resume_time: resumeTime, model: 'p:a', error: null, error_code: null, error_desc: null })
@@ -27,6 +26,7 @@ test('question tabs submit answers, hide generic tool cards and restore answer h
     if (path === '/sessions/1') return reply({ ...session, next_msg_seq: status === 'success' ? 5 : 3, latest_run: run() })
     if (path === '/sessions/1/messages') return reply({ items: history(), has_more: false, next_before_seq: null })
     if (path === '/runs/1') return reply(run())
+    if (path === '/runs/1/cancel') { status = 'cancelled'; return reply(run()) }
     if (path === '/runs/1/answers') {
       const body = request.postDataJSON()
       expect(body.resume_time).toBe(0); expect(body.interrupt_id).toBe('question-1')
@@ -49,6 +49,10 @@ test('question tabs submit answers, hide generic tool cards and restore answer h
     }
     return reply({}, 404)
   })
+}
+
+test('question tabs submit answers, hide generic tool cards and restore answer history', async ({ page }) => {
+  await mockQuestions(page)
   await page.goto('/')
   await page.getByRole('button', { name: '以游客登录' }).click()
   await expect(page.getByLabel('回答问题', { exact: true })).toBeVisible()
@@ -67,4 +71,45 @@ test('question tabs submit answers, hide generic tool cards and restore answer h
   await expect(page.getByLabel('问答记录')).toContainText('PostgreSQL')
   await expect(page.getByLabel('工具调用', { exact: true })).toHaveCount(0)
   await page.screenshot({ path: 'test-results/questions-history.png', fullPage: true })
+})
+
+test.describe('mobile questions', () => {
+  test.use({ viewport: { width: 360, height: 640 }, hasTouch: true, isMobile: true })
+  test('long questions scroll independently while answers and stop remain accessible', async ({ page }) => {
+    await mockQuestions(page, [
+      { question: '请结合实际场景说明你的需求。'.repeat(30), choice: ['方案一', '方案二', '方案三'] },
+      { question: '补充说明？', choice: [] },
+    ])
+    await page.goto('/')
+    await page.getByRole('button', { name: '以游客登录' }).click()
+    await expect(page.getByLabel('回答问题', { exact: true })).toBeVisible()
+    await expect(page.getByRole('textbox', { name: '消息输入', exact: true })).not.toBeVisible()
+    for (const viewport of [{ width: 360, height: 640 }, { width: 320, height: 568 }, { width: 360, height: 360 }, { width: 844, height: 390 }]) {
+      await page.setViewportSize(viewport)
+      await expect(page.getByRole('button', { name: '下一题', exact: true })).toBeInViewport({ ratio: 1 })
+      await expect(page.getByRole('button', { name: '停止任务' })).toBeInViewport({ ratio: 1 })
+      await expect(page.getByRole('textbox', { name: '自填答案' })).toBeInViewport({ ratio: 1 })
+      expect((await page.getByLabel('消息列表', { exact: true }).boundingBox())!.height).toBeGreaterThan(30)
+      expect(await page.getByRole('tabpanel').evaluate(element => element.scrollHeight > element.clientHeight)).toBe(true)
+    }
+    await page.setViewportSize({ width: 360, height: 640 })
+    await page.getByRole('textbox', { name: '自填答案' }).fill('我的手机回复')
+    await page.getByRole('button', { name: '下一题', exact: true }).click()
+    await page.screenshot({ path: 'test-results/mobile-question.png' })
+    await page.getByRole('button', { name: '提交', exact: true }).click()
+    await expect(page.getByLabel('问答记录')).toContainText('我的手机回复')
+    await expect(page.getByRole('textbox', { name: '消息输入', exact: true })).toBeVisible()
+  })
+
+  test('stop cancels instead of submitting skipped answers', async ({ page }) => {
+    await mockQuestions(page)
+    const posts: string[] = []
+    page.on('request', request => { if (request.method() === 'POST') posts.push(new URL(request.url()).pathname) })
+    await page.goto('/')
+    await page.getByRole('button', { name: '以游客登录' }).click()
+    await page.getByRole('button', { name: '停止任务' }).click()
+    await expect(page.getByRole('button', { name: '继续', exact: true })).toBeVisible()
+    expect(posts).toContain('/api/v1/runs/1/cancel')
+    expect(posts).not.toContain('/api/v1/runs/1/answers')
+  })
 })

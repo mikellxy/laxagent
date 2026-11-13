@@ -19,6 +19,16 @@ button:focus-visible, select:focus-visible { outline: 2px solid #83afe2; outline
 
 .mainColumn { display: flex; flex-direction: column; flex: 1; min-width: 0; min-height: 0; }
 .mainHeader { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 16px; padding: 10px 40px 2px; flex: none; }
-@media (max-width: 700px) { .mainHeader { padding: 8px 16px 2px; } }
-
-@media (max-width: 700px) { .shell { flex-direction: column; } }
+.mobileHeader { display: flex; align-items: center; gap: 8px; flex: none; min-height: 52px; padding: env(safe-area-inset-top, 0px) 8px 0; border-bottom: 1px solid var(--border); }
+.mobileHeader > span { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 600; }
+.mobileHeader button, .mobileNavigationHeading button { display: inline-flex; align-items: center; justify-content: center; min-width: 44px; min-height: 44px; flex-shrink: 0; border-radius: 8px; }
+.mobileHeader .copySession { gap: 5px; font-size: 12px; color: #65685f; }
+.mobileNavigation { position: fixed; inset: var(--viewport-top, 0px) auto auto 0; margin: 0; padding: 0; width: min(360px, 92vw); max-width: none; height: var(--viewport-height, 100dvh); max-height: none; border: 0; background: var(--sidebar); color: var(--text); }
+.mobileNavigation::backdrop { background: #171e2566; }
+.mobileNavigationContent { display: flex; flex-direction: column; min-height: 100%; padding: env(safe-area-inset-top, 0px) env(safe-area-inset-right, 0px) env(safe-area-inset-bottom, 0px) env(safe-area-inset-left, 0px); }
+.mobileNavigationHeading { display: flex; justify-content: space-between; align-items: center; padding: 4px 12px; }
+.mobileSettings { padding: 16px; border-top: 1px solid var(--border); margin-top: auto; }
+@media (max-width: 700px), (max-width: 1000px) and (pointer: coarse) {
+  body { overflow: hidden; }
+  .shell { position: fixed; top: var(--viewport-top, 0px); left: 0; width: 100%; height: var(--viewport-height, 100dvh); padding-left: env(safe-area-inset-left, 0px); padding-right: env(safe-area-inset-right, 0px); }
+}

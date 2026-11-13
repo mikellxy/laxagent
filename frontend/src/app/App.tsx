@@ -6,8 +6,12 @@ import { MemoryControls } from '../features/memory/MemoryControls'
 import { Chat, UserIdBar } from '../features/chat/Chat'
 import { selectedSession, selectSession } from '../lib/preferences'
 import { messageOf } from '../api/errors'
+import { MobileNavigation } from '../features/projects/MobileNavigation'
+import { useMobileLayout, useMobileViewport } from '../lib/mobile'
 
 export function App() {
+  const mobile = useMobileLayout()
+  useMobileViewport()
   const [owner, setOwner] = useState<string | null>(null)
   const [selected, setSelected] = useState<number | null>(null)
   const [busy, setBusy] = useState(true)
@@ -45,12 +49,12 @@ export function App() {
       }}>{retryBootstrap ? '重试' : '以游客登录'}</button>}
     <span aria-hidden className="loginWatermark">LAXCODE</span>
   </div>
-  return <div className="shell"><Sidebar owner={owner} selected={selected} onSelect={select} onDeleted={deleted} />
+  return <div className="shell">{!mobile && <Sidebar owner={owner} selected={selected} onSelect={select} onDeleted={deleted} />}
     <div className="mainColumn">
-    <header className="mainHeader">
+    {mobile ? <MobileNavigation owner={owner} selected={selected} onSelect={select} onDeleted={deleted} /> : <header className="mainHeader">
       {selected !== null && <UserIdBar key={`${owner}:${selected}`} owner={owner} sessionId={selected} />}
       <MemoryControls key={owner} owner={owner} />
-    </header>
+    </header>}
     {selected !== null ? <Chat key={`${owner}:${selected}`} owner={owner} sessionId={selected} onMissing={missing} /> : <main className="blank" />}</div>
   </div>
 }

@@ -8,3 +8,8 @@
 .actions .primary { background: var(--accent); border-color: var(--accent); color: white; }
 .description { font-size: 13px; line-height: 1.65; color: var(--muted); overflow-wrap: anywhere; }
 .actions .danger { background: #d93832; border-color: #c42e29; color: white; }
+@media (max-width: 700px), (max-width: 1000px) and (pointer: coarse) {
+  .dialog { position: fixed; inset: calc(var(--viewport-top, 0px) + var(--viewport-height, 100dvh) / 2) 0 auto; margin: 0 auto; transform: translateY(-50%); max-width: calc(100vw - 24px); max-height: calc(var(--viewport-height, 100dvh) - 24px); padding: 16px; }
+  .dialog input { min-height: 44px; font-size: 16px; }
+  .actions button { min-height: 44px; }
+}

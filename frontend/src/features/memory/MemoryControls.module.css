@@ -34,5 +34,11 @@
 .confirm p { font-size: 13px; line-height: 1.7; }
 .confirmAbstract { max-height: 120px; overflow: auto; overflow-wrap: anywhere; white-space: pre-wrap; }
 .confirmActions { display: flex; justify-content: flex-end; gap: 16px; margin-top: 20px; }
-@media (max-width: 700px) { .drawer { width: 100vw; padding: 18px; } }
+@media (max-width: 700px), (max-width: 1000px) and (pointer: coarse) {
+  .drawer { inset: var(--viewport-top, 0px) 0 auto; width: 100vw; height: var(--viewport-height, 100dvh); max-height: var(--viewport-height, 100dvh); padding: max(12px, env(safe-area-inset-top, 0px)) 16px max(16px, env(safe-area-inset-bottom, 0px)); }
+  .buttons { justify-content: space-between; }
+  .switch, .open, .drawerHeader button, .actions button, .confirmActions button { min-height: 44px; min-width: 44px; }
+  .row { grid-template-columns: 32px minmax(0, 1fr) minmax(0, 1.3fr) 44px; gap: 4px; }
+  .row button { min-height: 44px; }
+}
 @media (prefers-reduced-motion: reduce) { .track > span { transition: none; } }

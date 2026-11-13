@@ -23,4 +23,14 @@ button.card:hover { border-color: #9ea99c; background: #fafbf9; }
 .preview > img { display: block; max-width: 85vw; max-height: 75vh; object-fit: contain; }
 .previewToolbar { display: flex; align-items: center; gap: 16px; margin-bottom: 12px; }
 .previewToolbar > span { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-@media (max-width: 600px) { .card { max-width: 100%; } }
+@media (max-width: 700px), (max-width: 1000px) and (pointer: coarse) {
+  .card { max-width: 100%; }
+  .card:has(.remove) { padding-right: 48px; }
+  .remove, .plus { width: 44px; height: 44px; }
+  .remove { top: 0; right: 0; background: transparent; }
+  .menu button { min-height: 44px; }
+  .preview { max-height: calc(var(--viewport-height, 100dvh) - 24px); padding: 12px; }
+  .preview > img { max-height: calc(var(--viewport-height, 100dvh) - 110px); }
+  .previewToolbar { gap: 4px; }
+  .previewToolbar button { min-width: 44px; min-height: 44px; }
+}

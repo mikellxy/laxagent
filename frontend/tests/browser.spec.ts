@@ -173,6 +173,90 @@ async function mockAPI(page: Page) {
   return state
 }
 
+test.describe('mobile layout', () => {
+  test.use({ viewport: { width: 390, height: 844 }, hasTouch: true, isMobile: true })
+
+  test('navigation, combined feedback ID, session actions and draft survive rotation', async ({ page }) => {
+    const state = await mockAPI(page)
+    await page.addInitScript(() => {
+      Object.defineProperty(navigator, 'clipboard', { value: { writeText: async (text: string) => { document.documentElement.dataset.copied = text } } })
+    })
+    await page.goto('/')
+    await page.getByRole('button', { name: '以游客登录' }).click()
+    const input = page.getByRole('textbox', { name: '消息输入' })
+    await input.fill('尚未发送的草稿')
+    await expect(page.locator('.mobileHeader')).toContainText('laxcode')
+    await expect(page.getByRole('navigation', { name: '项目和会话' })).not.toBeVisible()
+    await page.getByRole('button', { name: '复制会话 ID' }).click()
+    await expect(page.locator('html')).toHaveAttribute('data-copied', `user_id: ${state.projects[0].user_id}\nsession_id: 1`)
+    await expect(page.locator('.mobileHeader')).not.toContainText(state.projects[0].user_id)
+    await expect(page.locator('.mobileHeader')).not.toContainText('session_id')
+    await page.getByRole('button', { name: '打开项目和设置' }).click()
+    await page.getByRole('button', { name: '更多会话操作 laxcode' }).click()
+    await page.getByRole('button', { name: '修改会话名', exact: true }).click()
+    await page.getByRole('textbox', { name: '名称' }).fill('手机会话')
+    // Simulate a keyboard that shrinks/pans only the visual viewport (Safari).
+    await page.evaluate(() => {
+      Object.defineProperties(window.visualViewport!, { height: { configurable: true, value: 320 }, offsetTop: { configurable: true, value: 120 } })
+      window.visualViewport!.dispatchEvent(new Event('resize'))
+    })
+    const renameBox = (await page.getByRole('dialog', { name: '修改会话名', exact: true }).boundingBox())!
+    expect(renameBox.y).toBeGreaterThanOrEqual(120)
+    expect(renameBox.y + renameBox.height).toBeLessThanOrEqual(440)
+    await page.evaluate(() => {
+      Reflect.deleteProperty(window.visualViewport!, 'height'); Reflect.deleteProperty(window.visualViewport!, 'offsetTop')
+      window.visualViewport!.dispatchEvent(new Event('resize'))
+    })
+    await page.getByRole('button', { name: '确定', exact: true }).click()
+    await page.getByRole('button', { name: '手机会话', exact: true }).click()
+    await expect(page.getByRole('dialog', { name: '项目和设置', exact: true })).not.toBeVisible()
+    await expect(page.locator('.mobileHeader')).toContainText('手机会话')
+    await expect(input).toHaveValue('尚未发送的草稿')
+    await page.setViewportSize({ width: 844, height: 390 })
+    await expect(page.getByRole('button', { name: '打开项目和设置' })).toBeVisible()
+    await expect(input).toHaveValue('尚未发送的草稿')
+    await expect(page.getByRole('button', { name: '发送消息' })).toBeInViewport({ ratio: 1 })
+    await page.getByRole('button', { name: '打开项目和设置' }).click()
+    await page.getByRole('button', { name: 'LaxCode 新会话' }).click()
+    await expect(page.getByRole('dialog', { name: '项目和设置', exact: true })).not.toBeVisible()
+    await expect(page.locator('.mobileHeader')).toContainText('会话 2')
+    await page.getByRole('button', { name: '复制会话 ID' }).click()
+    await expect(page.locator('html')).toHaveAttribute('data-copied', `user_id: ${state.projects[0].user_id}\nsession_id: 2`)
+  })
+
+  test('images fit and long drafts with five attachments keep send and upload accessible', async ({ page }) => {
+    const state = await mockAPI(page)
+    await page.route('https://mobile.invalid/image.svg', route => route.fulfill({ contentType: 'image/svg+xml', body: '<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="400"><rect width="1200" height="400" fill="lightblue"/></svg>' }))
+    await page.goto('/')
+    await page.getByRole('button', { name: '以游客登录' }).click()
+    await expect(page.getByRole('textbox', { name: '消息输入' })).toBeVisible()
+    state.messages.set(1, [{ seq: 1, role: 'assistant', content: '![大图](https://mobile.invalid/image.svg)\n\n' + '长链接内容'.repeat(100) }])
+    await page.reload()
+    await page.getByAltText('大图').evaluate((image: HTMLImageElement) => image.decode())
+    const messages = page.getByLabel('消息列表', { exact: true })
+    expect(await messages.evaluate(element => element.scrollWidth <= element.clientWidth)).toBe(true)
+    const input = page.getByRole('textbox', { name: '消息输入' })
+    await input.fill('第一行')
+    await input.press('End'); await input.press('Enter')
+    await expect(input).toHaveValue('第一行\n')
+    expect(state.posts.filter(post => post.path.endsWith('/chat'))).toHaveLength(0)
+    await input.fill('多行草稿\n'.repeat(30))
+    await page.getByLabel('选择文件', { exact: true }).setInputFiles(Array.from({ length: 5 }, (_, i) => ({ name: `文档${i}.txt`, mimeType: 'text/plain', buffer: Buffer.from('content') })))
+    await expect(page.getByText('已上传', { exact: true })).toHaveCount(5)
+    for (const viewport of [{ width: 390, height: 844 }, { width: 320, height: 568 }, { width: 360, height: 360 }, { width: 844, height: 390 }]) {
+      await page.setViewportSize(viewport)
+      await expect(page.getByRole('button', { name: '发送消息' })).toBeInViewport({ ratio: 1 })
+      expect((await messages.boundingBox())!.height).toBeGreaterThan(40)
+      expect(await messages.evaluate(element => element.scrollWidth <= element.clientWidth)).toBe(true)
+      await page.getByRole('button', { name: '添加附件' }).click()
+      await expect(page.getByRole('menuitem', { name: '上传图片' })).toBeInViewport({ ratio: 1 })
+      await page.getByRole('button', { name: '添加附件' }).click()
+    }
+    await page.setViewportSize({ width: 390, height: 844 })
+    await page.screenshot({ path: 'test-results/mobile-composer.png' })
+  })
+})
+
 test('guest bootstrap, empty project action, rename, cookie restore and model preferences', async ({ page }) => {
   const state = await mockAPI(page)
   await page.goto('/')
@@ -512,6 +596,7 @@ test('memory drawer groups, full text, deletion failures, focus and responsive l
   await expect(open).toBeFocused()
   await page.setViewportSize({ width: 390, height: 844 })
   state.memories = [{ id: 12, category: 'profile', abstract: '小屏摘要', detail: longText }]
+  await page.getByRole('button', { name: '打开项目和设置' }).click()
   await open.click()
   await expect(drawer).toBeVisible()
   await expect(drawer.getByRole('button', { name: '记忆 12 详情', exact: true })).toBeVisible()

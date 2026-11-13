@@ -11,6 +11,7 @@ import { DraftAttachments, MessageAttachments, UploadMenu, useAppendices } from 
 import { groupTimeline, latestWorkLine, processKey, type WorkGroup } from './timeline'
 import type { Message, ToolMessage } from '../../api/types'
 import styles from './Chat.module.css'
+import { useMobileLayout } from '../../lib/mobile'
 
 function argumentsText(value: string) { try { return JSON.stringify(JSON.parse(value), null, 2) } catch { return value } }
 interface Fold { open: boolean; toggle: () => void }
@@ -99,6 +100,7 @@ export function UserIdBar({ owner, sessionId }: { owner: string; sessionId: numb
 }
 
 export function Chat({ owner, sessionId, onMissing }: { owner: string; sessionId: number; onMissing: () => void }) {
+  const mobile = useMobileLayout()
   const conversation = useMemo(() => new Conversation(sessionId), [sessionId])
   const snapshot = useSyncExternalStore(conversation.subscribe, conversation.getSnapshot)
   const canCancel = snapshot.detail?.latest_run?.status === 'waiting' || snapshot.detail?.latest_run?.status === 'running' || snapshot.detail?.latest_run?.status === 'paused'
@@ -176,7 +178,7 @@ export function Chat({ owner, sessionId, onMissing }: { owner: string; sessionId
       }
       remember()
     })
-    remember(); observer.observe(timeline)
+    remember(); observer.observe(timeline); observer.observe(element)
     element.addEventListener('scroll', remember)
     return () => { observer.disconnect(); element.removeEventListener('scroll', remember) }
   }, [sessionId, snapshot.ready])
@@ -232,7 +234,7 @@ export function Chat({ owner, sessionId, onMissing }: { owner: string; sessionId
       }}>
       <div className={styles.timeline}>{rows.map(row => <div key={row.key} data-anchor={row.key} data-members={row.members}>{row.node}</div>)}</div>
     </div>
-    <div className={styles.footer}>
+    <div className={`${styles.footer} ${snapshot.question ? styles.questionMode : ''}`}>
       {!following && <button className={styles.latest} onClick={() => { anchor.current = null; setFollow(true); moveScroll(el => { el.scrollTop = el.scrollHeight }) }}><ArrowDown size={14} />回到最新</button>}
       {(snapshot.error || catalog.error) && <div className="error" role="alert">{snapshot.error ?? messageOf(catalog.error)}</div>}
       {canResume && <div className={styles.resume}>
@@ -244,7 +246,10 @@ export function Chat({ owner, sessionId, onMissing }: { owner: string; sessionId
       </div>}
       {snapshot.question && <QuestionCard key={`${snapshot.question.run_id}:${snapshot.question.interrupt_id}`}
         pending={snapshot.question} submitting={snapshot.answering || snapshot.cancelling} onSubmit={answers => void conversation.answer(answers)} />}
+      {snapshot.question && <button type="button" className={styles.questionStop} disabled={snapshot.cancelling || snapshot.answering}
+        onClick={() => void conversation.cancel()}><Square size={14} />{snapshot.cancelling ? '正在取消…' : '停止任务'}</button>}
       <div className={styles.composer}>
+        <div className={styles.composerBody}>
         {!!attachments.items.length && <DraftAttachments items={attachments.items} remove={attachments.remove} retry={attachments.retry} />}
         {attachments.error && <div className="error" role="alert">{attachments.error}</div>}
         {incompatible && <div className={styles.attachmentHint} role="status">{snapshot.detail?.has_appendix
@@ -252,8 +257,9 @@ export function Chat({ owner, sessionId, onMissing }: { owner: string; sessionId
           : '当前模型不支持附件，请更换模型或移除附件'}</div>}
         <textarea ref={textarea} aria-label="消息输入" value={draft} rows={2} onChange={e => setDraft(e.target.value)}
           onKeyDown={event => {
-            if (event.key === 'Enter' && !event.shiftKey && !event.nativeEvent.isComposing && event.nativeEvent.keyCode !== 229) { event.preventDefault(); void send() }
+            if (!mobile && event.key === 'Enter' && !event.shiftKey && !event.nativeEvent.isComposing && event.nativeEvent.keyCode !== 229) { event.preventDefault(); void send() }
           }} />
+        </div>
         <div className={styles.toolbar}>
           <UploadMenu disabled={!multimodal} add={attachments.add} />
           <div className={styles.model}>

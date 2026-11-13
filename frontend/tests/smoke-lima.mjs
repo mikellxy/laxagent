@@ -76,7 +76,7 @@ try {
   if (!eventRequests.some(url => url.endsWith(`/runs/${firstRun}/events`))) throw new Error('No SSE subscription')
   console.log(JSON.stringify({ before_reload: beforeReload, sse_connections: eventRequests.length, user_id: owner, project_id: project, session_id: session }))
   const marker = `WEB-TOOL-${Date.now()}`
-  inVM(`from pathlib import Path\nfrom laxcode.layout import get_project_workdir\np = get_project_workdir(${JSON.stringify(owner)}, ${project}) / 'hello.txt'\nassert p.parent.is_dir()\np.write_text(${JSON.stringify(marker + '\n')}, encoding='utf-8')`)
+  inVM(`from pathlib import Path\nfrom laxagent.layout import get_project_workdir\np = get_project_workdir(${JSON.stringify(owner)}, ${project}) / 'hello.txt'\nassert p.parent.is_dir()\np.write_text(${JSON.stringify(marker + '\n')}, encoding='utf-8')`)
   const secondRun = await send('请调用 read_file 读取 hello.txt 的第一行，然后原样回复文件内容。')
   await waitRun(secondRun)
   await expect(page.getByLabel('工具调用', { exact: true }).first()).toContainText('read_file', { timeout: 20_000 })
@@ -90,7 +90,7 @@ try {
   await group.getByRole('button', { name: 'Web 验收 新会话', exact: true }).click()
   await expect(page.getByRole('button', { name: '会话 2', exact: true })).toHaveAttribute('aria-current', 'page')
   const paginationSession = (await request(`/projects/${project}/sessions`)).at(-1).id
-  inVM(`import asyncio\nfrom pathlib import Path\nfrom laxcode.config import load_config\nfrom laxcode.storage.database import Database\nfrom laxcode.storage.repositories import Repository\nasync def seed():\n    cfg = load_config(Path('config/config.json'))\n    async with Database.open(cfg.database) as db:\n        repo = Repository(db)\n        for n in range(120):\n            await repo.append_message(user_id=${JSON.stringify(owner)}, project_id=${project}, session_id=${paginationSession}, role='user' if n % 2 == 0 else 'assistant', content=f'分页验收第 {n + 1} 条\\n保留阅读位置。')\nasyncio.run(seed())`)
+  inVM(`import asyncio\nfrom pathlib import Path\nfrom laxagent.config import load_config\nfrom laxagent.storage.database import Database\nfrom laxagent.storage.repositories import Repository\nasync def seed():\n    cfg = load_config(Path('config/config.json'))\n    async with Database.open(cfg.database) as db:\n        repo = Repository(db)\n        for n in range(120):\n            await repo.append_message(user_id=${JSON.stringify(owner)}, project_id=${project}, session_id=${paginationSession}, role='user' if n % 2 == 0 else 'assistant', content=f'分页验收第 {n + 1} 条\\n保留阅读位置。')\nasyncio.run(seed())`)
   await page.reload()
   await expect(page.locator('[data-seq="120"]')).toBeVisible({ timeout: 20_000 })
   const list = page.getByLabel('消息列表', { exact: true })

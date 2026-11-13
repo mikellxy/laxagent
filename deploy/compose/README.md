@@ -21,7 +21,7 @@ sudo apparmor_parser -r /etc/apparmor.d/laxagent-bwrap
 
 ## 数据保留
 
-PG、JetStream、用户文件分别使用独立命名卷，普通 `down` 或重建容器会保留数据。应用使用现有 `~/laxcode` 数据路径，容器中挂载至 `/home/laxagent/laxcode`。
+PG、JetStream、用户文件分别使用独立命名卷，普通 `down` 或重建容器会保留数据。应用使用现有 `~/laxagent` 数据路径，容器中挂载至 `/home/laxagent/laxagent`。
 
 PG 初始化参数仅在空数据卷上生效。已有数据时保留数据库并通过 SQL 修改密码，再同步 `config.json`、重建应用容器；需要重新初始化时，删除 PG 容器和 PG 数据卷会清空数据库。不要用 `down -v` 代替只删除 PG 卷，它还会删除事件和用户文件。
 

@@ -42,7 +42,7 @@ export function MobileNavigation(props: ComponentProps<typeof Sidebar>) {
       onCancel={event => { event.preventDefault(); setOpen(false) }}
       onClick={event => { if (event.target === event.currentTarget) setOpen(false) }}>
       <div className="mobileNavigationContent">
-        <header className="mobileNavigationHeading"><strong>LaxCode</strong><button aria-label="关闭项目和设置" onClick={() => setOpen(false)}><X size={21} /></button></header>
+        <header className="mobileNavigationHeading"><strong>LaxAgent</strong><button aria-label="关闭项目和设置" onClick={() => setOpen(false)}><X size={21} /></button></header>
         <Sidebar {...props} onSelect={id => { props.onSelect(id); setOpen(false) }} />
         <div className="mobileSettings">
           <MemoryControls owner={props.owner} />

@@ -4,8 +4,8 @@ import { chromium, expect } from '@playwright/test'
 import { execFileSync } from 'node:child_process'
 import { mkdirSync, existsSync } from 'node:fs'
 
-const vm = process.env.VM_NAME || 'laxcode'
-const base = process.env.LAXCODE_BASE_URL || 'http://127.0.0.1:8000'
+const vm = process.env.VM_NAME || 'laxagent'
+const base = process.env.LAXAGENT_BASE_URL || 'http://127.0.0.1:8000'
 const browser = await chromium.launch({ channel: process.env.PLAYWRIGHT_CHANNEL || (existsSync('/Applications/Microsoft Edge.app') ? 'msedge' : undefined) })
 const context = await browser.newContext({ viewport: { width: 1440, height: 900 } })
 const page = await context.newPage()
@@ -39,15 +39,15 @@ async function send(query) {
   return body.run_id
 }
 function inVM(script) {
-  return execFileSync('limactl', ['shell', vm, '--', 'bash', '-lc', 'cd ~/code/laxcode && .venv/bin/python -c "$1"', 'smoke', script], { encoding: 'utf8', timeout: 120_000 })
+  return execFileSync('limactl', ['shell', vm, '--', 'bash', '-lc', 'cd ~/code/laxagent && .venv/bin/python -c "$1"', 'smoke', script], { encoding: 'utf8', timeout: 120_000 })
 }
 try {
   await page.goto(base)
   await page.getByRole('button', { name: '以游客登录' }).click()
-  await expect(page.getByRole('button', { name: 'laxcode', exact: true })).toHaveAttribute('aria-current', 'page')
+  await expect(page.getByRole('button', { name: 'LaxAgent', exact: true })).toHaveAttribute('aria-current', 'page')
   await expect(page.getByRole('textbox', { name: '消息输入' })).toBeVisible()
   owner = decodeURIComponent((await context.cookies()).find(c => c.name === 'user_id').value)
-  const initial = (await request('/projects')).find(p => p.name === 'LaxCode')
+  const initial = (await request('/projects')).find(p => p.name === 'LaxAgent')
   if (!initial) throw new Error('Guest project missing')
   await page.getByRole('button', { name: '新建', exact: true }).click()
   await page.getByRole('textbox', { name: '名称' }).fill('Web 验收')
@@ -73,13 +73,17 @@ try {
   await waitRun(firstRun)
   await expect(page.getByLabel('助手消息', { exact: true })).toBeVisible({ timeout: 20_000 })
   await expect(page.getByLabel('用户消息', { exact: true })).toHaveCount(1)
-  if (!eventRequests.some(url => url.endsWith(`/runs/${firstRun}/events`))) throw new Error('No SSE subscription')
+  if (!eventRequests.some(url => new URL(url).pathname === `/api/v1/runs/${firstRun}/events`)) throw new Error('No SSE subscription')
   console.log(JSON.stringify({ before_reload: beforeReload, sse_connections: eventRequests.length, user_id: owner, project_id: project, session_id: session }))
   const marker = `WEB-TOOL-${Date.now()}`
   inVM(`from pathlib import Path\nfrom laxagent.layout import get_project_workdir\np = get_project_workdir(${JSON.stringify(owner)}, ${project}) / 'hello.txt'\nassert p.parent.is_dir()\np.write_text(${JSON.stringify(marker + '\n')}, encoding='utf-8')`)
-  const secondRun = await send('请调用 read_file 读取 hello.txt 的第一行，然后原样回复文件内容。')
+  const secondRun = await send('请调用 read_file 读取 workspace 的 hello.txt 第一行，参数省略 skill_name 字段，不要传字符串 "null"，然后原样回复文件内容。')
   await waitRun(secondRun)
+  for (const button of await page.getByRole('button', { name: '已工作', exact: true }).all()) {
+    if (await button.getAttribute('aria-expanded') === 'false') await button.click()
+  }
   await expect(page.getByLabel('工具调用', { exact: true }).first()).toContainText('read_file', { timeout: 20_000 })
+  await page.getByLabel('工具调用', { exact: true }).first().getByRole('button').click()
   await expect(page.getByLabel('工具调用', { exact: true }).first()).toContainText('hello.txt')
   await expect(page.getByLabel('工具调用', { exact: true }).first()).not.toContainText(marker)
   await expect(page.getByLabel('助手消息', { exact: true }).last()).toContainText(marker, { timeout: 20_000 })
@@ -94,7 +98,8 @@ try {
   await page.reload()
   await expect(page.locator('[data-seq="120"]')).toBeVisible({ timeout: 20_000 })
   const list = page.getByLabel('消息列表', { exact: true })
-  await list.evaluate(el => { el.scrollTop = 300 })
+  await list.hover()
+  await page.mouse.wheel(0, -600)
   await expect(page.getByRole('button', { name: '回到最新' })).toBeVisible()
   await list.evaluate(el => { el.scrollTop = 80 })
   await expect(page.locator('[data-seq="21"]')).toBeAttached({ timeout: 20_000 })

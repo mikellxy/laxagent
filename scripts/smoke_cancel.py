@@ -59,7 +59,7 @@ async def smoke(args):
     router_port, first_port, second_port = ports
     user_id, marker = str(uuid4()), 'cancel-smoke-' + uuid4().hex
     processes = []
-    with tempfile.TemporaryDirectory(prefix='laxcode-cancel-smoke-') as temporary:
+    with tempfile.TemporaryDirectory(prefix='laxagent-cancel-smoke-') as temporary:
         root = Path(temporary)
         raw = json.loads(args.config.read_text())
         raw['api_server']['port'] = first_port

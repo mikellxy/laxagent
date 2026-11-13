@@ -27,8 +27,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     ca-certificates golang-go build-essential git curl \
     && rm -rf /var/lib/apt/lists/* \
     && useradd --create-home --uid 10001 --shell /bin/bash laxagent \
-    && mkdir -p /home/laxagent/laxcode \
-    && chown laxagent:laxagent /home/laxagent/laxcode
+    && mkdir -p /home/laxagent/laxagent \
+    && chown laxagent:laxagent /home/laxagent/laxagent
 COPY --from=uv /uv /usr/local/bin/uv
 WORKDIR /app
 COPY pyproject.toml uv.lock ./

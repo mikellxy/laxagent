@@ -22,7 +22,7 @@ def identity(**changes):
 def test_layout_is_pure_and_uses_home(isolated_home):
     state = identity()
     user = layout.get_user_data_dir(state["user_id"])
-    assert user == isolated_home / "laxcode" / state["user_id"]
+    assert user == isolated_home / "laxagent" / state["user_id"]
     assert layout.get_project_workdir(state["user_id"], 1) == user / "project/1"
     assert layout.get_session_config_dir(state["user_id"], 1) == user / "session/1"
     assert not user.exists()

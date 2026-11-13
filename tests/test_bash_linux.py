@@ -26,7 +26,7 @@ def area():
     assert sys.platform == "linux", "Run real sandbox acceptance in Lima/Linux"
     assert os.access(backend.BWRAP, os.X_OK), "Install bubblewrap and configure AppArmor first"
     # A home-based root proves isolation is not merely a side effect of replacing /tmp.
-    with tempfile.TemporaryDirectory(prefix=".laxcode-test-", dir=pwd.getpwuid(os.getuid()).pw_dir) as directory:
+    with tempfile.TemporaryDirectory(prefix=".laxagent-test-", dir=pwd.getpwuid(os.getuid()).pw_dir) as directory:
         root = Path(directory)
         workspace = root / "workspace"
         workspace.mkdir()
@@ -66,7 +66,7 @@ async def test_mounts_environment_and_persistent_deliverables(area, monkeypatch)
     outside = root / "private-config"
     outside.write_text("not mounted")
     (workspace / "link").symlink_to(outside)
-    monkeypatch.setenv("LAXCODE_TEST_API_KEY", "test-only-secret")
+    monkeypatch.setenv("LAXAGENT_TEST_API_KEY", "test-only-secret")
     monkeypatch.setenv("BASH_ENV", str(outside))
     monkeypatch.setenv("PYTHONPATH", str(root))
     command = f"""
@@ -77,15 +77,15 @@ test ! -e link
 test ! -e /proc/1/root{shlex.quote(str(outside))}
 test ! -e /proc/{os.getpid()}/cmdline
 test ! -e /run
-test -z "${{LAXCODE_TEST_API_KEY+x}}${{BASH_ENV+x}}${{PYTHONPATH+x}}"
+test -z "${{LAXAGENT_TEST_API_KEY+x}}${{BASH_ENV+x}}${{PYTHONPATH+x}}"
 test -c /dev/null
 test -c /dev/urandom
 test ! -e /dev/sda
-if touch /usr/.laxcode-write-probe 2>/dev/null; then exit 91; fi
+if touch /usr/.laxagent-write-probe 2>/dev/null; then exit 91; fi
 if mkdir /unapproved 2>/dev/null; then exit 92; fi
 if unshare -Ur true 2>/dev/null; then exit 93; fi
-printf intermediate > /tmp/laxcode-ephemeral
-printf intermediate > /dev/shm/laxcode-ephemeral
+printf intermediate > /tmp/laxagent-ephemeral
+printf intermediate > /dev/shm/laxagent-ephemeral
 python3 -c 'from pathlib import Path; Path("result.txt").write_text("中文🙂")'
 python3 --version
 go version
@@ -95,10 +95,10 @@ go version
     assert result["result"]["exit_code"] == 0, result
     assert (workspace / "result.txt").read_text() == "中文🙂"
     assert outside.read_text() == "not mounted"
-    again = await run(workspace, "test ! -e /tmp/laxcode-ephemeral && test ! -e /dev/shm/laxcode-ephemeral")
+    again = await run(workspace, "test ! -e /tmp/laxagent-ephemeral && test ! -e /dev/shm/laxagent-ephemeral")
     assert again["result"]["exit_code"] == 0
-    assert not Path("/tmp/laxcode-ephemeral").exists()
-    assert not Path("/dev/shm/laxcode-ephemeral").exists()
+    assert not Path("/tmp/laxagent-ephemeral").exists()
+    assert not Path("/dev/shm/laxagent-ephemeral").exists()
 
 
 @pytest.mark.parametrize("command,code", [("exit 7", 7), ("if", 2), ("true", 0), ("printf 中文🙂", 0)])
@@ -138,7 +138,7 @@ async def test_shared_network_dns_and_https(area):
 
 @pytest.mark.parametrize("launcher", ["", "nohup", "setsid"])
 async def test_normal_exit_cleans_background_processes(area, launcher):
-    token = "laxcode-" + uuid4().hex
+    token = "laxagent-" + uuid4().hex
     command = f"{launcher} bash -c 'trap \"\" TERM; touch ready; while :; do sleep 1; done' {token} >/dev/null 2>&1 &\nwhile [ ! -e ready ]; do sleep .01; done"
     result = await run(area[1], command, 5)
     assert result["error_code"] is None and result["result"]["exit_code"] == 0, result
@@ -147,7 +147,7 @@ async def test_normal_exit_cleans_background_processes(area, launcher):
 
 async def test_timeout_and_repeated_cancellation_clean_descendants(area):
     workspace = area[1]
-    token = "laxcode-" + uuid4().hex
+    token = "laxagent-" + uuid4().hex
     command = f"printf partial; touch ready; setsid bash -c 'trap \"\" TERM; while :; do sleep 1; done' {token} & wait"
     result = await run(workspace, command, 1)
     assert result["error_code"] == "BASH_TIMEOUT", result
@@ -169,7 +169,7 @@ async def test_cancellation_during_spawn_does_not_lose_process(area, monkeypatch
     real_start = backend._start
     loop = asyncio.get_running_loop()
     spawned, release = asyncio.Event(), threading.Event()
-    token = "laxcode-" + uuid4().hex
+    token = "laxagent-" + uuid4().hex
 
     def delayed(*args):
         process = real_start(*args)
@@ -199,7 +199,7 @@ async def test_output_failure_waits_for_process_and_readers(area, monkeypatch, i
     real_start, real_read = backend._start, backend._read_ready
     real_signal = backend._signal_group
     processes, selectors_used = [], []
-    token = "laxcode-" + uuid4().hex
+    token = "laxagent-" + uuid4().hex
 
     def start(*args):
         process = real_start(*args)
@@ -255,7 +255,7 @@ async def test_status_is_drained_even_after_process_exit(area, monkeypatch):
 
 
 async def test_parent_crash_cleans_sandbox(area):
-    token = "laxcode-" + uuid4().hex
+    token = "laxagent-" + uuid4().hex
     command = f"touch ready; setsid bash -c 'trap \"\" TERM; while :; do sleep 1; done' {token} & wait"
     code = ("import asyncio,sys; from laxagent.tools.builtin.bash import BashArgs,bash; "
             "from unittest.mock import Mock; from laxagent.tools.context import ToolContext; "
@@ -282,7 +282,7 @@ async def test_missing_bwrap_and_setup_failure_never_execute_command(area, monke
 
     def bad_mount(*args):
         argv = real_build(*args)
-        argv[1:1] = ["--ro-bind", "/missing-laxcode-source", "/missing"]
+        argv[1:1] = ["--ro-bind", "/missing-laxagent-source", "/missing"]
         return argv
 
     monkeypatch.setattr(backend, "build_argv", bad_mount)

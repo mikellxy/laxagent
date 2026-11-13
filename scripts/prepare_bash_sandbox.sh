@@ -16,11 +16,11 @@ from pathlib import Path
 import subprocess
 
 root = Path('/etc/apparmor.d')
-target = root / 'laxcode-bwrap'
+target = root / 'laxagent-bwrap'
 profile = '''abi <abi/4.0>,
 include <tunables/global>
 
-profile laxcode-bwrap /usr/bin/bwrap flags=(unconfined) {
+profile laxagent-bwrap /usr/bin/bwrap flags=(unconfined) {
   userns,
 }
 '''

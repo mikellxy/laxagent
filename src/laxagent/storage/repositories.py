@@ -121,18 +121,18 @@ class Repository:
                 return None
             await transaction.scalar(select(User.id).where(User.user_id == user_id).with_for_update())
             project = await transaction.scalar(select(Project).where(
-                Project.user_id == user_id, Project.name == "LaxCode",
+                Project.user_id == user_id, Project.name == "LaxAgent",
             ).order_by(Project.id).limit(1).with_for_update())
             if project is None:
-                project = Project(user_id=user_id, name="LaxCode")
+                project = Project(user_id=user_id, name="LaxAgent")
                 transaction.add(project)
                 await transaction.flush()
             session = await transaction.scalar(select(Session).where(
-                Session.user_id == user_id, Session.project_id == project.id, Session.name == "LaxCode",
+                Session.user_id == user_id, Session.project_id == project.id, Session.name == "LaxAgent",
                 Session.deleted_at.is_(None),
             ).order_by(Session.id).limit(1))
             if session is None:
-                session = Session(user_id=user_id, project_id=project.id, name="LaxCode")
+                session = Session(user_id=user_id, project_id=project.id, name="LaxAgent")
                 transaction.add(session)
                 await transaction.flush()
             return session.id

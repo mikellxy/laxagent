@@ -4,7 +4,7 @@ from pathlib import Path
 
 
 def get_user_data_dir(user_id: str) -> Path:
-    return Path.home() / "laxcode" / user_id
+    return Path.home() / "laxagent" / user_id
 
 
 def get_session_config_dir(user_id: str, session_id: int) -> Path:

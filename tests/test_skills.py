@@ -85,7 +85,7 @@ def test_invalid_metadata(content):
 def test_metadata_defaults_and_bundled_skills():
     assert parse_metadata("example", entry().encode())["allow_auto_use"] is True
     assert parse_metadata("example", entry(extra="allow_auto_use: false\n").encode())["allow_auto_use"] is False
-    assert {s.metadata["name"] for s in builtin_snapshots(BUILTINS)} == {"laxcode", "skill-creator"}
+    assert {s.metadata["name"] for s in builtin_snapshots(BUILTINS)} == {"laxagent", "skill-creator"}
 
 
 @pytest.mark.anyio
@@ -268,7 +268,7 @@ async def test_graph_load_survives_failed_model_and_resume(chat_api, monkeypatch
         checkpoint = await h.graph.aget_state(config)
         assert checkpoint.values["loaded_skills"]["manual"]["files"] == ["SKILL.md", "scripts/run.py"]
         prompt = captured[0]["input"][0]["content"]
-        assert '"name": "laxcode"' in prompt and '"name": "skill-creator"' in prompt
+        assert '"name": "laxagent"' in prompt and '"name": "skill-creator"' in prompt
         assert "HIDDEN_BODY" not in prompt and '"name": "manual"' not in prompt
         assert (await h.api.post(f"/api/v1/runs/{run_id}/resume", json={"resume_time": 0})).status_code == 202
         assert (await wait_run(h, run_id))["status"] == "success"

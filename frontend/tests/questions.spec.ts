@@ -19,7 +19,7 @@ async function mockQuestions(page: Page, questions = [{ question: '使用哪种�
       const token = `h.${Buffer.from(JSON.stringify({ sub: owner, exp: Date.now() / 1000 + 3600 })).toString('base64url')}.s`
       return reply({ access_token: token, token_type: 'bearer', expires_in: 3600, initial_session_id: 1 })
     }
-    if (path === '/projects') return reply([{ id: 1, user_id: owner, name: 'LaxCode' }])
+    if (path === '/projects') return reply([{ id: 1, user_id: owner, name: 'LaxAgent' }])
     if (path === '/projects/1/sessions') return reply([session])
     if (path === '/models') return reply({ default_model: 'p:a', models: [{ id: 'p:a', provider: 'p', name: 'a' }] })
     if (path === '/user-configs') return reply({ configs: {} })

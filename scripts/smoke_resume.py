@@ -57,9 +57,9 @@ async def smoke(args):
         '这是服务中断恢复验收。请首先只调用一次 bash 工具，timeout_seconds=180，完整执行以下命令，不要修改或拆分：\n'
         f'{command}\n'
         '如果后续工具结果提示“执行状态未知”，不要重跑该命令或 sleep；只用 read_file 检查 '
-        f'{marker}.started 的第1行，然后简短说明检查结果并结束。'
+        f'{marker}.started 的第1行，read_file 参数必须省略 skill_name 字段，不要传字符串 "null"，然后简短说明检查结果并结束。'
     )
-    with tempfile.TemporaryDirectory(prefix='laxcode-resume-smoke-') as temporary:
+    with tempfile.TemporaryDirectory(prefix='laxagent-resume-smoke-') as temporary:
         root = Path(temporary)
         raw = json.loads(args.config.read_text())
         raw['api_server']['port'] = api_port

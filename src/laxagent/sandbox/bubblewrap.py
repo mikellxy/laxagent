@@ -243,7 +243,7 @@ def run_bash(workspace: str, command: str, timeout: float = 120, *, stop_event: 
 
 def probe() -> None:
     # A home-based directory proves that /tmp is not accidentally masking the workspace bind.
-    with tempfile.TemporaryDirectory(prefix=".laxcode-sandbox-probe-", dir=Path.home()) as workspace:
+    with tempfile.TemporaryDirectory(prefix=".laxagent-sandbox-probe-", dir=Path.home()) as workspace:
         result = run_bash(workspace, "pwd && python3 --version && go version", timeout=10)
         if result["exit_code"] != 0:
             raise SandboxError("SANDBOX_PROBE_FAILED", result)

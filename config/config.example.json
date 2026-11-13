@@ -40,8 +40,8 @@
   "database": {
     "host": "127.0.0.1",
     "port": 5432,
-    "name": "laxcode",
-    "user": "laxcode",
+    "name": "laxagent",
+    "user": "laxagent",
     "password": "replace-with-local-password"
   },
   "auth": {

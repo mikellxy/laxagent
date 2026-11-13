@@ -35,7 +35,7 @@ async def smoke(args):
     while ports[0] == ports[1]:
         ports[1] = free_port()
     user_id, marker = str(uuid4()), "skill-smoke-" + uuid4().hex
-    with tempfile.TemporaryDirectory(prefix="laxcode-skills-smoke-") as temporary:
+    with tempfile.TemporaryDirectory(prefix="laxagent-skills-smoke-") as temporary:
         root = Path(temporary)
         raw = json.loads(args.config.read_text())
         raw["api_server"]["port"], raw["llm_router"]["port"] = ports
@@ -60,8 +60,8 @@ async def smoke(args):
                     first_id, first_events = await chat_round(api, session_id, config.llm.default_model,
                         "你是谁，可以帮我做什么？请先查阅与你身份相关的技能，简短介绍，不涉及内部实现细节。")
                     assert any(e["type"] == "tool_end" and e["content"].get("tool_name") == "load_skill"
-                               and e["content"].get("result", {}).get("name") == "laxcode" for e in first_events)
-                    for name in ("laxcode", "skill-creator"):
+                               and e["content"].get("result", {}).get("name") == "laxagent" for e in first_events)
+                    for name in ("laxagent", "skill-creator"):
                         assert (get_skills_dir(user_id) / name / "SKILL.md").is_file()
                     script = "import sys\nfrom pathlib import Path\nPath(sys.argv[1]).write_text('BEFORE')\nprint('BEFORE')\n"
                     query = (

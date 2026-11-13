@@ -35,8 +35,8 @@ async def run_store():
 @pytest.fixture(scope="session")
 def database_config():
     return {
-        "host": os.getenv("LAXCODE_TEST_DB_HOST", "127.0.0.1"), "port": 5432, "name": "laxcode_test",
-        "user": "laxcode_test", "password": "test-only-password",
+        "host": os.getenv("LAXAGENT_TEST_DB_HOST", "127.0.0.1"), "port": 5432, "name": "laxagent_test",
+        "user": "laxagent_test", "password": "test-only-password",
     }
 
 
@@ -76,7 +76,7 @@ def migrated_database(tmp_path_factory, database_config):
 
 @pytest.fixture
 async def repository(migrated_database):
-    assert migrated_database.name == "laxcode_test"
+    assert migrated_database.name == "laxagent_test"
     async with Database.open(migrated_database) as db:
         # Isolate JetStream names from the developer database, whose run IDs also start at 1.
         async with db.transaction() as transaction:

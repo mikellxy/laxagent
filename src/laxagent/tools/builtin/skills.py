@@ -62,7 +62,7 @@ def _run_skill(context: ToolContext, args: RunSkillScriptsArgs, *, stop_event) -
     # The immutable copy pins all resources, not just the entry script, while
     # leaving user edits free to proceed during a long-running invocation.
     try:
-        with tempfile.TemporaryDirectory(prefix="laxcode-skill-") as temporary:
+        with tempfile.TemporaryDirectory(prefix="laxagent-skill-") as temporary:
             root = Path(temporary).resolve()
             for path, content in skill.contents.items():
                 target = root / path

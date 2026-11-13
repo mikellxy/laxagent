@@ -14,7 +14,7 @@ def test_load_config(config_data, tmp_path):
     assert config.llm_router.port == 8001
     assert config.llm.default_model == "example:model-name"
     assert config.nats.url == "nats://127.0.0.1:4222"
-    assert config.database.name == "laxcode_test"
+    assert config.database.name == "laxagent_test"
     assert "test-only-password" not in repr(config)
     assert config.llm.provider_list[0].api_key.get_secret_value() == "sk-private-test"
     assert "sk-private-test" not in repr(config)

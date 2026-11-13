@@ -83,7 +83,7 @@ def test_matching_failures_leave_entire_file_unchanged(tmp_path, original, pairs
         edit(tmp_path, pairs)
     assert target.read_bytes() == original.encode()
     assert target.stat().st_ino == before.st_ino
-    assert not list(tmp_path.glob(".laxcode-write-*"))
+    assert not list(tmp_path.glob(".laxagent-write-*"))
 
 
 def test_no_change_does_not_replace_file(tmp_path, monkeypatch):
@@ -180,7 +180,7 @@ def test_write_failure_preserves_file_and_cleans_temporary(tmp_path, monkeypatch
     with pytest.raises(EditFileError, match="^WRITE_FAILED$"):
         edit(tmp_path, [("old", "new")])
     assert target.read_bytes() == b"old"
-    assert not list(tmp_path.glob(".laxcode-write-*"))
+    assert not list(tmp_path.glob(".laxagent-write-*"))
 
 
 def test_target_swapped_to_symlink_before_commit(tmp_path, monkeypatch):

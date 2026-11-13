@@ -47,7 +47,7 @@ export function App() {
         } catch (error) { setError(messageOf(error)) }
         finally { setBusy(false) }
       }}>{retryBootstrap ? '重试' : '以游客登录'}</button>}
-    <span aria-hidden className="loginWatermark">LAXCODE</span>
+    <span aria-hidden className="loginWatermark">LAXAGENT</span>
   </div>
   return <div className="shell">{!mobile && <Sidebar owner={owner} selected={selected} onSelect={select} onDeleted={deleted} />}
     <div className="mainColumn">

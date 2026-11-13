@@ -1,20 +1,20 @@
 // Read-only smoke: the standalone link is appended only to the browser's response,
 // never to persisted messages or workspace files.
-// LAXCODE_SMOKE_USER_ID=... LAXCODE_SMOKE_SESSION_ID=60 node tests/smoke-html-thumbnail-lima.mjs
+// LAXAGENT_SMOKE_USER_ID=... LAXAGENT_SMOKE_SESSION_ID=60 node tests/smoke-html-thumbnail-lima.mjs
 import { chromium, expect } from '@playwright/test'
 import { existsSync, mkdirSync } from 'node:fs'
 
-const base = process.env.LAXCODE_BASE_URL || 'http://127.0.0.1:8000'
-const owner = process.env.LAXCODE_SMOKE_USER_ID
-const session = Number(process.env.LAXCODE_SMOKE_SESSION_ID)
-const path = process.env.LAXCODE_SMOKE_HTML_PATH || 'pomodoro.html'
-if (!owner || !session) throw new Error('Set LAXCODE_SMOKE_USER_ID and LAXCODE_SMOKE_SESSION_ID')
+const base = process.env.LAXAGENT_BASE_URL || 'http://127.0.0.1:8000'
+const owner = process.env.LAXAGENT_SMOKE_USER_ID
+const session = Number(process.env.LAXAGENT_SMOKE_SESSION_ID)
+const path = process.env.LAXAGENT_SMOKE_HTML_PATH || 'pomodoro.html'
+if (!owner || !session) throw new Error('Set LAXAGENT_SMOKE_USER_ID and LAXAGENT_SMOKE_SESSION_ID')
 const browser = await chromium.launch({ channel: process.env.PLAYWRIGHT_CHANNEL || (existsSync('/Applications/Microsoft Edge.app') ? 'msedge' : undefined) })
 try {
   const context = await browser.newContext({ viewport: { width: 1280, height: 1000 }, acceptDownloads: true })
   await context.addCookies([
     { name: 'user_id', value: owner, url: base },
-    { name: 'laxcode_preferences', value: encodeURIComponent(JSON.stringify({ owner, selected: session, global: null, models: [] })), url: base },
+    { name: 'laxagent_preferences', value: encodeURIComponent(JSON.stringify({ owner, selected: session, global: null, models: [] })), url: base },
   ])
   const page = await context.newPage()
   const errors = []

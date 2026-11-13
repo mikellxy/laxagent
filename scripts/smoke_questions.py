@@ -35,7 +35,7 @@ async def events(api, run_id, attempt):
 
 async def smoke(args):
     config = load_config(args.config)
-    with tempfile.TemporaryDirectory(prefix='laxcode-questions-smoke-') as temporary:
+    with tempfile.TemporaryDirectory(prefix='laxagent-questions-smoke-') as temporary:
         root = Path(temporary)
         raw = json.loads(args.config.read_text())
         api_port, router_port = free_port(), free_port()

@@ -1,11 +1,11 @@
 // Real model + checkpoint + authenticated UI smoke against the deployed Lima service.
-// Run from frontend: LAXCODE_BASE_URL=http://127.0.0.1:18000 node tests/smoke-workspace-files-lima.mjs
+// Run from frontend: LAXAGENT_BASE_URL=http://127.0.0.1:18000 node tests/smoke-workspace-files-lima.mjs
 import { chromium, expect } from '@playwright/test'
 import { existsSync, mkdirSync } from 'node:fs'
 import { execFileSync } from 'node:child_process'
 
-const base = process.env.LAXCODE_BASE_URL || 'http://127.0.0.1:8000'
-const vm = process.env.LIMA_INSTANCE || 'laxcode'
+const base = process.env.LAXAGENT_BASE_URL || 'http://127.0.0.1:8000'
+const vm = process.env.LIMA_INSTANCE || 'laxagent'
 const browser = await chromium.launch({ channel: process.env.PLAYWRIGHT_CHANNEL || (existsSync('/Applications/Microsoft Edge.app') ? 'msedge' : undefined) })
 const context = await browser.newContext({ viewport: { width: 1280, height: 1000 }, acceptDownloads: true })
 const page = await context.newPage()
@@ -14,7 +14,7 @@ page.on('pageerror', error => errors.push(error.message))
 let token, owner, project, session, runId
 const paths = ['workspace-smoke.py', 'workspace-smoke.png', 'workspace-smoke.pdf']
 function inVM(script) {
-  return execFileSync('limactl', ['shell', vm, '--', 'bash', '-lc', 'cd ~/code/laxcode && .venv/bin/python -c "$1"', 'smoke', script], { encoding: 'utf8', timeout: 120_000 })
+  return execFileSync('limactl', ['shell', vm, '--', 'bash', '-lc', 'cd ~/code/laxagent && .venv/bin/python -c "$1"', 'smoke', script], { encoding: 'utf8', timeout: 120_000 })
 }
 async function request(path, method = 'GET', data) {
   const response = await context.request.fetch(`${base}/api/v1${path}`, { method, data, headers: { Authorization: `Bearer ${token}` } })
@@ -23,11 +23,11 @@ async function request(path, method = 'GET', data) {
 }
 async function json(path) { return (await request(path)).json() }
 try {
-  const existingOwner = process.env.LAXCODE_SMOKE_USER_ID
+  const existingOwner = process.env.LAXAGENT_SMOKE_USER_ID
   if (existingOwner) await context.addCookies([{ name: 'user_id', value: existingOwner, url: base }])
   await page.goto(base)
   if (!existingOwner) await page.getByRole('button', { name: '以游客登录' }).click()
-  else await page.getByRole('button', { name: 'LaxCode', exact: true }).click()
+  else await page.getByRole('button', { name: 'LaxAgent', exact: true }).click()
   await expect(page.getByRole('textbox', { name: '消息输入' })).toBeVisible()
   const cookies = await context.cookies()
   token = decodeURIComponent(cookies.find(c => c.name === 'access_token').value)
@@ -46,8 +46,8 @@ try {
 [下载文档](workspace:/workspace-smoke.pdf)
 最后补一行：也可以在行内打开 [入口代码](workspace:/workspace-smoke.py)。`
   if (existingOwner) {
-    runId = Number(process.env.LAXCODE_SMOKE_RUN_ID)
-    if (!runId) throw new Error('Existing smoke user requires LAXCODE_SMOKE_RUN_ID')
+    runId = Number(process.env.LAXAGENT_SMOKE_RUN_ID)
+    if (!runId) throw new Error('Existing smoke user requires LAXAGENT_SMOKE_RUN_ID')
   } else {
     inVM(`from laxagent.layout import get_project_workdir\nfrom PIL import Image\np=get_project_workdir(${JSON.stringify(owner)},${project})\np.mkdir(parents=True,exist_ok=True)\nImage.new('RGB',(64,32),'blue').save(p/'.workspace-smoke-source.png')`)
     await page.getByRole('textbox', { name: '消息输入' }).fill(query)

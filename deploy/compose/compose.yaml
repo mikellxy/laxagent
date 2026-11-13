@@ -60,7 +60,7 @@ services:
         read_only: true
         bind:
           create_host_path: false
-      - user-data:/home/laxagent/laxcode
+      - user-data:/home/laxagent/laxagent
     # bubblewrap needs nested namespaces and an unmasked /proc to mount its own
     # procfs. It still enforces the existing workspace-only filesystem profile.
     # The service is non-root with no capabilities; no Docker socket is mounted.

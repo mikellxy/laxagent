@@ -221,7 +221,7 @@ def initialize_skills(user_id: str, source: Path | None) -> None:
                     pass
                 else:
                     continue
-                temporary = ".laxcode-seed-" + secrets.token_hex(16)
+                temporary = ".laxagent-seed-" + secrets.token_hex(16)
                 os.mkdir(temporary, mode=0o700, dir_fd=root)
                 directory = os.open(temporary, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=root)
                 try:

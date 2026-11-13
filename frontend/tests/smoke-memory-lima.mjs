@@ -3,7 +3,7 @@
 import { chromium, expect } from '@playwright/test'
 import { existsSync, mkdirSync } from 'node:fs'
 
-const base = process.env.LAXCODE_BASE_URL || 'http://127.0.0.1:8000'
+const base = process.env.LAXAGENT_BASE_URL || 'http://127.0.0.1:8000'
 const browser = await chromium.launch({ channel: process.env.PLAYWRIGHT_CHANNEL || (existsSync('/Applications/Microsoft Edge.app') ? 'msedge' : undefined) })
 const context = await browser.newContext({ viewport: { width: 1440, height: 900 } })
 const page = await context.newPage()

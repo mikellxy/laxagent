@@ -351,7 +351,7 @@ async def test_shutdown_waits_for_bash_cleanup(repository, conversation):
     from uuid import uuid4
     from test_bash_linux import assert_gone, wait_file
 
-    token = "laxcode-" + uuid4().hex
+    token = "laxagent-" + uuid4().hex
     response = tool_response(("unused",))
     call = response["response"]["output"][-1]
     call["name"] = "bash"

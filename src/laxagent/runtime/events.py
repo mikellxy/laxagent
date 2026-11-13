@@ -66,11 +66,11 @@ class EventStore:
 
     @staticmethod
     def stream_name(run_id: int) -> str:
-        return f"LAXCODE_RUN_{run_id}"
+        return f"LAXAGENT_RUN_{run_id}"
 
     @staticmethod
     def subject(run_id: int) -> str:
-        return f"laxcode.runs.{run_id}.events"
+        return f"laxagent.runs.{run_id}.events"
 
     async def create_run(self, run_id: int, *, exist_ok: bool = False):
         # Serialize local duplicate creation. Identical add_stream calls are idempotent

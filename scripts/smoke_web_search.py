@@ -25,7 +25,7 @@ async def smoke(args):
         images = await service.search({"Query": "故宫博物院", "SearchType": "image", "Count": 1})
         assert images["results"] and images["results"][0]["image_url"]
         report(progress="image search passed", result_count=len(images["results"]))
-    with tempfile.TemporaryDirectory(prefix="laxcode-search-smoke-") as temporary:
+    with tempfile.TemporaryDirectory(prefix="laxagent-search-smoke-") as temporary:
         root = Path(temporary)
         raw = json.loads(args.config.read_text())
         api_port, router_port = free_port(), free_port()

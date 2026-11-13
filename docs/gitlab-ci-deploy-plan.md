@@ -30,7 +30,7 @@
 - 浏览器入口为 `http://gitlab.test:8929`，Mac hosts 指向 `127.0.0.1`；SSH 使用本机 `2222` 端口，仅监听本机。
 - GitLab、Runner 和作业使用专用 Docker 网络，设置 `gitlab.test` 别名，使容器能够访问相同的 GitLab URL。
 - Runner 使用 Docker executor；只有 Runner 管理容器挂载 Docker socket，构建作业不挂载 socket、不启用 privileged。
-- 创建私有 `laxcode_v2` 项目、保护 `main`，注册项目专属 Runner。新增 `gitlab` remote 验证推送，保留已有 remote。
+- 创建私有 `laxagent_v2` 项目、保护 `main`，注册项目专属 Runner。新增 `gitlab` remote 验证推送，保留已有 remote。
 
 资源裁剪参考 [GitLab 低内存部署](https://docs.gitlab.com/omnibus/settings/memory_constrained_envs/)，容器部署参考 [GitLab Docker 安装文档](https://docs.gitlab.com/install/docker/installation/)。8 GiB 是本项目的部署预算，不是官方最低要求。
 
@@ -61,13 +61,13 @@
 
 | 项目 | 约定 |
 | --- | --- |
-| Key | `LAXCODE_CONFIG_JSON` |
+| Key | `LAXAGENT_CONFIG_JSON` |
 | Type | File |
 | Value | 完整的真实 `config.json` 内容 |
 | Protected | 开启，仅向受保护分支发布提供 |
 | Expand variable reference | 关闭，避免配置中的 `$` 被当作变量展开 |
 
-GitLab 将内容写入作业临时文件，环境变量 `LAXCODE_CONFIG_JSON` 的值是该文件路径，不是 JSON 正文。发布脚本必须读取文件，不能将变量值直接当作 JSON。
+GitLab 将内容写入作业临时文件，环境变量 `LAXAGENT_CONFIG_JSON` 的值是该文件路径，不是 JSON 正文。发布脚本必须读取文件，不能将变量值直接当作 JSON。
 
 初次配置时，将本机真实配置录入该变量；以后本机文件变化不会自动同步，需要更新 GitLab 变量。一次发布以当次作业读取到的配置为快照，后续变量更新不修改已入库 ZIP。多行 JSON 不依赖 GitLab masked 功能兜底，作业不得回显变量内容、开启 shell trace 或将配置放入调试日志。
 
@@ -77,7 +77,7 @@ GitLab 将内容写入作业临时文件，环境变量 `LAXCODE_CONFIG_JSON` �
 
 构建脚本在独立临时打包目录中操作，不修改 Git checkout 下的 `config/config.json`，不回退读取 Runner 宿主机的本地文件。
 
-1. 检查 `LAXCODE_CONFIG_JSON` 已设置，指向可读且非空的普通文件；缺失则终止发布构建。
+1. 检查 `LAXAGENT_CONFIG_JSON` 已设置，指向可读且非空的普通文件；缺失则终止发布构建。
 2. 用受限文件权限将文件原样复制到打包目录的 `config/config.json`，例如 `install -m 600`。构建期间所有检查均针对这个已复制的快照。
 3. 校验 UTF-8 JSON，并调用项目配置加载逻辑校验 `AppConfig`；保留相对路径解析语义，验证前端 dist 实际存在。校验不建立业务数据库、NATS 或 LLM 连接。
 4. 记录配置文件 SHA-256 到内部校验结果；打包后读取 ZIP 中的 `config/config.json`，核对字节数和 SHA-256，保证没有打入示例配置或替换内容。配置校验信息不回显到普通日志。
@@ -87,7 +87,7 @@ JSON 合法和结构校验不能证明远端凭据有效；实际连通性通过
 
 ### ZIP 内容与访问
 
-文件名为 `laxcode-<version>.zip`，解压后只有一个同名顶层目录：
+文件名为 `laxagent-<version>.zip`，解压后只有一个同名顶层目录：
 
 ```text
 src/laxagent/
@@ -127,7 +127,7 @@ HTTP 接口无新增或修改，本次不设计产物下载接口。
 
 | 命令 | 输入 | 输出 |
 | --- | --- | --- |
-| `uv run python scripts/build_release.py --output-dir release` | 当前提交源码、已编译前端、`LAXCODE_CONFIG_JSON` File 变量 | 包含真实配置的 ZIP 及构建摘要 |
+| `uv run python scripts/build_release.py --output-dir release` | 当前提交源码、已编译前端、`LAXAGENT_CONFIG_JSON` File 变量 | 包含真实配置的 ZIP 及构建摘要 |
 | `uv run python scripts/publish_release.py --artifact <zip>` | 已验证 ZIP、PG 连接环境变量 | 记录 ID、版本、构建时间、产物大小及 ZIP SHA-256 |
 
 构建脚本在发布模式下必须有 File 变量，不接受使用示例配置替代。非发布分支的打包测试通过测试代码提供独立临时配置，不发布测试包。

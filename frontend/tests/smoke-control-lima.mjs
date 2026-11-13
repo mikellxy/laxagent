@@ -4,7 +4,7 @@ import { chromium, expect } from '@playwright/test'
 import { existsSync, mkdirSync } from 'node:fs'
 import { execFileSync } from 'node:child_process'
 
-const base = process.env.LAXCODE_BASE_URL || 'http://127.0.0.1:8000'
+const base = process.env.LAXAGENT_BASE_URL || 'http://127.0.0.1:8000'
 const browser = await chromium.launch({ channel: process.env.PLAYWRIGHT_CHANNEL || (existsSync('/Applications/Microsoft Edge.app') ? 'msedge' : undefined) })
 const context = await browser.newContext({ viewport: { width: 1440, height: 900 } })
 const page = await context.newPage()
@@ -103,7 +103,7 @@ try {
   await expect(page.getByLabel('聊天', { exact: true })).toHaveCount(0)
   await page.screenshot({ path: 'test-results/lima-deleted.png', fullPage: true })
   const verify = `import asyncio\nfrom pathlib import Path\nfrom sqlalchemy import select\nfrom laxagent.config import load_config\nfrom laxagent.storage.database import Database\nfrom laxagent.storage.models import Session, Run, Message, SessionMessage\nfrom laxagent.runtime.events import EventStore\nasync def verify():\n    cfg = load_config(Path('config/config.json'))\n    async with Database.open(cfg.database) as db:\n        async with db.transaction() as tx:\n            assert (await tx.get(Session, ${session})).deleted_at is not None\n            assert (await tx.get(Run, ${third})).status == 'cancelled'\n            for model in (Message, SessionMessage):\n                assert len(list(await tx.scalars(select(model).where(model.session_id == ${session})))) == 4\n    async with EventStore.connect(cfg.nats.url) as events:\n        assert (await events.js.stream_info(events.stream_name(${third}))).state.messages > 1\n    print('Database history and NATS events retained')\nasyncio.run(verify())`
-  console.log(execFileSync('ssh', ['-F', `${process.env.HOME}/.lima/${process.env.VM_NAME || 'laxcode'}/ssh.config`, '-o', 'ControlPath=none', `lima-${process.env.VM_NAME || 'laxcode'}`, 'cd ~/code/laxcode && .venv/bin/python -'], { input: verify, encoding: 'utf8', timeout: 30_000 }).trim())
+  console.log(execFileSync('ssh', ['-F', `${process.env.HOME}/.lima/${process.env.VM_NAME || 'laxagent'}/ssh.config`, '-o', 'ControlPath=none', `lima-${process.env.VM_NAME || 'laxagent'}`, 'cd ~/code/laxagent && .venv/bin/python -'], { input: verify, encoding: 'utf8', timeout: 30_000 }).trim())
   if (errors.length) throw new Error(errors.join('; '))
   console.log(JSON.stringify({ status: 'PASS', session_id: session, run_ids: runs, checks: 'real model cancellation, SSE replay, unfinished answer discarded, continued chat, active deletion, reload, retained records' }))
 } catch (error) {

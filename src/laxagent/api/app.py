@@ -58,7 +58,7 @@ def create_app(config: AppConfig | None = None) -> FastAPI:
                 app.state.task_manager = None
                 app.state.agent_context = None
 
-    app = FastAPI(title="LaxCode", lifespan=lifespan)
+    app = FastAPI(title="LaxAgent", lifespan=lifespan)
     app.state.config = config
     app.include_router(runs_router, prefix="/api/v1")
     app.include_router(workspace_files_router, prefix="/api/v1")

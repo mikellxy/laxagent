@@ -1,4 +1,4 @@
-# Lima VM for laxcode local self-testing.
+# Lima VM for laxagent local self-testing.
 # Mirrors the production ECS: Ubuntu 24.04 LTS with the GA kernel line
 # (6.8.0-xx-generic), not the HWE kernel shipped by newer cloud images.
 
@@ -35,7 +35,7 @@ ssh:
   forwardX11: false
   forwardX11Trusted: false
 
-# macOS 127.0.0.1:8000/8001 -> guest laxcode API / LLM Router.
+# macOS 127.0.0.1:8000/8001 -> guest laxagent API / LLM Router.
 portForwards:
   - guestPort: 8000
     hostPort: 8000
@@ -57,8 +57,8 @@ provision:
       from pathlib import Path
       import subprocess
       root = Path('/etc/apparmor.d')
-      target = root / 'laxcode-bwrap'
-      profile = 'abi <abi/4.0>,\ninclude <tunables/global>\n\nprofile laxcode-bwrap /usr/bin/bwrap flags=(unconfined) {\n  userns,\n}\n'
+      target = root / 'laxagent-bwrap'
+      profile = 'abi <abi/4.0>,\ninclude <tunables/global>\n\nprofile laxagent-bwrap /usr/bin/bwrap flags=(unconfined) {\n  userns,\n}\n'
       others = [str(p) for p in root.rglob('*') if p != target and p.is_file() and 'bwrap' in p.read_text(errors='replace')]
       if others:
           print('Existing bwrap policy retained; verify with ordinary-user sandbox probe:', others)

@@ -23,7 +23,7 @@ pytestmark = [pytest.mark.sandbox_linux, pytest.mark.anyio]
 @pytest.fixture
 def context(monkeypatch):
     assert sys.platform == "linux" and os.access(BWRAP, os.X_OK)
-    with tempfile.TemporaryDirectory(prefix=".laxcode-skills-test-", dir=pwd.getpwuid(os.getuid()).pw_dir) as temporary:
+    with tempfile.TemporaryDirectory(prefix=".laxagent-skills-test-", dir=pwd.getpwuid(os.getuid()).pw_dir) as temporary:
         root = Path(temporary)
         monkeypatch.setattr(Path, "home", classmethod(lambda cls: root))
         workspace = root / "workspace"

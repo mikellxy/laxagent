@@ -45,10 +45,10 @@ class CancelResult(BaseModel):
 
 
 class CancellationBus:
-    COMMAND_STREAM = "to_cancel"
-    RESULT_STREAM = "cancel_result"
-    COMMAND_SUBJECT = "laxcode.cancel.commands"
-    RESULT_SUBJECT = "laxcode.cancel.results"
+    COMMAND_STREAM = "LAXAGENT_CANCEL_COMMANDS"
+    RESULT_STREAM = "LAXAGENT_CANCEL_RESULTS"
+    COMMAND_SUBJECT = "laxagent.cancel.commands"
+    RESULT_SUBJECT = "laxagent.cancel.results"
 
     def __init__(self, events):
         self.events = events

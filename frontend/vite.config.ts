@@ -5,7 +5,7 @@ import react from '@vitejs/plugin-react'
 
 let port = 8000
 try {
-  const config = JSON.parse(readFileSync(resolve(process.env.LAXCODE_CONFIG ?? '../config/config.json'), 'utf8'))
+  const config = JSON.parse(readFileSync(resolve(process.env.LAXAGENT_CONFIG ?? '../config/config.json'), 'utf8'))
   port = config.api_server.port
 } catch { /* Backend-only development can use the example port. */ }
 

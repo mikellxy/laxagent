@@ -4,7 +4,7 @@ import type { Models } from '../api/types'
 interface Preferences { owner: string; selected: number | null; global: string | null; models: [number, string][] }
 function read(owner: string): Preferences {
   try {
-    const p = JSON.parse(readCookie('laxcode_preferences') ?? 'null')
+    const p = JSON.parse(readCookie('laxagent_preferences') ?? 'null')
     if (p?.owner === owner) return {
       owner, selected: Number.isSafeInteger(p.selected) && p.selected > 0 ? p.selected : null,
       global: typeof p.global === 'string' ? p.global : null,
@@ -15,7 +15,7 @@ function read(owner: string): Preferences {
 }
 function save(p: Preferences) {
   while (encodeURIComponent(JSON.stringify(p)).length > 3500 && p.models.length) p.models.shift()
-  writeCookie('laxcode_preferences', JSON.stringify(p))
+  writeCookie('laxagent_preferences', JSON.stringify(p))
 }
 export function selectedSession(owner: string) { return read(owner).selected }
 export function selectSession(owner: string, session: number | null) { const p = read(owner); p.selected = session; save(p) }

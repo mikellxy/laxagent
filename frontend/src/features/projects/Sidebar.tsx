@@ -8,14 +8,14 @@ import { SessionList } from '../sessions/SessionList'
 import type { Project, Session } from '../../api/types'
 import styles from './Sidebar.module.css'
 
-async function laxcodeSession(client: QueryClient, owner: string, deleted: number): Promise<number | null> {
+async function defaultSession(client: QueryClient, owner: string, deleted: number): Promise<number | null> {
   try {
     const projects = await client.ensureQueryData({ queryKey: ['projects', owner], queryFn: ({ signal }) => api.projects(signal) })
-    const project = projects.find(p => p.name === 'LaxCode')
+    const project = projects.find(p => p.name === 'LaxAgent')
     if (!project) return null
     const sessions = await client.ensureQueryData<Session[]>({ queryKey: ['sessions', owner, project.id], queryFn: ({ signal }) => api.sessions(project.id, signal) })
     const remaining = sessions.filter(s => s.id !== deleted)
-    return (remaining.find(s => s.name === 'LaxCode') ?? remaining.at(-1))?.id ?? null
+    return (remaining.find(s => s.name === 'LaxAgent') ?? remaining.at(-1))?.id ?? null
   } catch { return null }
 }
 
@@ -53,10 +53,10 @@ export function Sidebar({ owner, selected, onSelect, onDeleted }: { owner: strin
   const query = useQuery({ queryKey: ['projects', owner], queryFn: ({ signal }) => api.projects(signal) })
   const [expanded, setExpanded] = useState(true)
   const [creating, setCreating] = useState(false)
-  // Deleting the selected session falls back to the LaxCode session when its project becomes empty.
+  // Deleting the selected session falls back to the LaxAgent session when its project becomes empty.
   const deleted = useCallback((id: number, next: number | null) => {
     if (selected !== id || next !== null) { onDeleted(id, next); return }
-    void laxcodeSession(client, owner, id).then(fallback => onDeleted(id, fallback))
+    void defaultSession(client, owner, id).then(fallback => onDeleted(id, fallback))
   }, [client, owner, selected, onDeleted])
   return <aside className={styles.sidebar}>
     <div className={styles.heading}><span>项目</span>

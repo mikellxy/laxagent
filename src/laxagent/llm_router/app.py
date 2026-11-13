@@ -29,7 +29,7 @@ def create_router_app(config: LLMConfig) -> FastAPI:
             app.state.proxy = LLMProxy(config, clients)
             yield
 
-    app = FastAPI(title="LaxCode LLM Router", lifespan=lifespan, docs_url=None, redoc_url=None, openapi_url=None)
+    app = FastAPI(title="LaxAgent LLM Router", lifespan=lifespan, docs_url=None, redoc_url=None, openapi_url=None)
 
     @app.exception_handler(ProxyError)
     async def proxy_error(request: Request, exc: ProxyError):

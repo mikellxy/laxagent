@@ -89,7 +89,7 @@ def atomic_replace(directory: int, name: str, content: bytes, *, allow_missing: 
     fd, temporary = None, None
     try:
         for _ in range(10):
-            candidate = f".laxcode-write-{secrets.token_hex(16)}.tmp"
+            candidate = f".laxagent-write-{secrets.token_hex(16)}.tmp"
             if candidate == name:
                 continue
             try:

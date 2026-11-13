@@ -73,7 +73,7 @@ async def smoke(args):
             first_id, _ = await chat_round(api, session.id, model, first_query)
             assert user_dir.is_dir() and session_dir.is_dir() and workspace.is_dir()
             assert list(session_dir.iterdir()) == list(workspace.iterdir()) == []
-            marker = f"LaxCode workspace smoke: {uuid4()}"
+            marker = f"LaxAgent workspace smoke: {uuid4()}"
             sample = workspace / "hello.txt"
             sample.write_text(marker + "\n", encoding="utf-8")
             second_id, events = await chat_round(api, session.id, model, args.query)
@@ -103,7 +103,7 @@ def main():
     parser.add_argument("--config", type=Path, default=Path("config/config.json"))
     parser.add_argument("--base-url")
     parser.add_argument("--model")
-    parser.add_argument("--query", default="请调用 read_file 读取 hello.txt 的第 1 行，从第 1 字节开始，共读 1 行，然后回复文件内容。")
+    parser.add_argument("--query", default='请调用 read_file 读取 workspace 的 hello.txt 第 1 行，从第 1 字节开始，共读 1 行。参数省略 skill_name 字段，不要传字符串 "null"，然后回复文件内容。')
     args = parser.parse_args()
     try:
         asyncio.run(smoke(args))

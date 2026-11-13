@@ -5,6 +5,8 @@ import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 import { api } from '../src/api/resources'
 import { Chat } from '../src/features/chat/Chat'
 import type { Message } from '../src/api/types'
+import { DraftAttachments } from '../src/features/chat/attachments'
+import { Blob as NodeBlob } from 'node:buffer'
 
 beforeEach(() => {
   URL.createObjectURL = vi.fn(() => 'blob:test-preview')
@@ -90,7 +92,7 @@ it('reads originals only on click and releases image preview URLs', async () => 
     { id: 1, name: 'picture.png', kind: 'image', thumbnail_data_url: 'data:image/webp;base64,eA==' },
     { id: 2, name: 'notes.txt', kind: 'file', thumbnail_data_url: null },
   ] }], true)
-  const read = vi.spyOn(api, 'appendix').mockResolvedValue(new Blob(['image']))
+  const read = vi.spyOn(api, 'appendix').mockResolvedValue(new NodeBlob(['document content']) as unknown as Blob)
   await screen.findByRole('button', { name: '查看 picture.png' })
   expect(read).not.toHaveBeenCalled()
   await h.user.click(screen.getByRole('button', { name: '查看 picture.png' }))
@@ -99,8 +101,25 @@ it('reads originals only on click and releases image preview URLs', async () => 
   await h.user.click(screen.getByRole('button', { name: '关闭图片预览' }))
   expect(URL.revokeObjectURL).toHaveBeenCalledWith('blob:test-preview')
   const click = vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(() => {})
+  await h.user.click(screen.getByRole('button', { name: '查看 notes.txt' }))
+  expect(await screen.findByRole('textbox', { name: 'notes.txt 文件内容' })).toHaveValue('document content')
+  expect(click).not.toHaveBeenCalled()
   await h.user.click(screen.getByRole('button', { name: '下载 notes.txt' }))
   await waitFor(() => expect(click).toHaveBeenCalled())
+})
+
+it('previews draft images before upload finishes without revoking their thumbnail', async () => {
+  vi.mocked(URL.createObjectURL).mockReturnValue('blob:dialog')
+  render(<DraftAttachments items={[{ key: 1, file: new File(['image'], 'photo.png'), kind: 'image',
+    url: 'blob:thumbnail', status: 'uploading', abort: new AbortController() }]} remove={vi.fn()} retry={vi.fn()} />)
+  expect(screen.queryByText('photo.png')).toBeNull()
+  fireEvent.click(screen.getByRole('button', { name: '查看 photo.png' }))
+  const dialog = await screen.findByRole('dialog')
+  expect(within(dialog).getByRole('img')).toHaveAttribute('src', 'blob:dialog')
+  fireEvent.click(within(dialog).getByRole('button', { name: '关闭图片预览' }))
+  expect(URL.revokeObjectURL).toHaveBeenCalledWith('blob:dialog')
+  expect(URL.revokeObjectURL).not.toHaveBeenCalledWith('blob:thumbnail')
+  expect(screen.getByRole('img')).toHaveAttribute('src', 'blob:thumbnail')
 })
 
 it('aborts removed uploads and ignores late completions', async () => {

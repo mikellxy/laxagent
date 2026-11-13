@@ -1,4 +1,5 @@
 import { expect, test, type Page } from '@playwright/test'
+import { zipSync, strToU8 } from 'fflate'
 import type { MemoryItem, Message, Project, Run, Session } from '../src/api/types'
 
 const attachmentPNG = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+j4eUAAAAASUVORK5CYII=', 'base64')
@@ -672,6 +673,15 @@ test('uploads attachment-only messages, previews history images and downloads do
   await (await chooser).setFiles({ name: 'sample.png', mimeType: 'image/png', buffer: attachmentPNG })
   await page.getByLabel('选择文件').setInputFiles({ name: 'a-long-document-name-for-truncation.txt', mimeType: 'text/plain', buffer: Buffer.from('document') })
   await expect(page.getByText('已上传')).toHaveCount(2)
+  await expect(page.getByText('sample.png', { exact: true })).toHaveCount(0)
+  await page.getByRole('button', { name: '查看 sample.png' }).click()
+  await expect(page.getByRole('dialog').getByRole('img')).toBeVisible()
+  await page.keyboard.press('Escape')
+  await expect(page.getByRole('dialog')).toHaveCount(0)
+  await expect(page.getByRole('button', { name: '查看 sample.png' })).toBeFocused()
+  await page.getByRole('button', { name: '查看 a-long-document-name-for-truncation.txt' }).click()
+  await expect(page.getByRole('textbox', { name: 'a-long-document-name-for-truncation.txt 文件内容' })).toHaveValue('document')
+  await page.getByRole('button', { name: '关闭文件预览' }).click()
   await page.screenshot({ path: testInfo.outputPath('attachment-composer.png') })
   await page.getByLabel('模型', { exact: true }).selectOption('p:b')
   await expect(page.getByRole('button', { name: '发送消息' })).toBeDisabled()
@@ -687,6 +697,8 @@ test('uploads attachment-only messages, previews history images and downloads do
   await page.getByRole('button', { name: '查看 sample.png' }).click()
   await expect(page.getByRole('dialog', { name: '预览 sample.png' })).toBeVisible()
   await page.getByRole('button', { name: '关闭图片预览' }).click()
+  await page.getByRole('button', { name: '查看 a-long-document-name-for-truncation.txt' }).click()
+  await expect(page.getByRole('textbox', { name: 'a-long-document-name-for-truncation.txt 文件内容' })).toHaveValue('document')
   const download = page.waitForEvent('download')
   await page.getByRole('button', { name: '下载 a-long-document-name-for-truncation.txt' }).click()
   expect((await download).suggestedFilename()).toBe('a-long-document-name-for-truncation.txt')
@@ -696,4 +708,106 @@ test('uploads attachment-only messages, previews history images and downloads do
   await page.getByRole('textbox', { name: '消息输入' }).fill('继续')
   await expect(page.getByRole('button', { name: '发送消息' })).toBeDisabled()
   await expect(page.getByText('此会话包含附件，请选择支持多模态的模型，或新建会话')).toBeVisible()
+})
+
+test('draft previews extract PDF and Office text and keep HTML inert on desktop and mobile', async ({ page }, testInfo) => {
+  await mockAPI(page)
+  await page.goto('/')
+  await page.getByRole('button', { name: '以游客登录' }).click()
+  const zip = (files: Record<string, string>) => Buffer.from(zipSync(Object.fromEntries(Object.entries(files).map(([path, value]) => [path, strToU8(value)]))))
+  const stream = 'BT /F1 18 Tf 20 150 Td (PDF preview content) Tj ET'
+  const pdf = `%PDF-1.4\n1 0 obj << /Type /Catalog /Pages 2 0 R >> endobj\n2 0 obj << /Type /Pages /Kids [3 0 R] /Count 1 >> endobj\n3 0 obj << /Type /Page /Parent 2 0 R /MediaBox [0 0 300 200] /Resources << /Font << /F1 4 0 R >> >> /Contents 5 0 R >> endobj\n4 0 obj << /Type /Font /Subtype /Type1 /BaseFont /Helvetica >> endobj\n5 0 obj << /Length ${stream.length} >> stream\n${stream}\nendstream\nendobj\ntrailer << /Root 1 0 R >>\n%%EOF`
+  const samples = [
+    { name: 'annual-report-with-a-long-filename.pdf', buffer: Buffer.from(pdf), expected: 'PDF preview content' },
+    { name: 'page.html', buffer: Buffer.from('<h1>HTML source</h1><script>document.body.dataset.compromised="yes"</script>'), expected: '<script>' },
+    { name: 'budget.xlsx', buffer: zip({
+      'xl/workbook.xml': '<workbook xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><sheets><sheet name="预算" r:id="rId1"/></sheets></workbook>',
+      'xl/_rels/workbook.xml.rels': '<Relationships><Relationship Id="rId1" Target="worksheets/sheet1.xml"/></Relationships>',
+      'xl/worksheets/sheet1.xml': '<worksheet><sheetData><row><c r="A1" t="inlineStr"><is><t>总计</t></is></c><c r="B1"><v>128</v></c></row></sheetData></worksheet>',
+    }), expected: 'A1: 总计\tB1: 128' },
+    { name: 'notes.docx', buffer: zip({ 'word/document.xml': '<w:document xmlns:w="urn:word"><w:p><w:r><w:t>Word preview content</w:t></w:r></w:p></w:document>' }), expected: 'Word preview content' },
+    { name: 'slides.pptx', buffer: zip({ 'ppt/slides/slide1.xml': '<sld xmlns:a="urn:ppt"><a:p><a:r><a:t>Slide preview content</a:t></a:r></a:p></sld>' }), expected: 'Slide preview content' },
+  ]
+  await page.getByLabel('选择文件').setInputFiles(samples.map(sample => ({ ...sample, mimeType: 'application/octet-stream' })))
+  await expect(page.getByText('已上传')).toHaveCount(5)
+  for (const sample of samples) {
+    await page.getByRole('button', { name: `查看 ${sample.name}` }).click()
+    await expect(page.getByRole('textbox', { name: `${sample.name} 文件内容` })).toHaveValue(new RegExp(sample.expected), { timeout: 20000 })
+    await page.getByRole('button', { name: '关闭文件预览' }).click()
+  }
+  expect(await page.locator('body').getAttribute('data-compromised')).toBeNull()
+  const filename = page.getByText(samples[0].name, { exact: true })
+  await expect(filename).toHaveCSS('white-space', 'nowrap')
+  await expect(filename).toHaveCSS('text-overflow', 'ellipsis')
+  await page.screenshot({ path: testInfo.outputPath('file-cards-desktop.png') })
+  await page.setViewportSize({ width: 390, height: 844 })
+  await page.getByRole('button', { name: `查看 ${samples[0].name}` }).click()
+  await expect(page.getByRole('textbox', { name: `${samples[0].name} 文件内容` })).toHaveValue(/PDF preview content/)
+  await page.screenshot({ path: testInfo.outputPath('file-preview-mobile.png') })
+  await page.getByRole('button', { name: '关闭文件预览' }).click()
+  await page.screenshot({ path: testInfo.outputPath('file-cards-mobile.png') })
+  expect(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth)).toBe(false)
+})
+
+test('reply files use stacked bare media and compact terminal windows', async ({ page }, testInfo) => {
+  const state = await mockAPI(page)
+  await page.goto('/')
+  await page.getByRole('button', { name: '以游客登录' }).click()
+  await expect(page.getByRole('textbox', { name: '消息输入' })).toBeVisible()
+  const png = Buffer.from(await page.evaluate(() => {
+    const canvas = document.createElement('canvas'); canvas.width = 360; canvas.height = 240
+    const ctx = canvas.getContext('2d')!
+    const gradient = ctx.createLinearGradient(0, 0, 360, 240)
+    gradient.addColorStop(0, '#6bc7d1'); gradient.addColorStop(1, '#244e7e')
+    ctx.fillStyle = gradient; ctx.fillRect(0, 0, 360, 240)
+    return canvas.toDataURL().split(',')[1]
+  }), 'base64')
+  const html = '<!doctype html><style>body{padding:48px;background:#e9f3f0;color:#263e38;font-family:sans-serif}h1{font-size:52px}</style><h1>Simple workspace</h1><p>A calm place to start.</p>'
+  const code = '.chat-input {\n  min-height: 48px;\n  max-height: 180px;\n  resize: none;\n  overflow-y: auto;\n  white-space: pre-wrap;\n  line-height: 1.5;\n}'
+  await page.route('**/workspace-files/*?*', route => {
+    const url = new URL(route.request().url()), path = url.searchParams.get('path')!
+    const image = path.endsWith('.png'), text = path === 'page.html' ? html : code
+    return url.pathname.endsWith('/preview') ? route.fulfill({ json: {
+      path, name: path, kind: image ? 'image' : 'text', language: path.endsWith('.html') ? 'html' : 'css',
+      size: image ? png.length : text.length, text: image ? null : text, truncated: false, can_expand: true,
+    } }) : route.fulfill({ contentType: image ? 'image/png' : 'text/plain', body: image ? png : text })
+  })
+  state.messages.set(1, [{ role: 'assistant', seq: 1, content: '图片按顺序展示。\n\n[图片一](workspace:/first.png)\n\n[图片二](workspace:/second.png)\n\n[网页](workspace:/page.html)\n\nCSS 参考\n\n[样式](workspace:/style.css)' }])
+  await page.reload()
+  const first = page.getByRole('region', { name: '文件 first.png', exact: true })
+  const second = page.getByRole('region', { name: '文件 second.png', exact: true })
+  const web = page.getByRole('region', { name: '文件 page.html', exact: true })
+  const text = page.getByRole('region', { name: '文件 style.css', exact: true })
+  await expect(first.getByRole('img')).toBeVisible()
+  await expect(first.locator('header')).toHaveCount(0)
+  await expect(web.locator('header')).toHaveCount(0)
+  await expect(first.getByRole('button')).toHaveCount(2)
+  await expect(web.getByRole('button')).toHaveCount(2)
+  const firstBox = (await first.boundingBox())!, secondBox = (await second.boundingBox())!
+  expect(secondBox.y).toBeGreaterThanOrEqual(firstBox.y + firstBox.height)
+  expect(secondBox.x).toBe(firstBox.x)
+  await first.screenshot({ path: testInfo.outputPath('bare-image.png') })
+  await web.screenshot({ path: testInfo.outputPath('bare-html.png') })
+  await text.screenshot({ path: testInfo.outputPath('terminal-card.png') })
+  await text.getByRole('button', { name: '查看 style.css 完整内容' }).click()
+  await expect(page.getByRole('dialog')).toContainText(code)
+  await expect(page.getByRole('button', { name: '关闭文件预览' })).toHaveCSS('width', '28px')
+  await page.getByRole('dialog').screenshot({ path: testInfo.outputPath('terminal-expanded.png') })
+  await page.keyboard.press('Escape')
+  await first.getByRole('button', { name: '查看 first.png' }).click()
+  await expect(page.getByRole('dialog').getByRole('img')).toBeVisible()
+  await page.getByRole('button', { name: '关闭文件预览' }).click()
+  await web.getByRole('button', { name: '查看 page.html 源码' }).click()
+  await expect(page.getByRole('dialog')).toContainText(html)
+  await page.getByRole('button', { name: '关闭文件预览' }).click()
+  const download = page.waitForEvent('download')
+  await first.getByRole('button', { name: '下载 first.png' }).click()
+  expect((await download).suggestedFilename()).toBe('first.png')
+  await page.setViewportSize({ width: 390, height: 844 })
+  await text.screenshot({ path: testInfo.outputPath('terminal-card-mobile.png') })
+  await text.getByRole('button', { name: '展开 style.css' }).click()
+  await expect(page.getByRole('button', { name: '关闭文件预览' })).toHaveCSS('width', '30px')
+  await page.getByRole('dialog').screenshot({ path: testInfo.outputPath('terminal-expanded-mobile.png') })
+  await page.getByRole('button', { name: '关闭文件预览' }).click()
+  expect(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth)).toBe(false)
 })

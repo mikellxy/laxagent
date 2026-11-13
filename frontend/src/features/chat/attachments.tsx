@@ -1,12 +1,15 @@
 import { useEffect, useRef, useState } from 'react'
-import { Download, FileText, ImageIcon, LoaderCircle, Plus, RotateCcw, X } from 'lucide-react'
+import { createPortal } from 'react-dom'
+import { Download, FileText, FileCode, FileSpreadsheet, FileType, Presentation, ImageIcon, LoaderCircle, Plus, RotateCcw, X } from 'lucide-react'
 import { api } from '../../api/resources'
 import { messageOf } from '../../api/errors'
 import type { AppendixDisplay } from '../../api/types'
 import styles from './Attachments.module.css'
+import previewStyles from './PreviewWindow.module.css'
+import { attachmentText, extensionOf } from './attachment-content'
 
 export const IMAGE_EXTENSIONS = ['png', 'jpg', 'jpeg', 'webp', 'gif']
-export const DOCUMENT_EXTENSIONS = ['pdf', 'txt', 'md', 'csv', 'docx', 'xlsx', 'pptx']
+export const DOCUMENT_EXTENSIONS = ['pdf', 'txt', 'md', 'csv', 'docx', 'xlsx', 'pptx', 'html', 'htm']
 const MiB = 1024 * 1024
 export interface DraftAppendix {
   key: number; file: File; kind: 'image' | 'file'; url: string | null
@@ -101,35 +104,80 @@ export function UploadMenu({ disabled, add }: { disabled: boolean; add: (files: 
   </div>
 }
 
+function FileTile({ name }: { name: string }) {
+  const extension = extensionOf(name)
+  const format = extension === 'pdf' ? 'pdf' : ['xlsx', 'csv'].includes(extension) ? 'sheet'
+    : ['html', 'htm'].includes(extension) ? 'code' : extension === 'pptx' ? 'slides' : 'document'
+  const Icon = { pdf: FileType, sheet: FileSpreadsheet, code: FileCode, slides: Presentation, document: FileText }[format]
+  return <><span className={styles.filename} title={name}>{name}</span>
+    <span className={`${styles.fileIcon} ${styles[format]}`} aria-hidden="true"><Icon size={23} strokeWidth={1.5} /><small>{extension.toUpperCase()}</small></span></>
+}
+
+interface PreviewFile { blob: Blob; name: string; kind: 'image' | 'file' }
+
 export function DraftAttachments({ items, remove, retry }: { items: DraftAppendix[]; remove: (keys: number[]) => void; retry: (key: number) => void }) {
-  return <div className={styles.list} aria-label="待发送附件">{items.map(item => <div key={item.key} className={`${styles.card} ${item.kind === 'image' ? styles.imageCard : ''}`}>
-    {item.url ? <img className={styles.thumbnail} src={item.url} alt={item.file.name} /> : <FileText className={styles.fileIcon} size={26} />}
-    <div className={styles.label}><span title={item.file.name}>{item.file.name}</span><small role="status" title={item.error}>
-      {item.status === 'uploading' ? '上传中…' : item.status === 'failed' ? item.error : '已上传'}
-    </small></div>
-    {item.status === 'uploading' && <LoaderCircle size={15} className="spin" />}
-    {item.status === 'failed' && <button aria-label={`重试 ${item.file.name}`} onClick={() => retry(item.key)}><RotateCcw size={15} /></button>}
-    <button className={styles.remove} aria-label={`移除 ${item.file.name}`} onClick={() => remove([item.key])}><X size={14} /></button>
-  </div>)}</div>
+  const [selected, setSelected] = useState<number | null>(null)
+  const preview = items.find(item => item.key === selected)
+  return <>
+    <div className={`${styles.list} ${styles.drafts}`} aria-label="待发送附件">{items.map(item => <div key={item.key} className={styles.draft}>
+      <button type="button" className={`${styles.card} ${item.kind === 'image' ? styles.imageCard : ''}`}
+        aria-label={`查看 ${item.file.name}`} onClick={() => setSelected(item.key)}>
+        {item.url ? <img className={styles.thumbnail} src={item.url} alt={item.file.name} /> : <FileTile name={item.file.name} />}
+      </button>
+      <span role="status" className={item.status === 'ready' ? styles.srOnly : styles.status} title={item.error}>
+        {item.status === 'uploading' ? <><LoaderCircle size={14} className="spin" /><span className={styles.srOnly}>上传中…</span></>
+          : item.status === 'failed' ? <span className={styles.srOnly}>{item.error}</span> : '已上传'}
+      </span>
+      {item.status === 'failed' && <button type="button" className={styles.retry} title={item.error}
+        aria-label={`重试 ${item.file.name}`} onClick={() => retry(item.key)}><RotateCcw size={14} />上传失败，重试</button>}
+      <button type="button" className={styles.remove} aria-label={`移除 ${item.file.name}`} onClick={() => remove([item.key])}><X size={13} /></button>
+    </div>)}</div>
+    {preview && <AttachmentPreview blob={preview.file} name={preview.file.name} kind={preview.kind} close={() => setSelected(null)} />}
+  </>
 }
 
 function download(url: string, name: string) {
   const anchor = document.createElement('a'); anchor.href = url; anchor.download = name
   document.body.append(anchor); anchor.click(); anchor.remove()
 }
-function ImagePreview({ url, name, close }: { url: string; name: string; close: () => void }) {
+
+function AttachmentPreview({ blob, name, kind, close }: PreviewFile & { close: () => void }) {
   const dialog = useRef<HTMLDialogElement>(null)
-  useEffect(() => { dialog.current?.showModal(); return () => URL.revokeObjectURL(url) }, [url])
-  return <dialog ref={dialog} className={styles.preview} aria-label={`预览 ${name}`} onClose={close}
-    onClick={event => { if (event.target === event.currentTarget) close() }}>
-    <div className={styles.previewToolbar}><span title={name}>{name}</span>
-      <button aria-label={`下载 ${name}`} onClick={() => download(url, name)}><Download size={18} /></button>
-      <button aria-label="关闭图片预览" onClick={close}><X size={20} /></button></div>
-    <img src={url} alt={name} />
-  </dialog>
+  const [url, setUrl] = useState('')
+  const [text, setText] = useState<string | null>(null)
+  const [error, setError] = useState<string | null>(null)
+  useEffect(() => {
+    const opener = document.activeElement as HTMLElement | null
+    dialog.current?.showModal()
+    return () => opener?.focus()
+  }, [])
+  useEffect(() => {
+    // Each dialog owns its URL; closing it must not revoke the draft thumbnail.
+    const objectUrl = URL.createObjectURL(blob), abort = new AbortController()
+    setUrl(objectUrl); setText(null); setError(null)
+    if (kind === 'file') void attachmentText(blob, name, abort.signal).then(value => {
+      if (!abort.signal.aborted) setText(value)
+    }).catch(() => {
+      if (!abort.signal.aborted) setError('无法预览此文件的内容，请下载查看原件。')
+    })
+    return () => { abort.abort(); URL.revokeObjectURL(objectUrl) }
+  }, [blob, name, kind])
+  return createPortal(<dialog ref={dialog} className={`${previewStyles.dialog} ${kind === 'image' ? previewStyles.imageDialog : ''}`}
+    aria-label={`预览 ${name}`} onCancel={event => { event.preventDefault(); close() }} onClose={close}>
+    <div className={previewStyles.toolbar}>
+      {kind === 'file' && <span className={previewStyles.title} title={name}>{name}</span>}
+      <button type="button" disabled={!url} aria-label={`下载 ${name}`} title="下载" onClick={() => download(url, name)}><Download size={19} /></button>
+      <button type="button" aria-label={kind === 'image' ? '关闭图片预览' : '关闭文件预览'} title="关闭" onClick={close}><X size={21} /></button>
+    </div>
+    {kind === 'image' ? <img src={url || undefined} alt={name} />
+      : error ? <div className={previewStyles.state} role="alert">{error}</div>
+      : text === null ? <div className={previewStyles.state} role="status"><LoaderCircle size={18} className="spin" />正在读取文件内容…</div>
+      : <textarea className={previewStyles.text} readOnly aria-label={`${name} 文件内容`} value={text} />}
+  </dialog>, document.body)
 }
+
 export function MessageAttachments({ items = [] }: { items?: AppendixDisplay[] }) {
-  const [preview, setPreview] = useState<{ url: string; name: string } | null>(null)
+  const [preview, setPreview] = useState<PreviewFile | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [loading, setLoading] = useState<number | null>(null)
   const request = useRef<AbortController | null>(null)
@@ -140,21 +188,18 @@ export function MessageAttachments({ items = [] }: { items?: AppendixDisplay[] }
     setLoading(item.id); setError(null)
     try {
       const blob = await api.appendix(item.id, abort.signal)
-      if (abort.signal.aborted) return
-      const url = URL.createObjectURL(blob)
-      if (item.kind === 'image') setPreview({ url, name: item.name })
-      else { download(url, item.name); setTimeout(() => URL.revokeObjectURL(url), 1000) }
+      if (!abort.signal.aborted) setPreview({ blob, name: item.name, kind: item.kind })
     } catch (error) { if (!abort.signal.aborted) setError(messageOf(error)) }
     finally { if (!abort.signal.aborted) setLoading(null) }
   }
   if (!items.length) return null
   return <>
-    <div className={styles.list} aria-label="消息附件">{items.map(item => <button key={item.id} title={item.name}
-      className={`${styles.card} ${item.kind === 'image' ? styles.imageCard : ''}`} onClick={() => void open(item)} aria-label={`${item.kind === 'image' ? '查看' : '下载'} ${item.name}`}>
-      {item.kind === 'image' ? (item.thumbnail_data_url ? <img className={styles.thumbnail} src={item.thumbnail_data_url} alt={item.name} /> : <ImageIcon size={26} />) : <FileText className={styles.fileIcon} size={26} />}
-      <span className={styles.label}>{item.name}</span>{loading === item.id && <LoaderCircle size={15} className="spin" />}
+    <div className={styles.list} aria-label="消息附件">{items.map(item => <button type="button" key={item.id}
+      className={`${styles.card} ${item.kind === 'image' ? styles.imageCard : ''}`} onClick={() => void open(item)} aria-label={`查看 ${item.name}`}>
+      {item.kind === 'image' ? (item.thumbnail_data_url ? <img className={styles.thumbnail} src={item.thumbnail_data_url} alt={item.name} /> : <ImageIcon size={32} />) : <FileTile name={item.name} />}
+      {loading === item.id && <span className={styles.status} role="status" aria-label="正在读取附件"><LoaderCircle size={15} className="spin" /></span>}
     </button>)}</div>
     {error && <div className="error" role="alert">{error}</div>}
-    {preview && <ImagePreview {...preview} close={() => setPreview(null)} />}
+    {preview && <AttachmentPreview {...preview} close={() => setPreview(null)} />}
   </>
 }

@@ -1,14 +1,16 @@
 import { createContext, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { createPortal } from 'react-dom'
 import { QueryClient, useQuery } from '@tanstack/react-query'
-import { Copy, Download, Expand, FileText, RefreshCw, X } from 'lucide-react'
+import { Check, Copy, Download, Expand, RefreshCw, X } from 'lucide-react'
 import Markdown, { defaultUrlTransform, type Components } from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import { api } from '../../api/resources'
 import { messageOf } from '../../api/errors'
 import type { WorkspaceFilePreview } from '../../api/types'
 import styles from './WorkspaceFiles.module.css'
+import previewStyles from './PreviewWindow.module.css'
 import { htmlThumbnail } from './htmlThumbnail'
+import { attachmentText, extensionOf } from './attachment-content'
 
 // Decode only the URI path, once. URLSearchParams subsequently transports that literal path.
 export function workspacePath(href: string | undefined): string | null {
@@ -48,10 +50,10 @@ function saveBlob(blob: Blob, name: string) {
   anchor.href = url; anchor.download = name; anchor.click()
   setTimeout(() => URL.revokeObjectURL(url), 1000)
 }
-function sizeLabel(size: number) {
-  return size < 1024 ? `${size} B` : size < 1024 * 1024 ? `${(size / 1024).toFixed(1)} KiB` : `${(size / 1024 / 1024).toFixed(1)} MiB`
-}
-interface Preview { info: WorkspaceFilePreview; image?: Blob; html?: string }
+const canExtractDocument = (info: WorkspaceFilePreview) => info.kind === 'download' &&
+  info.size <= 10 * 1024 * 1024 && ['pdf', 'docx', 'xlsx', 'pptx'].includes(extensionOf(info.name))
+const canOpen = (info: WorkspaceFilePreview) => info.can_expand || canExtractDocument(info)
+interface Preview { info: WorkspaceFilePreview; image?: Blob; html?: string; documentText?: string }
 interface FullPreview extends Preview { text?: string }
 
 function HtmlThumbnail({ source, name, open, busy }: { source: string; name: string; open: () => void; busy: boolean }) {
@@ -65,13 +67,10 @@ function HtmlThumbnail({ source, name, open, busy }: { source: string; name: str
     observer.observe(element)
     return () => observer.disconnect()
   }, [])
-  return <>
-    <div ref={container} className={styles.htmlThumbnail}>
+  return <div ref={container} className={styles.htmlThumbnail}>
       <iframe title={`${name} 静态缩略预览`} srcDoc={document} sandbox="" referrerPolicy="no-referrer" tabIndex={-1} aria-hidden="true" style={{ transform: `scale(${width / 960})` }} />
       <button type="button" aria-label={`查看 ${name} 源码`} disabled={busy} onClick={open} />
     </div>
-    <div className={styles.caption}>静态预览 · 不运行脚本或加载外部资源</div>
-  </>
 }
 
 function FileDialog({ value, close, download }: { value: FullPreview; close: () => void; download: () => void }) {
@@ -79,23 +78,25 @@ function FileDialog({ value, close, download }: { value: FullPreview; close: () 
   const url = useObjectUrl(value.image)
   const [copied, setCopied] = useState(false)
   const [error, setError] = useState('')
-  useEffect(() => { dialog.current?.showModal() }, [])
+  useEffect(() => {
+    const opener = document.activeElement as HTMLElement | null
+    dialog.current?.showModal()
+    return () => opener?.focus()
+  }, [])
   async function copy() {
     try { await navigator.clipboard.writeText(value.text!); setCopied(true) }
     catch { setError('复制失败，请重试') }
   }
-  return createPortal(<dialog ref={dialog} className={styles.dialog} aria-label={`预览 ${value.info.name}`} onCancel={close} onClose={close}>
-    <header className={styles.header}>
-      <span className={styles.path}>{value.info.path}</span>
-      {value.text !== undefined && <button type="button" aria-label="复制完整内容" onClick={() => void copy()}><Copy size={16} />{copied ? '已复制' : ''}</button>}
-      <button type="button" aria-label={`下载 ${value.info.name}`} onClick={download}><Download size={16} /></button>
-      <button type="button" aria-label="关闭文件预览" onClick={close}><X size={18} /></button>
+  return createPortal(<dialog ref={dialog} className={`${previewStyles.dialog} ${value.image ? previewStyles.imageDialog : ''}`} aria-label={`预览 ${value.info.name}`} onCancel={event => { event.preventDefault(); close() }} onClose={close}>
+    <header className={previewStyles.toolbar}>
+      {!value.image && <span className={previewStyles.title} title={value.info.path}>{value.info.path}</span>}
+      {value.text !== undefined && <button type="button" aria-label={copied ? '已复制完整内容' : '复制完整内容'} title={copied ? '已复制' : '复制'} onClick={() => void copy()}>{copied ? <Check /> : <Copy />}</button>}
+      <button type="button" aria-label={`下载 ${value.info.name}`} title="下载" onClick={download}><Download /></button>
+      <button type="button" aria-label="关闭文件预览" title="关闭" onClick={close}><X /></button>
     </header>
     {error && <p role="alert">{error}</p>}
-    <div className={styles.full}>
-      {value.text !== undefined ? <pre><code>{value.text}</code></pre> : url ? <img src={url} alt={value.info.name} /> :
-        <p>{value.info.can_expand ? '正在加载…' : '此文件不支持完整预览，请下载查看。'}</p>}
-    </div>
+    {value.text !== undefined ? <pre className={previewStyles.text} tabIndex={0}><code>{value.text}</code></pre> : url ? <img src={url} alt={value.info.name} /> :
+      <p className={previewStyles.state}>{value.info.can_expand ? '正在加载…' : '此文件不支持完整预览，请下载查看。'}</p>}
   </dialog>, document.body)
 }
 
@@ -112,7 +113,18 @@ function FileReference({ path, children, block, complete }: { path: string; chil
       if (!blob.type.startsWith('text/plain')) throw new Error('文件类型已变化，请刷新后重试')
       html = await blob.text()
     }
-    return { info, image, html }
+    let documentText: string | undefined
+    if (canExtractDocument(info)) {
+      try {
+        const blob = await api.workspaceContent(sessionId, path, true, signal)
+        if (blob.size > 10 * 1024 * 1024) documentText = '文件超过文本提取上限，请下载查看原件。'
+        else documentText = await attachmentText(blob, info.name, signal)
+      } catch (error) {
+        signal.throwIfAborted()
+        documentText = '无法提取此文件的文本，请下载查看原件。'
+      }
+    }
+    return { info, image, html, documentText }
   }
   const query = useQuery({ queryKey: key, queryFn: ({ signal }) => load(signal), enabled: complete && block,
     refetchOnMount: 'always' }, client)
@@ -139,7 +151,8 @@ function FileReference({ path, children, block, complete }: { path: string; chil
         if (controller.signal.aborted) return
         if (kind !== 'refresh') {
           const value: FullPreview = { ...current }
-          if (current.html !== undefined) value.text = current.html
+          if (current.documentText !== undefined) value.text = current.documentText
+          else if (current.html !== undefined) value.text = current.html
           else if (current.info.kind === 'text' && current.info.can_expand) {
             const blob = await api.workspaceContent(sessionId, path, false, controller.signal)
             if (!blob.type.startsWith('text/plain')) throw new Error('文件类型已变化，请刷新后重试')
@@ -156,31 +169,38 @@ function FileReference({ path, children, block, complete }: { path: string; chil
     finally { if (!controller.signal.aborted) setBusy(false) }
   }
   const close = () => { pending.current?.abort(); setBusy(false); setModal(undefined) }
+  const visual = !!url || query.data?.html !== undefined
+  const snippet = query.data?.documentText ?? info?.text
   const body = <>
     {block && <>
-      <header className={styles.header}>
-        <FileText size={16} /><span className={styles.path} title={path}>{path}</span>
+      {!visual && <header className={previewStyles.toolbar}>
+        <span className={previewStyles.title} title={path}>{path}</span>
         {complete && <>
-          {info?.kind === 'text' && info.can_expand && <button type="button" disabled={busy} aria-label={`复制 ${path}`} onClick={() => void action('copy')}><Copy size={15} />{copied ? '已复制' : ''}</button>}
-          <button type="button" disabled={busy} aria-label={`刷新 ${path}`} onClick={() => void action('refresh')}><RefreshCw size={15} /></button>
-          <button type="button" disabled={busy} aria-label={`下载 ${path}`} onClick={() => void action('download')}><Download size={15} /></button>
-          {info?.can_expand && <button type="button" disabled={busy} aria-label={`展开 ${path}`} onClick={() => void action('open')}><Expand size={15} /></button>}
+          {info && canOpen(info) && (info.kind === 'text' || canExtractDocument(info)) && <button type="button" disabled={busy} title={copied ? '已复制' : '复制'} aria-label={`复制 ${path}`} onClick={() => void action('copy')}>{copied ? <Check /> : <Copy />}</button>}
+          <button type="button" disabled={busy} title="刷新" aria-label={`刷新 ${path}`} onClick={() => void action('refresh')}><RefreshCw /></button>
+          <button type="button" disabled={busy} title="下载" aria-label={`下载 ${path}`} onClick={() => void action('download')}><Download /></button>
+          {info && canOpen(info) && <button type="button" disabled={busy} title="展开" aria-label={`展开 ${path}`} onClick={() => void action('open')}><Expand /></button>}
         </>}
-      </header>
-      <div className={styles.caption}>{children}{info && <span> · {info.language ?? info.kind} · {sizeLabel(info.size)}</span>}</div>
+      </header>}
       {!complete ? <div className={styles.placeholder}>回答完成后加载文件</div> : query.isPending ? <div className={styles.placeholder}>正在加载文件…</div> : null}
-      {info?.kind === 'text' && (query.data?.html !== undefined ?
-        <HtmlThumbnail source={query.data.html} name={path} busy={busy} open={() => void action('open')} /> :
-        <pre className={styles.snippet}><code>{info.text?.split('\n').slice(0, 12).join('\n')}</code></pre>)}
-      {info?.kind === 'image' && url && <button type="button" className={styles.image} aria-label={`查看 ${path}`} onClick={() => void action('open')}><img src={url} alt={info.name} onError={() => setError('图片加载失败，请刷新或下载查看')} /></button>}
-      {info && <button type="button" className={styles.footer} disabled={busy} onClick={() => void action(info.can_expand ? 'open' : 'download')}>
-        {info.can_expand ? query.data?.html !== undefined ? '查看完整源码' : '查看完整内容' : '下载文件查看完整内容'}
+      {visual ? <div className={styles.media}>
+        {query.data?.html !== undefined ? <HtmlThumbnail source={query.data.html} name={path} busy={busy} open={() => void action('open')} /> :
+          <button type="button" className={styles.image} disabled={busy} aria-label={`查看 ${path}`} onClick={() => void action('open')}><img src={url} alt={info?.name} onError={() => setError('图片加载失败，请重新打开或下载查看')} /></button>}
+        <button type="button" className={styles.mediaDownload} disabled={busy} title="下载" aria-label={`下载 ${path}`} onClick={() => void action('download')}><Download size={15} /></button>
+      </div> : snippet && <pre className={`${styles.snippet} ${info && canOpen(info) ? styles.expandable : ''}`} tabIndex={info && canOpen(info) ? 0 : undefined}
+        role={info && canOpen(info) ? 'button' : undefined} aria-label={info && canOpen(info) ? `查看 ${path} 完整内容` : undefined}
+        onClick={() => { if (info && canOpen(info)) void action('open') }}
+        onKeyDown={event => { if (info && canOpen(info) && (event.key === 'Enter' || event.key === ' ')) { event.preventDefault(); void action('open') } }}>
+        <code>{snippet.split('\n').slice(0, 12).join('\n')}</code>
+      </pre>}
+      {info && !canOpen(info) && <button type="button" className={styles.footer} disabled={busy} onClick={() => void action('download')}>
+        下载文件查看完整内容
       </button>}
     </>}
     {complete && (error || query.error) ? <span className={styles.error} role="alert">{error || messageOf(query.error)} <button type="button" disabled={busy} onClick={() => void action(block ? 'refresh' : 'open')}>重试</button></span> : null}
     {modal && <FileDialog value={modal} close={close} download={() => void action('download')} />}
   </>
-  return block ? <section className={styles.card} aria-label={`文件 ${path}`} aria-busy={busy}>{body}</section> : <>
+  return block ? <section className={visual ? styles.visualCard : styles.card} aria-label={`文件 ${path}`} aria-busy={busy}>{body}</section> : <>
     <button type="button" className={styles.inline} title={path} disabled={!complete || busy} onClick={() => void action('open')}>{children}</button>{body}
   </>
 }

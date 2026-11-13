@@ -20,6 +20,7 @@ IMAGE_TYPES = {".png": ("PNG", "image/png"), ".jpg": ("JPEG", "image/jpeg"),
                ".gif": ("GIF", "image/gif")}
 DOCUMENT_TYPES = {
     ".pdf": "application/pdf", ".txt": "text/plain", ".md": "text/markdown", ".csv": "text/csv",
+    ".html": "text/html", ".htm": "text/html",
     ".docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
     ".xlsx": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
     ".pptx": "application/vnd.openxmlformats-officedocument.presentationml.presentation",
@@ -50,7 +51,7 @@ def validate_file(name: str, data: bytes) -> tuple[str, bytes | None]:
                     preview = io.BytesIO()
                     picture.convert("RGBA").save(preview, "WEBP", quality=80)
                     return IMAGE_TYPES[extension][1], preview.getvalue()
-        if extension in (".txt", ".md", ".csv"):
+        if extension in (".txt", ".md", ".csv", ".html", ".htm"):
             text = data.decode("utf-8-sig")
             if "\x00" in text:
                 raise InvalidAppendix("文本附件必须是 UTF-8 文本")

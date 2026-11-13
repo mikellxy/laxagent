@@ -4,6 +4,8 @@ import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 import { api } from '../src/api/resources'
 import { AssistantMarkdown, WorkspaceFilesProvider, workspacePath } from '../src/features/chat/WorkspaceFiles'
 import type { WorkspaceFilePreview } from '../src/api/types'
+import { Blob as NodeBlob } from 'node:buffer'
+import { strToU8, zipSync } from 'fflate'
 
 const info = (path = 'hello.py', changes: Partial<WorkspaceFilePreview> = {}): WorkspaceFilePreview => ({
   path, name: path.split('/').at(-1)!, size: 9, kind: 'text', language: 'python', text: 'print(42)', truncated: false, can_expand: true, ...changes,
@@ -67,13 +69,13 @@ it('renders source safely, reads fresh content on refresh, and downloads unsuppo
   expect(h.container.querySelector('script')).toBeNull()
   await userEvent.click(screen.getByRole('button', { name: '刷新 page.html' }))
   expect(await screen.findByText('updated')).toBeVisible()
-  vi.mocked(api.workspacePreview).mockResolvedValue(info('report.pdf', { kind: 'download', text: null, can_expand: false }))
-  h.rerender(view('[报告](workspace:/report.pdf)'))
+  vi.mocked(api.workspacePreview).mockResolvedValue(info('report.zip', { kind: 'download', text: null, can_expand: false }))
+  h.rerender(view('[报告](workspace:/report.zip)'))
   await screen.findByText('下载文件查看完整内容')
   const download = vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(() => {})
-  await userEvent.click(screen.getByRole('button', { name: '下载 report.pdf' }))
+  await userEvent.click(screen.getByRole('button', { name: '下载 report.zip' }))
   await waitFor(() => expect(download).toHaveBeenCalled())
-  expect(api.workspaceContent).toHaveBeenLastCalledWith(1, 'report.pdf', true, expect.any(AbortSignal))
+  expect(api.workspaceContent).toHaveBeenLastCalledWith(1, 'report.zip', true, expect.any(AbortSignal))
 })
 
 it('loads bounded full HTML only after completion, refreshes its thumbnail and opens unmodified source', async () => {
@@ -91,7 +93,7 @@ it('loads bounded full HTML only after completion, refreshes its thumbnail and o
   expect(await screen.findByRole('dialog')).toHaveTextContent(source)
   await userEvent.click(screen.getByRole('button', { name: '关闭文件预览' }))
   vi.mocked(api.workspaceContent).mockResolvedValue(blob('<h1>Updated</h1>'))
-  await userEvent.click(screen.getByRole('button', { name: '刷新 page.html' }))
+  await userEvent.click(screen.getByRole('button', { name: '查看 page.html 源码' }))
   await waitFor(() => expect(frame.getAttribute('srcdoc')).toContain('<h1>Updated</h1>'))
 })
 
@@ -119,6 +121,9 @@ it('displays images, releases object URLs, and retries a locally failed preview'
   expect(await screen.findByRole('alert')).toHaveTextContent('文件不存在')
   await userEvent.click(screen.getByRole('button', { name: '重试' }))
   expect(await screen.findByRole('img')).toHaveAttribute('src', 'blob:preview')
+  expect(screen.queryByRole('button', { name: '刷新 image.png' })).toBeNull()
+  expect(screen.queryByText('image.png')).toBeNull()
+  expect(screen.getByRole('button', { name: '下载 image.png' })).toBeVisible()
   await userEvent.click(screen.getByRole('button', { name: '查看 image.png' }))
   const dialog = await screen.findByRole('dialog')
   expect(await within(dialog).findByRole('img')).toBeVisible()
@@ -126,6 +131,16 @@ it('displays images, releases object URLs, and retries a locally failed preview'
   await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
   h.unmount()
   expect(URL.revokeObjectURL).toHaveBeenCalledWith('blob:preview')
+})
+
+it('extracts bounded workspace documents for both the snippet and expanded window', async () => {
+  const file = new NodeBlob([new Uint8Array(zipSync({ 'word/document.xml': strToU8('<w:document xmlns:w="urn:word"><w:p><w:r><w:t>文档正文</w:t></w:r></w:p></w:document>') }))])
+  vi.mocked(api.workspacePreview).mockResolvedValue(info('report.docx', { kind: 'download', text: null, can_expand: false }))
+  vi.mocked(api.workspaceContent).mockResolvedValue(file as unknown as Blob)
+  render(view('[文档](workspace:/report.docx)'))
+  await screen.findByText('文档正文')
+  await userEvent.click(screen.getByRole('button', { name: '展开 report.docx' }))
+  expect(await screen.findByRole('dialog')).toHaveTextContent('文档正文')
 })
 
 it('reads current content for a newly mounted reference while retaining deduplication', async () => {

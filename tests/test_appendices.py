@@ -34,6 +34,7 @@ def office(extension):
     ('png', picture()), ('jpg', picture('JPEG')), ('jpeg', picture('JPEG')),
     ('webp', picture('WEBP')), ('gif', picture('GIF')), ('pdf', b'%PDF-1.4\n%%EOF'),
     ('txt', b'hello'), ('md', b'# hello'), ('csv', b'a,b\n1,2'),
+    ('html', b'<h1>hello</h1>'), ('htm', b'<!doctype html><p>hello</p>'),
     *[(extension, office(extension)) for extension in ('docx', 'xlsx', 'pptx')],
 ])
 def test_allowed_formats(extension, data):
@@ -47,6 +48,7 @@ def test_allowed_formats(extension, data):
 
 @pytest.mark.parametrize('name,data', [('bad.png', b'not image'), ('bad.jpg', picture()), ('bad.pdf', b'text'),
     ('bad.docx', office('xlsx')), ('bad.xlsx', b'not zip'), ('bad.txt', b'\xff'), ('bad.md', b'a\x00b'),
+    ('bad.html', b'\xff'), ('bad.htm', b'a\x00b'),
     ('bad.svg', b'<svg/>'), ('empty.txt', b''), ('file.zip', office('docx'))])
 def test_reject_mismatched_content(name, data):
     with pytest.raises(InvalidAppendix):

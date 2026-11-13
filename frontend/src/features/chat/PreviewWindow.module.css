@@ -1,0 +1,25 @@
+.dialog { width: min(1000px, calc(100vw - 48px)); max-width: calc(100vw - 32px); max-height: calc(var(--viewport-height, 100dvh) - 40px); padding: 0; border: 1px solid #e7e8e780; border-radius: 18px; background: #fff; color: #333832; box-shadow: 0 24px 90px #10181026, 0 4px 18px #10181010; overflow: hidden; }
+.dialog::backdrop { background: #151c2466; backdrop-filter: blur(4px); }
+.dialog[open] { display: flex; flex-direction: column; }
+.toolbar { display: flex; align-items: center; gap: 4px; min-height: 42px; padding: 6px 10px 6px 18px; background: #f7f7f8; color: #737772; flex-shrink: 0; }
+.title { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font: 12px/1.5 ui-monospace, SFMono-Regular, Consolas, monospace; }
+.toolbar button { display: inline-flex; align-items: center; justify-content: center; gap: 4px; flex-shrink: 0; width: 28px; height: 28px; padding: 0; border: 0; border-radius: 6px; color: #747872; background: transparent; }
+.toolbar button:hover:not(:disabled) { color: #30362e; background: #e9ebe8; }
+.toolbar button:disabled { opacity: .4; }
+.toolbar button:focus-visible { outline: 2px solid #82977d; outline-offset: 1px; }
+.toolbar svg { width: 15px; height: 15px; stroke-width: 1.7; }
+.text { display: block; box-sizing: border-box; width: 100%; height: min(70vh, 740px); max-height: calc(var(--viewport-height, 100dvh) - 100px); min-height: 0; margin: 0; padding: 24px; border: 0; border-radius: 0; outline: none; resize: none; overflow: auto; background: #fff; color: #3f4640; font: 13px/1.8 ui-monospace, SFMono-Regular, Consolas, monospace; tab-size: 4; white-space: pre-wrap; overflow-wrap: anywhere; overscroll-behavior: contain; }
+.text code { font: inherit; background: none; padding: 0; }
+.state { display: flex; align-items: center; justify-content: center; gap: 8px; min-height: 180px; padding: 24px; font-size: 13px; color: #747b70; }
+.imageDialog { position: fixed; width: fit-content; min-width: 160px; min-height: 64px; border: 0; background: transparent; box-shadow: none; }
+.imageDialog .toolbar { position: absolute; z-index: 1; top: 8px; right: 8px; padding: 0; min-height: 0; background: transparent; }
+.imageDialog .toolbar button { background: #ffffffdf; backdrop-filter: blur(8px); box-shadow: 0 1px 5px #0001; }
+.imageDialog > img { display: block; max-width: min(1200px, calc(100vw - 32px)); max-height: calc(var(--viewport-height, 100dvh) - 40px); object-fit: contain; border-radius: 16px; margin: auto; }
+@media (max-width: 700px), (max-width: 1000px) and (pointer: coarse) {
+  .dialog { width: calc(100vw - 24px); max-width: calc(100vw - 24px); max-height: calc(var(--viewport-height, 100dvh) - 24px); border-radius: 16px; }
+  .toolbar { padding: 5px 8px 5px 14px; gap: 2px; }
+  .toolbar button { width: 30px; height: 30px; }
+  .text { padding: 18px; font-size: 14px; }
+  .imageDialog { width: fit-content; }
+  .imageDialog > img { max-width: calc(100vw - 24px); max-height: calc(var(--viewport-height, 100dvh) - 24px); }
+}

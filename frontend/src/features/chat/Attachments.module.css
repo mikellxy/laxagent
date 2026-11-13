@@ -1,16 +1,24 @@
-.list { display: flex; flex-wrap: wrap; gap: 9px; margin: 8px 0; white-space: normal; }
-.card { position: relative; display: flex; align-items: center; gap: 10px; max-width: 260px; min-width: 0; min-height: 64px; padding: 10px 12px; background: #fff; border: 1px solid #dce0dc; border-radius: 11px; text-align: left; font-size: 13px; }
-button.card:hover { border-color: #9ea99c; background: #fafbf9; }
-.card > svg, .card > button { flex-shrink: 0; }
-.fileIcon { color: #778c98; }
-.label { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.label > span, .label > small { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.label > small { color: #777e74; font-size: 11px; margin-top: 3px; }
-.thumbnail { width: 64px; height: 64px; border-radius: 6px; object-fit: cover; }
-.imageCard { padding: 7px; }
-.imageCard .label { max-width: 130px; }
-.card:has(.remove) { padding-right: 26px; }
-.remove { position: absolute; top: 3px; right: 3px; background: #f0f1ed; border-radius: 50%; width: 20px; height: 20px; display: grid; place-items: center; }
+.list { display: flex; flex-wrap: wrap; gap: 12px; margin: 8px 0; white-space: normal; }
+.drafts { flex-wrap: nowrap; overflow-x: auto; padding: 5px 5px 10px; margin: -5px -5px 4px; }
+.draft { position: relative; flex: 0 0 auto; }
+.card { position: relative; display: flex; flex-direction: column; align-items: flex-start; justify-content: space-between; gap: 12px; width: 216px; height: 112px; flex-shrink: 0; padding: 16px; background: #fff; border: 1px solid #e3e5e0; border-radius: 12px; text-align: left; font-size: 14px; overflow: hidden; }
+.card:hover { border-color: #aeb6a9; background: #eff1ed; }
+.card:focus-visible, .remove:focus-visible, .retry:focus-visible { outline: 2px solid #667d62; outline-offset: 2px; }
+.filename { width: calc(100% - 12px); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; align-self: stretch; font-weight: 500; }
+.fileIcon { display: flex; align-items: center; gap: 7px; }
+.fileIcon small { font-size: 12px; line-height: 1; font-weight: 500; letter-spacing: .3px; color: #73776f; }
+.pdf { color: #d14a45; }
+.sheet { color: #21845b; }
+.code { color: #c8792e; }
+.slides { color: #ca633f; }
+.document { color: #4479b1; }
+.thumbnail { display: block; width: 100%; height: 100%; object-fit: cover; }
+.imageCard { width: 112px; align-items: center; justify-content: center; padding: 0; background: #ecefe9; }
+.remove { position: absolute; top: 5px; right: 5px; border: 1px solid #dce0d8; background: #fff; color: #60665c; border-radius: 50%; width: 22px; height: 22px; display: grid; place-items: center; box-shadow: 0 1px 4px #0001; }
+.remove:hover { background: #e9ede5; }
+.status { position: absolute; bottom: 7px; left: 7px; display: flex; align-items: center; background: #fffffff0; border-radius: 20px; padding: 4px; pointer-events: none; }
+.retry { position: absolute; bottom: 6px; left: 5px; right: 5px; display: flex; align-items: center; justify-content: center; gap: 3px; padding: 5px 2px; border-radius: 6px; background: #fff3f0; color: #a63c30; font-size: 10px; }
+.srOnly { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; border: 0; }
 .upload { position: relative; flex-shrink: 0; }
 .plus { display: grid; place-items: center; width: 32px; height: 32px; border-radius: 7px; color: #596052; }
 .plus:hover:not(:disabled) { background: #eceee7; }
@@ -18,19 +26,10 @@ button.card:hover { border-color: #9ea99c; background: #fafbf9; }
 .menu { position: absolute; bottom: calc(100% + 8px); left: 0; width: 160px; padding: 5px; background: #fff; border: 1px solid #dce0dc; border-radius: 10px; box-shadow: 0 5px 24px #0002; z-index: 5; }
 .menu button { display: flex; align-items: center; gap: 10px; padding: 10px; width: 100%; border-radius: 6px; font-size: 13px; }
 .menu button:hover, .menu button:focus-visible { background: #eef0e9; }
-.preview { border: 0; border-radius: 12px; padding: 16px; max-width: 92vw; max-height: 90vh; background: #fafbf8; }
-.preview::backdrop { background: #0009; }
-.preview > img { display: block; max-width: 85vw; max-height: 75vh; object-fit: contain; }
-.previewToolbar { display: flex; align-items: center; gap: 16px; margin-bottom: 12px; }
-.previewToolbar > span { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 @media (max-width: 700px), (max-width: 1000px) and (pointer: coarse) {
-  .card { max-width: 100%; }
-  .card:has(.remove) { padding-right: 48px; }
-  .remove, .plus { width: 44px; height: 44px; }
-  .remove { top: 0; right: 0; background: transparent; }
+  .card { width: 200px; height: 100px; padding: 14px; }
+  .imageCard { width: 100px; padding: 0; }
+  .remove { width: 28px; height: 28px; }
+  .plus { width: 44px; height: 44px; }
   .menu button { min-height: 44px; }
-  .preview { max-height: calc(var(--viewport-height, 100dvh) - 24px); padding: 12px; }
-  .preview > img { max-height: calc(var(--viewport-height, 100dvh) - 110px); }
-  .previewToolbar { gap: 4px; }
-  .previewToolbar button { min-width: 44px; min-height: 44px; }
 }

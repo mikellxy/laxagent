@@ -43,3 +43,6 @@ export interface Answer { question: string; answer: string }
 export interface PendingQuestion {
   run_id: number; resume_time: number; interrupt_id: string; tool_call_id: string; questions: Question[]
 }
+
+export interface Skill { name: string; desc: string }
+export interface Skills { skills: Skill[] }

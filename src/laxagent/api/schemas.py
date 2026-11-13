@@ -9,6 +9,15 @@ from laxagent.memory import MemoryCategory
 from laxagent.run_errors import failure_description
 
 
+class SkillResponse(BaseModel):
+    name: str
+    desc: str
+
+
+class SkillsResponse(BaseModel):
+    skills: list[SkillResponse]
+
+
 class UserConfigRequest(BaseModel):
     model_config = ConfigDict(extra="forbid", strict=True)
 

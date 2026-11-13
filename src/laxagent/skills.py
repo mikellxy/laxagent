@@ -254,3 +254,28 @@ def skill_catalog(user_id: str) -> list[dict]:
         except (ToolError, OSError, UnicodeError):
             logger.warning("Ignoring invalid skill %r", name)
     return result
+
+
+def user_skill_list(user_id: str) -> list[dict]:
+    """Read entry metadata for explicit selection, without loading skill resources."""
+    try:
+        with user_skills_root(user_id) as root:
+            names = sorted(os.listdir(root))
+    except FileNotFoundError:
+        return []
+    result = []
+    for name in names:
+        if name.startswith("."):
+            continue
+        try:
+            with skill_directory(user_id, name) as directory:
+                fd = os.open("SKILL.md", os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=directory)
+                with os.fdopen(fd, "rb") as file:
+                    info = os.fstat(file.fileno())
+                    if not stat.S_ISREG(info.st_mode) or info.st_nlink != 1:
+                        raise SkillError("INVALID_SKILL_FILE")
+                    metadata = parse_metadata(name, file.read(MAX_SKILL_BYTES + 1))
+            result.append({"name": metadata["name"], "desc": metadata["description"]})
+        except (ToolError, OSError, UnicodeError):
+            logger.warning("Ignoring invalid skill entry %r", name)
+    return result

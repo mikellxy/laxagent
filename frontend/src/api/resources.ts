@@ -1,8 +1,9 @@
 import { json, request } from './http'
 import { streamRun } from './sse'
-import type { Answer, AppendixReference, UserConfigs, Memories, MessagePage, Models, Project, Run, Session, SessionDetail, SubmittedRun, WorkspaceFilePreview } from './types'
+import type { Skills, Answer, AppendixReference, UserConfigs, Memories, MessagePage, Models, Project, Run, Session, SessionDetail, SubmittedRun, WorkspaceFilePreview } from './types'
 
 export const api = {
+  skills: (signal?: AbortSignal) => json<Skills>('/skills', { signal }),
   workspacePreview: (session: number, path: string, signal?: AbortSignal) => json<WorkspaceFilePreview>(
     `/sessions/${session}/workspace-files/preview?${new URLSearchParams({ path })}`, { signal }),
   workspaceContent: async (session: number, path: string, download: boolean, signal?: AbortSignal) => (await request(

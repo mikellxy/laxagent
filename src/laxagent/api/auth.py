@@ -1,3 +1,5 @@
+import asyncio
+import logging
 from datetime import datetime, timedelta, timezone
 from typing import Annotated
 from uuid import UUID
@@ -8,10 +10,12 @@ from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
 from laxagent.api.dependencies import get_config, get_repository
 from laxagent.api.schemas import LoginRequest, TokenResponse
+from laxagent.skills import SkillError, initialize_skills
 
 router = APIRouter()
 bearer = HTTPBearer(auto_error=False)
 TOKEN_SECONDS = 24 * 60 * 60
+logger = logging.getLogger(__name__)
 
 
 def unauthorized():
@@ -38,6 +42,11 @@ async def get_current_user(
 @router.post("/login", response_model=TokenResponse)
 async def login(body: LoginRequest, config=Depends(get_config), repository=Depends(get_repository)):
     initial_session_id = await repository.ensure_user(body.user_id, guest=body.from_page == "guest_login")
+    try:
+        await asyncio.to_thread(initialize_skills, body.user_id, config.builtin_skills_dir)
+    except (OSError, SkillError):
+        logger.exception("Unable to initialize login skills")
+        raise HTTPException(503, "技能初始化失败，请重试登录") from None
     now = datetime.now(timezone.utc)
     token = jwt.encode({"sub": body.user_id, "iat": now, "exp": now + timedelta(seconds=TOKEN_SECONDS)},
                        config.auth.jwt_secret.get_secret_value(), algorithm="HS256")

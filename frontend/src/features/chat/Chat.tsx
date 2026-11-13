@@ -11,6 +11,9 @@ import { DraftAttachments, MessageAttachments, UploadMenu, useAppendices } from 
 import { groupTimeline, latestWorkLine, processKey, type WorkGroup } from './timeline'
 import type { Message, ToolMessage } from '../../api/types'
 import styles from './Chat.module.css'
+import { SkillComposer } from './SkillComposer'
+import { SkillText } from './SkillText'
+import { copySelectedSkillText } from './skill-text'
 import { useMobileLayout } from '../../lib/mobile'
 
 function argumentsText(value: string) { try { return JSON.stringify(JSON.parse(value), null, 2) } catch { return value } }
@@ -52,7 +55,7 @@ function MessageCard({ message }: { message: Message }) {
   if (message.role === 'assistant' && !message.content) return null
   return <article data-seq={message.seq} aria-label={message.role === 'user' ? '用户消息' : message.role === 'assistant' ? '助手消息' : '工具调用'}
     className={`${styles.message} ${styles[message.role]}`}>
-    {message.role === 'assistant' ? <AssistantMarkdown text={message.content} complete={message.complete !== false} files /> : message.content}
+    {message.role === 'assistant' ? <AssistantMarkdown text={message.content} complete={message.complete !== false} files /> : <SkillText text={message.content} />}
     {message.role === 'user' && <MessageAttachments items={message.appendix} />}
   </article>
 }
@@ -100,6 +103,10 @@ export function UserIdBar({ owner, sessionId }: { owner: string; sessionId: numb
 }
 
 export function Chat({ owner, sessionId, onMissing }: { owner: string; sessionId: number; onMissing: () => void }) {
+  useEffect(() => {
+    document.addEventListener('copy', copySelectedSkillText)
+    return () => document.removeEventListener('copy', copySelectedSkillText)
+  }, [])
   const mobile = useMobileLayout()
   const conversation = useMemo(() => new Conversation(sessionId), [sessionId])
   const snapshot = useSyncExternalStore(conversation.subscribe, conversation.getSnapshot)
@@ -117,7 +124,6 @@ export function Chat({ owner, sessionId, onMissing }: { owner: string; sessionId
   const [following, setFollowing] = useState(true)
   const follow = useRef(true)
   const scroller = useRef<HTMLDivElement>(null)
-  const textarea = useRef<HTMLTextAreaElement>(null)
   const programmatic = useRef(false)
   const lastTop = useRef(0)
   const anchor = useRef<{ key: string; member: string; offset: number } | null>(null)
@@ -183,24 +189,6 @@ export function Chat({ owner, sessionId, onMissing }: { owner: string; sessionId
     element.addEventListener('scroll', remember)
     return () => { observer.disconnect(); element.removeEventListener('scroll', remember) }
   }, [sessionId, snapshot.ready])
-  useLayoutEffect(() => {
-    const input = textarea.current
-    if (!input) return
-    const resize = () => {
-      const scrollTop = input.scrollTop
-      input.style.height = 'auto'
-      input.style.height = `${input.scrollHeight}px`
-      input.scrollTop = scrollTop
-    }
-    resize()
-    if (typeof ResizeObserver === 'undefined') return
-    let width = input.clientWidth
-    const observer = new ResizeObserver(() => {
-      if (input.clientWidth !== width) { width = input.clientWidth; resize() }
-    })
-    observer.observe(input)
-    return () => observer.disconnect()
-  }, [draft, mobile])
   async function older() {
     const element = scroller.current
     if (!element || snapshot.loadingOlder || snapshot.syncing || !snapshot.hasMore || follow.current) return
@@ -230,7 +218,7 @@ export function Chat({ owner, sessionId, onMissing }: { owner: string; sessionId
     node: row.kind === 'work' ? <WorkCard group={row} fold={fold} /> : <MessageCard message={row.message} />,
   }))
   if (snapshot.pending) rows.push({ key: 'pending', seq: snapshot.pending.afterSeq + 0.5, members: 'pending',
-    node: <article className={`${styles.message} ${styles.user} ${snapshot.pending.failed ? styles.failed : ''}`} aria-label="待确认用户消息">{snapshot.pending.content}<MessageAttachments items={snapshot.pending.appendix} /></article> })
+    node: <article className={`${styles.message} ${styles.user} ${snapshot.pending.failed ? styles.failed : ''}`} aria-label="待确认用户消息"><SkillText text={snapshot.pending.content} /><MessageAttachments items={snapshot.pending.appendix} /></article> })
   if (snapshot.pending && working) {
     const group: WorkGroup = { kind: 'work', key: 'work:pending', seq: snapshot.pending.afterSeq + 0.75, items: [], active: true }
     rows.push({ key: group.key, seq: group.seq, members: group.key, node: <WorkCard group={group} fold={fold} /> })
@@ -264,17 +252,14 @@ export function Chat({ owner, sessionId, onMissing }: { owner: string; sessionId
         pending={snapshot.question} submitting={snapshot.answering || snapshot.cancelling} onSubmit={answers => void conversation.answer(answers)} />}
       {snapshot.question && <button type="button" className={styles.questionStop} disabled={snapshot.cancelling || snapshot.answering}
         onClick={() => void conversation.cancel()}><Square size={14} />{snapshot.cancelling ? '正在取消…' : '停止任务'}</button>}
-      <div className={styles.composer}>
+      <div className={styles.composer} data-composer>
         <div className={styles.composerBody}>
         {!!attachments.items.length && <DraftAttachments items={attachments.items} remove={attachments.remove} retry={attachments.retry} />}
         {attachments.error && <div className="error" role="alert">{attachments.error}</div>}
         {incompatible && <div className={styles.attachmentHint} role="status">{snapshot.detail?.has_appendix
           ? '此会话包含附件，请选择支持多模态的模型，或新建会话'
           : '当前模型不支持附件，请更换模型或移除附件'}</div>}
-        <textarea ref={textarea} aria-label="消息输入" placeholder="向 LaxAgent 提问" value={draft} rows={1} onChange={e => setDraft(e.target.value)}
-          onKeyDown={event => {
-            if (!mobile && event.key === 'Enter' && !event.shiftKey && !event.nativeEvent.isComposing && event.nativeEvent.keyCode !== 229) { event.preventDefault(); void send() }
-          }} />
+        <SkillComposer value={draft} onChange={setDraft} onSend={() => void send()} mobile={mobile} />
         </div>
         <div className={styles.toolbar}>
           <UploadMenu disabled={!multimodal} add={attachments.add} />

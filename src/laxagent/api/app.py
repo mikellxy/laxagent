@@ -16,6 +16,7 @@ from laxagent.api.sessions import router as sessions_router
 from laxagent.api.models import router as models_router
 from laxagent.api.memories import router as memories_router
 from laxagent.api.user_configs import router as user_configs_router
+from laxagent.api.skills import router as skills_router
 from laxagent.api.frontend import frontend_files
 from laxagent.config import AppConfig
 from laxagent.models.factory import create_client
@@ -64,7 +65,7 @@ def create_app(config: AppConfig | None = None) -> FastAPI:
     app.include_router(runs_router, prefix="/api/v1")
     app.include_router(workspace_files_router, prefix="/api/v1")
     app.include_router(auth_router, prefix="/api/v1")
-    for router in (projects_router, sessions_router, models_router, memories_router, user_configs_router, appendices_router):
+    for router in (projects_router, sessions_router, models_router, memories_router, user_configs_router, appendices_router, skills_router):
         app.include_router(router, prefix="/api/v1")
 
     @app.exception_handler(DatabaseError)

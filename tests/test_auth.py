@@ -49,7 +49,9 @@ async def test_login_creates_user_once_and_token_authenticates(login_api, reposi
             assert await transaction.scalar(select(func.count()).select_from(User)) == 1
             assert await transaction.scalar(select(func.count()).select_from(Project)) == 0
             assert await transaction.scalar(select(func.count()).select_from(Session)) == 0
-    assert not get_user_data_dir(user_id).exists()
+    assert (get_user_data_dir(user_id) / "skills").is_dir()
+    assert not (get_user_data_dir(user_id) / "project").exists()
+    assert not (get_user_data_dir(user_id) / "session").exists()
 
 
 @pytest.mark.anyio

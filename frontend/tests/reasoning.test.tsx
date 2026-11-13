@@ -66,7 +66,7 @@ it.each(['failed', 'cancelled'] as const)('shows the %s resume action and preser
   await h.user.type(screen.getByRole('textbox', { name: '消息输入' }), '保留草稿')
   await h.user.click(action)
   await waitFor(() => expect(resume).toHaveBeenCalledExactlyOnceWith(10, 0, expect.any(AbortSignal)))
-  expect(screen.getByRole('textbox', { name: '消息输入' })).toHaveValue('保留草稿')
+  expect(screen.getByRole('textbox', { name: '消息输入' })).toHaveTextContent('保留草稿')
   await waitFor(() => expect(screen.queryByRole('button', { name: status === 'failed' ? '重试' : '继续' })).toBeNull())
 })
 

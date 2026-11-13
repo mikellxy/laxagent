@@ -41,7 +41,9 @@ async def test_guest_initialization_is_atomic_idempotent_and_concurrent(web_api,
     assert len(sessions) == 1 and sessions[0]["name"] == "LaxAgent"
     detail = (await web_api.get(f"/api/v1/sessions/{session_id}")).json()
     assert detail["latest_run"] is None and detail["next_msg_seq"] == 1
-    assert not get_user_data_dir(user_id).exists()
+    assert (get_user_data_dir(user_id) / "skills").is_dir()
+    assert not (get_user_data_dir(user_id) / "project").exists()
+    assert not (get_user_data_dir(user_id) / "session").exists()
     responses = await asyncio.gather(*[web_api.post(f"/api/v1/projects/{project_id}/sessions") for _ in range(4)])
     assert all(r.status_code == 201 for r in responses)
     assert {r.json()["name"] for r in responses} == {f"会话 {n}" for n in range(2, 6)}

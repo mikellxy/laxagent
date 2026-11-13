@@ -37,6 +37,18 @@ class FrontendConfig(ConfigModel):
     dist_dir: str = Field(min_length=1)
 
 
+class WebSearchConfig(ConfigModel):
+    api_key: SecretStr = Field(min_length=1)
+    timeout_seconds: float = Field(default=30, gt=0, allow_inf_nan=False)
+
+    @model_validator(mode="after")
+    def check_key(self) -> Self:
+        key = self.api_key.get_secret_value()
+        if not key.isascii() or not key.isprintable() or not key.strip() or any(char.isspace() for char in key):
+            raise ValueError("api_key must contain non-whitespace ASCII characters")
+        return self
+
+
 class AppConfig(ConfigModel):
     _builtin_skills_dir: Path = PrivateAttr(default_factory=lambda: Path("config/builtin_skills").resolve())
     recursion_limit: Literal[-1] | Annotated[int, Field(gt=0)] = -1
@@ -48,6 +60,7 @@ class AppConfig(ConfigModel):
     database: DatabaseConfig
     auth: AuthConfig
     frontend: FrontendConfig | None = None
+    web_search: WebSearchConfig | None = None
 
     @property
     def builtin_skills_dir(self) -> Path:

@@ -1,6 +1,16 @@
 import json
 
 ERROR_GUIDANCE = {
+    "SEARCH_AUTH_FAILED": "联网搜索鉴权失败，请由管理员检查服务端搜索 Key 和服务权限；不要在聊天中索取密钥。",
+    "SEARCH_RATE_LIMITED": "联网搜索受到限流，请稍后再试，避免连续重复请求。",
+    "SEARCH_QUOTA_EXCEEDED": "联网搜索额度不足或付费状态不可用，请由管理员检查搜索账户。",
+    "SEARCH_PLAN_UNAVAILABLE": "当前搜索套餐不支持本次请求，请由管理员检查套餐及 Key 类型。",
+    "SEARCH_INVALID_ARGUMENTS": "搜索服务拒绝请求参数，请精简查询并检查搜索类型和筛选条件。",
+    "SEARCH_TIMEOUT": "联网搜索超时，未获得可用结果；如有必要可稍后重新搜索。",
+    "SEARCH_UNAVAILABLE": "联网搜索暂不可用，未获得搜索结果。",
+    "SEARCH_UPSTREAM_FAILED": "联网搜索服务返回错误，未获得搜索结果，请稍后再试。",
+    "SEARCH_INVALID_RESPONSE": "联网搜索返回格式异常，不能将其视为有效搜索结果。",
+    "SEARCH_RESPONSE_TOO_LARGE": "联网搜索响应过大，请减少结果条数或缩小查询范围。",
     "INVALID_FILE_SCOPE": 'skill_name 不能是字符串 "null"。本次未执行文件操作。若操作 workspace 文件，请使用 JSON null（例如 "skill_name": null）后重试；若操作技能文件，请传真实技能名。',
     "INVALID_SKILL_NAME": "技能名称须为不超过 64 字符的小写字母、数字和单连字符，且不能以连字符开头或结尾。",
     "INVALID_SKILL_METADATA": "SKILL.md 元数据无效或缺失，请使用 skill-creator 指导修复；name 必须与技能目录名一致。",

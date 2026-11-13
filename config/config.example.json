@@ -1,6 +1,10 @@
 {
   "recursion_limit": -1,
   "cancel_timeout_seconds": 30,
+  "web_search": {
+    "api_key": "replace-with-web-search-api-key",
+    "timeout_seconds": 30
+  },
   "llm": {
     "default_model": "example:model-name",
     "provider_list": [

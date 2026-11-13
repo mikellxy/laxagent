@@ -32,7 +32,7 @@ async def call_model(state: AgentState, runtime: Runtime[AgentContext]):
     # Closing explicitly also releases the SDK stream if publishing fails or execution is cancelled.
     async with aclosing(stream_response(
         runtime.context.client, model=state["model"], messages=wire_input,
-        tools=tool_definitions(state.get("user_configs")),
+        tools=tool_definitions(state.get("user_configs"), web_search_enabled=runtime.context.web_search is not None),
     )) as stream:
         async for event in stream:
             if event.type == "started":
@@ -87,6 +87,7 @@ async def tool_node(state: AgentState, runtime: Runtime[AgentContext]):
         user_id=state["user_id"], repository=runtime.context.repository, workspace=state["workspace"],
         loaded_skills=dict(state.get("loaded_skills", {})),
         written_workspace_paths=list(state.get("written_workspace_paths", [])),
+        web_search=runtime.context.web_search,
     )
     call = state["pending_tool_calls"][0]
     msg_seq = next_seq

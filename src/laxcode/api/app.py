@@ -25,6 +25,7 @@ from laxcode.storage.database import Database, DatabaseError
 from laxcode.storage.repositories import Repository
 from laxcode.storage.checkpoints import open_checkpointer
 from laxcode.skills import builtin_snapshots
+from laxcode.web_search import WebSearchService
 
 
 def create_app(config: AppConfig | None = None) -> FastAPI:
@@ -39,9 +40,12 @@ def create_app(config: AppConfig | None = None) -> FastAPI:
             checkpointer = await stack.enter_async_context(open_checkpointer(config.database))
             events = await stack.enter_async_context(EventStore.connect(config.nats.url))
             client = await stack.enter_async_context(create_client(config.llm_router.port))
+            web_search = (await stack.enter_async_context(WebSearchService.open(config.web_search))
+                          if config.web_search is not None else None)
             app.state.agent_context = AgentContext(
                 client, events, Repository(db), recursion_limit=config.recursion_limit,
                 builtin_skills_dir=config.builtin_skills_dir,
+                web_search=web_search,
             )
             app.state.graph = build_graph(checkpointer=checkpointer)
             app.state.task_manager = TaskManager(app.state.graph, app.state.agent_context,

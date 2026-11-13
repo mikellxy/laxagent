@@ -4,6 +4,8 @@ import json
 from pathlib import Path
 
 import pytest
+import httpx2
+from langgraph.checkpoint.memory import InMemorySaver
 from sqlalchemy import event
 from sqlalchemy.exc import IntegrityError
 
@@ -19,6 +21,7 @@ from laxcode.storage.models import SessionMessage
 from model_helpers import ModelStream, client_for, completed
 from storage_helpers import message_snapshot
 from test_agent import MemoryEvents, state
+from laxcode.web_search import WebSearchService
 
 
 @pytest.fixture(autouse=True)
@@ -38,6 +41,38 @@ def tool_response(paths=("hello.txt", "hello.txt")):
         } for i, path in enumerate(paths)],
     ]
     return response
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize("search_status", [200, 401])
+async def test_search_dependency_results_and_checkpoints(repository, conversation, search_status):
+    first = tool_response(("unused",))
+    call = first["response"]["output"][1]
+    call.update(name="web_search", arguments=json.dumps({"query": "文档"}))
+    captured, events = [], MemoryEvents()
+    checkpoint = InMemorySaver()
+    graph = build_graph(checkpoint)
+    payload = {"Result": {"WebResults": [{"Title": "文档", "Url": "https://example.com", "Summary": "搜索依据"}]}}
+    async with httpx2.AsyncClient(
+        headers={"Authorization": "Bearer search-private-key"},
+        transport=httpx2.MockTransport(lambda _: httpx2.Response(search_status, json=payload)),
+    ) as search_client:
+        async with client_for([ModelStream([first]), ModelStream([completed("搜索已处理")])], captured) as client:
+            result = await run_agent(graph, state(conversation), AgentContext(
+                client, events, repository, web_search=WebSearchService(search_client, 1),
+            ))
+    assert "web_search" in {item["name"] for item in captured[0]["tools"]}
+    outputs = [item["output"] for item in captured[1]["input"] if item.get("type") == "function_call_output"]
+    assert len(outputs) == 1
+    assert ("搜索依据" if search_status == 200 else "SEARCH_AUTH_FAILED") in outputs[0]
+    assert result["pending_tool_calls"] == []
+    assert events.items[-1]["content"] == {"status": "completed"}
+    _, tables = await message_snapshot(repository, conversation["session_id"])
+    assert tables[0][2].tool_name == "web_search" and tables[0][2].content == outputs[0]
+    saved = [item async for item in checkpoint.alist(None)]
+    assert saved
+    for text in (repr(saved), repr(events.items), repr(captured), repr(result)):
+        assert "search-private-key" not in text and "WebSearchService" not in text
 
 
 @pytest.mark.anyio

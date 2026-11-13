@@ -28,7 +28,7 @@ async def run_sync_tool(execute, context: ToolContext, args):
 
 async def execute_tool(name: str, arguments: str, *, context: ToolContext,
                        user_configs: dict[str, str] | None = None) -> dict:
-    tool = available_tools(user_configs).get(name)
+    tool = available_tools(user_configs, web_search_enabled=context.web_search is not None).get(name)
     if tool is None:
         return {"error_code": "UNKNOWN_TOOL", "result": {}}
     try:

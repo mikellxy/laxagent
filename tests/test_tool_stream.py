@@ -25,7 +25,7 @@ async def test_tool_progress_is_published_before_completion_without_executing_or
     state = {"run_id": 49, "next_msg_seq": 8, "model": "chosen:model", "model_input": []}
     async with client_for(source, []) as client:
         # No repository/workspace/tool context: these progress events must be display-only.
-        runtime = SimpleNamespace(context=SimpleNamespace(client=client, resume_time=3,
+        runtime = SimpleNamespace(context=SimpleNamespace(client=client, resume_time=3, web_search=None,
                                                           events=SimpleNamespace(publish=publish)))
         task = asyncio.create_task(call_model(state, runtime))
         try:
@@ -61,7 +61,7 @@ async def test_complete_response_remains_authoritative_for_tool_execution():
 
     async with client_for(source, []) as client:
         result = await call_model({"run_id": 49, "next_msg_seq": 8, "model": "chosen:model", "model_input": []},
-                                  SimpleNamespace(context=SimpleNamespace(client=client, resume_time=0,
+                                  SimpleNamespace(context=SimpleNamespace(client=client, resume_time=0, web_search=None,
                                                                           events=SimpleNamespace(publish=publish))))
     assert result["pending_model_response"]["event"]["tool_calls"] == [
         {"call_id": "call-a", "name": "write_file", "arguments": '{"content":"final"}'},

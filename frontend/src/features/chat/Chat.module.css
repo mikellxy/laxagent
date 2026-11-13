@@ -74,7 +74,7 @@
 .footer > * { max-width: 960px; margin-left: auto; margin-right: auto; }
 .composer { background: #fdfdfb; border: 1px solid #d2d4cd; border-radius: 14px; padding: 15px 15px 11px; box-shadow: 0 1px 2px #00000004; }
 .composer:focus-within { border-color: #b0b7ae; }
-.composer textarea { display: block; width: 100%; min-height: 62px; max-height: 200px; resize: none; border: none; outline: none; background: transparent; color: var(--text); padding: 0 2px; line-height: 1.65; font-size: 15px; }
+.composer textarea { display: block; width: 100%; min-height: 1lh; max-height: 6lh; overflow-y: auto; overflow-x: hidden; overscroll-behavior-y: contain; resize: none; border: none; outline: none; background: transparent; color: var(--text); padding: 0 2px; line-height: 1.65; font-size: 15px; }
 .toolbar { display: flex; align-items: center; justify-content: flex-end; gap: 15px; padding-top: 8px; }
 .model { position: relative; display: flex; align-items: center; min-width: 0; max-width: calc(100% - 55px); }
 .model select { appearance: none; background: transparent; border: 0; outline: none; color: #65685f; font-size: 12px; padding: 7px 21px 7px 5px; text-overflow: ellipsis; width: 100%; cursor: pointer; }
@@ -98,7 +98,7 @@
   .user { max-width: 92%; }
   .composer { display: flex; flex-direction: column; min-height: 0; padding: 10px; }
   .composerBody { min-height: 0; max-height: min(280px, calc(var(--viewport-height, 100dvh) * .35)); overflow-y: auto; overscroll-behavior-y: contain; }
-  .composer textarea { font-size: 16px; min-height: 44px; max-height: min(160px, calc(var(--viewport-height, 100dvh) * .22)); }
+  .composer textarea { font-size: 16px; max-height: 3lh; }
   .toolbar { flex-shrink: 0; background: #fdfdfb; padding: 4px 0; gap: 6px; }
   .model select { font-size: 16px; min-height: 44px; }
   .send { width: 44px; height: 44px; }

@@ -183,8 +183,23 @@ export function Chat({ owner, sessionId, onMissing }: { owner: string; sessionId
     return () => { observer.disconnect(); element.removeEventListener('scroll', remember) }
   }, [sessionId, snapshot.ready])
   useLayoutEffect(() => {
-    if (textarea.current) { textarea.current.style.height = 'auto'; textarea.current.style.height = `${Math.min(textarea.current.scrollHeight, 200)}px` }
-  }, [draft])
+    const input = textarea.current
+    if (!input) return
+    const resize = () => {
+      const scrollTop = input.scrollTop
+      input.style.height = 'auto'
+      input.style.height = `${input.scrollHeight}px`
+      input.scrollTop = scrollTop
+    }
+    resize()
+    if (typeof ResizeObserver === 'undefined') return
+    let width = input.clientWidth
+    const observer = new ResizeObserver(() => {
+      if (input.clientWidth !== width) { width = input.clientWidth; resize() }
+    })
+    observer.observe(input)
+    return () => observer.disconnect()
+  }, [draft, mobile])
   async function older() {
     const element = scroller.current
     if (!element || snapshot.loadingOlder || snapshot.syncing || !snapshot.hasMore || follow.current) return
@@ -255,7 +270,7 @@ export function Chat({ owner, sessionId, onMissing }: { owner: string; sessionId
         {incompatible && <div className={styles.attachmentHint} role="status">{snapshot.detail?.has_appendix
           ? '此会话包含附件，请选择支持多模态的模型，或新建会话'
           : '当前模型不支持附件，请更换模型或移除附件'}</div>}
-        <textarea ref={textarea} aria-label="消息输入" value={draft} rows={2} onChange={e => setDraft(e.target.value)}
+        <textarea ref={textarea} aria-label="消息输入" value={draft} rows={1} onChange={e => setDraft(e.target.value)}
           onKeyDown={event => {
             if (!mobile && event.key === 'Enter' && !event.shiftKey && !event.nativeEvent.isComposing && event.nativeEvent.keyCode !== 229) { event.preventDefault(); void send() }
           }} />

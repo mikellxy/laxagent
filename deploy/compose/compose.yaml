@@ -1,0 +1,84 @@
+name: laxagent
+
+services:
+  laxagent-pg:
+    container_name: laxagent-pg
+    build:
+      context: ../..
+      dockerfile: deploy/compose/Dockerfile
+      target: postgres
+    restart: unless-stopped
+    volumes:
+      - type: bind
+        source: ./config.json
+        target: /run/laxagent/config.json
+        read_only: true
+        bind:
+          create_host_path: false
+      - pg-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD", "laxagent-pg-entrypoint", "healthcheck"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+      start_period: 20s
+    stop_grace_period: 30s
+
+  laxagent-nats:
+    container_name: laxagent-nats
+    image: nats:2.12-alpine
+    command: ["--jetstream", "--store_dir", "/data", "--http_port", "8222"]
+    restart: unless-stopped
+    volumes:
+      - nats-data:/data
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:8222/healthz?js-enabled-only=true"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+    stop_grace_period: 30s
+
+  laxagent:
+    container_name: laxagent
+    build:
+      context: ../..
+      dockerfile: deploy/compose/Dockerfile
+      target: app
+    init: true
+    restart: unless-stopped
+    depends_on:
+      laxagent-pg:
+        condition: service_healthy
+      laxagent-nats:
+        condition: service_healthy
+    ports:
+      - "8000:8080"
+    volumes:
+      - type: bind
+        source: ./config.json
+        target: /app/config/config.json
+        read_only: true
+        bind:
+          create_host_path: false
+      - user-data:/home/laxagent/laxcode
+    # bubblewrap needs nested namespaces and an unmasked /proc to mount its own
+    # procfs. It still enforces the existing workspace-only filesystem profile.
+    # The service is non-root with no capabilities; no Docker socket is mounted.
+    cap_drop: ["ALL"]
+    security_opt:
+      - no-new-privileges:true
+      - seccomp:unconfined
+      - apparmor:unconfined
+      - systempaths=unconfined
+    healthcheck:
+      test: ["CMD", "python3", "/app/deploy/compose/entrypoint.py", "--healthcheck"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      start_period: 60s
+    stop_grace_period: 90s
+
+volumes:
+  pg-data:
+  nats-data:
+  user-data:

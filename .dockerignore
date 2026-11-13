@@ -1,0 +1,26 @@
+# Send only build inputs; real configuration never enters an image layer.
+**
+!pyproject.toml
+!uv.lock
+!alembic.ini
+!src/
+!src/**
+!migrations/
+!migrations/**
+!config/
+!config/builtin_skills/
+!config/builtin_skills/**
+!frontend/
+!frontend/**
+!deploy/
+!deploy/compose/
+!deploy/compose/Dockerfile
+!deploy/compose/entrypoint.py
+!deploy/compose/pg-entrypoint.sh
+**/__pycache__/
+**/*.pyc
+frontend/node_modules/
+frontend/dist/
+frontend/test-results/
+frontend/playwright-report/
+frontend/*.tsbuildinfo

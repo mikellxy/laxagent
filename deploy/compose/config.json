@@ -1,0 +1,47 @@
+{
+  "recursion_limit": -1,
+  "cancel_timeout_seconds": 30,
+  "web_search": null,
+  "llm": {
+    "default_model": "example:model-name",
+    "provider_list": [
+      {
+        "name": "example",
+        "base_url": "https://provider.example.com/v1",
+        "api_key": "replace-with-real-key",
+        "model_list": [
+          {
+            "name": "model-name",
+            "supports_multimodal": false,
+            "limit": {
+              "context": 128000,
+              "output": 16000
+            }
+          }
+        ]
+      }
+    ]
+  },
+  "api_server": {
+    "port": 8000
+  },
+  "llm_router": {
+    "port": 8001
+  },
+  "frontend": {
+    "dist_dir": "../frontend/dist"
+  },
+  "nats": {
+    "url": "nats://laxagent-nats:4222"
+  },
+  "database": {
+    "host": "laxagent-pg",
+    "port": 5432,
+    "name": "laxagent",
+    "user": "laxagent",
+    "password": "laxagent"
+  },
+  "auth": {
+    "jwt_secret": "snsjyFK08ajNf4nYzI_aP7IUgobqxT0Q9CzqLpIdnKGs7wMgZvkBqHUrlBfeKofp"
+  }
+}

@@ -1,0 +1,8 @@
+abi <abi/4.0>,
+include <tunables/global>
+
+# Optional host policy for Ubuntu's unprivileged user-namespace restriction.
+# Install only when no existing profile already covers /usr/bin/bwrap.
+profile laxagent-bwrap /usr/bin/bwrap flags=(unconfined) {
+  userns,
+}

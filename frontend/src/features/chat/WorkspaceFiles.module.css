@@ -11,6 +11,10 @@
 .placeholder { padding: 24px 16px; color: #85897e; font-size: 13px; }
 .image { display: block; width: 100%; padding: 12px; }
 .image img { display: block; max-width: 100%; max-height: 480px; object-fit: contain; border-radius: 6px; margin: auto; }
+.htmlThumbnail { position: relative; width: calc(100% - 24px); max-width: 600px; aspect-ratio: 3 / 2; margin: 12px auto 0; overflow: hidden; border: 1px solid #eeeee9; border-radius: 6px; background: white; }
+.htmlThumbnail iframe { display: block; width: 960px; height: 640px; border: 0; transform-origin: top left; pointer-events: none; }
+.htmlThumbnail > button { position: absolute; inset: 0; width: 100%; height: 100%; cursor: pointer; background: transparent; }
+.htmlThumbnail > button:focus-visible { outline: 2px solid #3674ba; outline-offset: -3px; }
 .inline { display: inline; color: #3674ba; text-decoration: underline; text-underline-offset: 3px; padding: 0; font: inherit; }
 .error { display: block; color: #b66b6b; font-size: 12px; padding: 10px 14px; }
 .error button { text-decoration: underline; margin-left: 6px; }

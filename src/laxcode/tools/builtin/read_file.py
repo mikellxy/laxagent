@@ -18,7 +18,7 @@ MAX_BYTES = 50 * 1024
 class ReadFileArgs(BaseModel):
     model_config = ConfigDict(strict=True, extra="forbid")
 
-    skill_name: str | None = Field(default=None, description="Skill name to read; JSON null selects workspace; the string 'null' selects a skill named null.")
+    skill_name: str | None = Field(default=None, description="Skill name to read; JSON null selects workspace; the string 'null' is invalid and the operation will be rejected.")
 
     path: str = Field(min_length=1, description="File path relative to the selected workspace or skill; no symlinks or '..'.")
     start_line_no: int = Field(ge=1, description="First line to read, 1-based.")

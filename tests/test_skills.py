@@ -14,6 +14,7 @@ from laxcode.skills import builtin_snapshots, initialize_skills, parse_metadata,
 from laxcode.tools.builtin.skills import LoadSkillArgs, load_skill
 from laxcode.tools.executor import execute_tool
 from laxcode.tools.registry import tool_definitions
+from laxcode.tools.results import format_result
 from tool_helpers import tool_context
 from test_chat import chat_api, chat_path, payload, wait_run
 from model_helpers import ModelStream, client_for, completed
@@ -40,6 +41,33 @@ async def call(context, tool, **args):
 
 async def write(context, path, content, name="example", **extra):
     return await call(context, "write_file", skill_name=name, path=path, content=content, **extra)
+
+
+@pytest.mark.anyio
+async def test_string_null_scope_rejects_without_side_effects_and_json_null_recovers(skill_context):
+    context = skill_context
+    root = layout.get_skills_dir(context.user_id) / "null"
+    result = await call(context, "write_file", skill_name="null", path="page.html", content="new")
+    assert result == {"error_code": "INVALID_FILE_SCOPE", "result": {}}
+    assert '"skill_name": null' in format_result(result)
+    assert not root.exists()
+    assert not (Path(context.workspace) / "page.html").exists()
+    assert context.written_workspace_paths == []
+    # Even leftover files from earlier mistaken calls must not make this scope valid.
+    root.mkdir()
+    (root / "page.html").write_text("old")
+    for tool, args in [
+        ("read_file", {"start_line_no": 1, "start_byte_no": 1, "total_lines": 10}),
+        ("write_file", {"content": "new"}),
+        ("edit_file", {"edits": [{"old_text": "old", "new_text": "new"}]}),
+        ("write_file", {"operation": "delete", "content": None}),
+    ]:
+        assert (await call(context, tool, skill_name="null", path="page.html", **args))["error_code"] == "INVALID_FILE_SCOPE"
+        assert (root / "page.html").read_text() == "old"
+    result = await call(context, "write_file", skill_name=None, path="page.html", content="workspace")
+    assert result["error_code"] is None
+    assert (Path(context.workspace) / "page.html").read_text() == "workspace"
+    assert context.written_workspace_paths == ["page.html"]
 
 
 @pytest.mark.parametrize("content", [

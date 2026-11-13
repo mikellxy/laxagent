@@ -60,7 +60,7 @@ it('opens inline links on click and never loads code examples or reasoning refer
 })
 
 it('renders source safely, reads fresh content on refresh, and downloads unsupported files', async () => {
-  vi.mocked(api.workspacePreview).mockResolvedValueOnce(info('page.html', { text: '<script>alert(1)</script>', language: 'html' }))
+  vi.mocked(api.workspacePreview).mockResolvedValueOnce(info('page.html', { text: '<script>alert(1)</script>', language: 'html', can_expand: false }))
     .mockResolvedValue(info('page.html', { text: 'updated' }))
   const h = render(view('[页面](workspace:/page.html)'))
   expect(await screen.findByText('<script>alert(1)</script>')).toBeVisible()
@@ -74,6 +74,33 @@ it('renders source safely, reads fresh content on refresh, and downloads unsuppo
   await userEvent.click(screen.getByRole('button', { name: '下载 report.pdf' }))
   await waitFor(() => expect(download).toHaveBeenCalled())
   expect(api.workspaceContent).toHaveBeenLastCalledWith(1, 'report.pdf', true, expect.any(AbortSignal))
+})
+
+it('loads bounded full HTML only after completion, refreshes its thumbnail and opens unmodified source', async () => {
+  const source = '<style>body { color: red }</style><h1>Page</h1><script>alert(1)</script>'
+  vi.mocked(api.workspacePreview).mockResolvedValue(info('page.html', { text: '<style>', language: 'html', truncated: true }))
+  vi.mocked(api.workspaceContent).mockResolvedValue(blob(source))
+  const h = render(view('[页面](workspace:/page.html)', false))
+  expect(api.workspaceContent).not.toHaveBeenCalled()
+  h.rerender(view('[页面](workspace:/page.html)'))
+  const frame = await screen.findByTitle('page.html 静态缩略预览')
+  expect(frame).toHaveAttribute('sandbox', '')
+  expect(frame.getAttribute('srcdoc')).toContain('<h1>Page</h1>')
+  expect(frame.getAttribute('srcdoc')).not.toContain('<script>')
+  await userEvent.click(screen.getByRole('button', { name: '查看 page.html 源码' }))
+  expect(await screen.findByRole('dialog')).toHaveTextContent(source)
+  await userEvent.click(screen.getByRole('button', { name: '关闭文件预览' }))
+  vi.mocked(api.workspaceContent).mockResolvedValue(blob('<h1>Updated</h1>'))
+  await userEvent.click(screen.getByRole('button', { name: '刷新 page.html' }))
+  await waitFor(() => expect(frame.getAttribute('srcdoc')).toContain('<h1>Updated</h1>'))
+})
+
+it('does not load full HTML beyond the text preview limit', async () => {
+  vi.mocked(api.workspacePreview).mockResolvedValue(info('large.html', { language: 'html', size: 3 * 1024 * 1024, can_expand: false, truncated: true }))
+  render(view('[大页面](workspace:/large.html)'))
+  await screen.findByText('print(42)')
+  expect(api.workspaceContent).not.toHaveBeenCalled()
+  expect(screen.queryByTitle('large.html 静态缩略预览')).toBeNull()
 })
 
 it('limits large text to a short preview and never copies truncated text', async () => {

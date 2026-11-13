@@ -13,7 +13,7 @@ from laxcode.skills import parse_metadata
 class WriteFileArgs(BaseModel):
     model_config = ConfigDict(strict=True, extra="forbid")
 
-    skill_name: str | None = Field(default=None, description="Skill name to modify; JSON null selects workspace; the string 'null' selects a skill named null.")
+    skill_name: str | None = Field(default=None, description="Skill name to modify; JSON null selects workspace; the string 'null' is invalid and the operation will be rejected.")
     operation: Literal["write", "delete"] = Field(default="write", description="Delete is only allowed for skill files.")
 
     path: str = Field(min_length=1, description="File path relative to the selected workspace or skill; no symlinks or '..'.")

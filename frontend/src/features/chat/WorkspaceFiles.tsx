@@ -8,6 +8,7 @@ import { api } from '../../api/resources'
 import { messageOf } from '../../api/errors'
 import type { WorkspaceFilePreview } from '../../api/types'
 import styles from './WorkspaceFiles.module.css'
+import { htmlThumbnail } from './htmlThumbnail'
 
 // Decode only the URI path, once. URLSearchParams subsequently transports that literal path.
 export function workspacePath(href: string | undefined): string | null {
@@ -50,8 +51,28 @@ function saveBlob(blob: Blob, name: string) {
 function sizeLabel(size: number) {
   return size < 1024 ? `${size} B` : size < 1024 * 1024 ? `${(size / 1024).toFixed(1)} KiB` : `${(size / 1024 / 1024).toFixed(1)} MiB`
 }
-interface Preview { info: WorkspaceFilePreview; image?: Blob }
+interface Preview { info: WorkspaceFilePreview; image?: Blob; html?: string }
 interface FullPreview extends Preview { text?: string }
+
+function HtmlThumbnail({ source, name, open, busy }: { source: string; name: string; open: () => void; busy: boolean }) {
+  const document = useMemo(() => htmlThumbnail(source), [source])
+  const container = useRef<HTMLDivElement>(null)
+  const [width, setWidth] = useState(600)
+  useEffect(() => {
+    const element = container.current!
+    if (typeof ResizeObserver === 'undefined') return
+    const observer = new ResizeObserver(entries => setWidth(entries[0].contentRect.width))
+    observer.observe(element)
+    return () => observer.disconnect()
+  }, [])
+  return <>
+    <div ref={container} className={styles.htmlThumbnail}>
+      <iframe title={`${name} 静态缩略预览`} srcDoc={document} sandbox="" referrerPolicy="no-referrer" tabIndex={-1} aria-hidden="true" style={{ transform: `scale(${width / 960})` }} />
+      <button type="button" aria-label={`查看 ${name} 源码`} disabled={busy} onClick={open} />
+    </div>
+    <div className={styles.caption}>静态预览 · 不运行脚本或加载外部资源</div>
+  </>
+}
 
 function FileDialog({ value, close, download }: { value: FullPreview; close: () => void; download: () => void }) {
   const dialog = useRef<HTMLDialogElement>(null)
@@ -85,7 +106,13 @@ function FileReference({ path, children, block, complete }: { path: string; chil
   const load = async (signal: AbortSignal): Promise<Preview> => {
     const info = await api.workspacePreview(sessionId, path, signal)
     const image = info.kind === 'image' ? await api.workspaceContent(sessionId, path, false, signal) : undefined
-    return { info, image }
+    let html: string | undefined
+    if (info.kind === 'text' && info.language === 'html' && info.can_expand) {
+      const blob = await api.workspaceContent(sessionId, path, false, signal)
+      if (!blob.type.startsWith('text/plain')) throw new Error('文件类型已变化，请刷新后重试')
+      html = await blob.text()
+    }
+    return { info, image, html }
   }
   const query = useQuery({ queryKey: key, queryFn: ({ signal }) => load(signal), enabled: complete && block,
     refetchOnMount: 'always' }, client)
@@ -112,7 +139,8 @@ function FileReference({ path, children, block, complete }: { path: string; chil
         if (controller.signal.aborted) return
         if (kind !== 'refresh') {
           const value: FullPreview = { ...current }
-          if (current.info.kind === 'text' && current.info.can_expand) {
+          if (current.html !== undefined) value.text = current.html
+          else if (current.info.kind === 'text' && current.info.can_expand) {
             const blob = await api.workspaceContent(sessionId, path, false, controller.signal)
             if (!blob.type.startsWith('text/plain')) throw new Error('文件类型已变化，请刷新后重试')
             value.text = await blob.text()
@@ -141,10 +169,12 @@ function FileReference({ path, children, block, complete }: { path: string; chil
       </header>
       <div className={styles.caption}>{children}{info && <span> · {info.language ?? info.kind} · {sizeLabel(info.size)}</span>}</div>
       {!complete ? <div className={styles.placeholder}>回答完成后加载文件</div> : query.isPending ? <div className={styles.placeholder}>正在加载文件…</div> : null}
-      {info?.kind === 'text' && <pre className={styles.snippet}><code>{info.text?.split('\n').slice(0, 12).join('\n')}</code></pre>}
+      {info?.kind === 'text' && (query.data?.html !== undefined ?
+        <HtmlThumbnail source={query.data.html} name={path} busy={busy} open={() => void action('open')} /> :
+        <pre className={styles.snippet}><code>{info.text?.split('\n').slice(0, 12).join('\n')}</code></pre>)}
       {info?.kind === 'image' && url && <button type="button" className={styles.image} aria-label={`查看 ${path}`} onClick={() => void action('open')}><img src={url} alt={info.name} onError={() => setError('图片加载失败，请刷新或下载查看')} /></button>}
       {info && <button type="button" className={styles.footer} disabled={busy} onClick={() => void action(info.can_expand ? 'open' : 'download')}>
-        {info.can_expand ? '查看完整内容' : '下载文件查看完整内容'}
+        {info.can_expand ? query.data?.html !== undefined ? '查看完整源码' : '查看完整内容' : '下载文件查看完整内容'}
       </button>}
     </>}
     {complete && (error || query.error) ? <span className={styles.error} role="alert">{error || messageOf(query.error)} <button type="button" disabled={busy} onClick={() => void action(block ? 'refresh' : 'open')}>重试</button></span> : null}

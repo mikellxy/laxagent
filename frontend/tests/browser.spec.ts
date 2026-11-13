@@ -3,6 +3,50 @@ import type { MemoryItem, Message, Project, Run, Session } from '../src/api/type
 
 const attachmentPNG = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+j4eUAAAAASUVORK5CYII=', 'base64')
 
+test('HTML thumbnails keep static styles but cannot execute, navigate or request resources', async ({ page }) => {
+  const state = await mockAPI(page)
+  const source = `<!doctype html><html><head>
+    <meta http-equiv="refresh" content="0;url=https://thumbnail.invalid/redirect">
+    <base href="https://thumbnail.invalid/"><link rel="stylesheet" href="remote.css">
+    <style>@import url('https://thumbnail.invalid/import'); h1 { color: rgb(12, 34, 56) }
+    body { background-image: url('https://thumbnail.invalid/background') }</style></head><body>
+    <h1>STATIC_PAGE</h1><script>parent.document.body.dataset.compromised='yes';fetch('https://thumbnail.invalid/script')</script>
+    <img src="https://thumbnail.invalid/image" onerror="alert(1)">
+    <iframe src="https://thumbnail.invalid/frame"></iframe><object data="https://thumbnail.invalid/object"></object>
+    <a href="https://thumbnail.invalid/link" ping="https://thumbnail.invalid/ping">Link</a>
+    <svg><use href="https://thumbnail.invalid/svg#icon"/><animate attributeName="href" values="https://thumbnail.invalid/animate"/></svg>
+    <template shadowrootmode="open"><img src="https://thumbnail.invalid/shadow"></template>
+    <form action="https://thumbnail.invalid/form"><input autofocus></form></body></html>`
+  const outside: string[] = []
+  await page.route('https://thumbnail.invalid/**', route => { outside.push(route.request().url()); return route.abort() })
+  await page.route('**/workspace-files/*?*', route => {
+    const path = new URL(route.request().url()).pathname
+    return path.endsWith('/preview') ? route.fulfill({ json: {
+      path: 'page.html', name: 'page.html', size: source.length, kind: 'text', language: 'html',
+      text: source, truncated: false, can_expand: true,
+    } }) : route.fulfill({ contentType: 'text/plain', body: source })
+  })
+  await page.goto('/')
+  await page.getByRole('button', { name: '以游客登录' }).click()
+  await expect(page.getByRole('textbox', { name: '消息输入' })).toBeVisible()
+  state.messages.set(1, [{ role: 'assistant', seq: 1, content: '[页面](workspace:/page.html)\n\n行内 [源码](workspace:/page.html)。' }])
+  await page.reload()
+  const iframe = page.locator('iframe[title="page.html 静态缩略预览"]')
+  await expect(iframe).toHaveAttribute('sandbox', '')
+  const frame = iframe.contentFrame()
+  await expect(frame.getByRole('heading', { name: 'STATIC_PAGE' })).toHaveCSS('color', 'rgb(12, 34, 56)')
+  await expect(frame.locator('script, meta[http-equiv="refresh"], iframe, object, template, animate')).toHaveCount(0)
+  expect(await frame.locator('body').evaluate(() => { try { return Boolean(parent.document) } catch { return false } })).toBe(false)
+  await page.getByRole('button', { name: '查看 page.html 源码' }).click()
+  await expect(page.getByRole('dialog')).toContainText(source)
+  await page.getByRole('button', { name: '关闭文件预览' }).click()
+  await page.getByRole('button', { name: '源码', exact: true }).click()
+  await expect(page.getByRole('dialog')).toContainText(source)
+  expect(await page.locator('body').getAttribute('data-compromised')).toBeNull()
+  expect(outside).toEqual([])
+  expect(page.url()).toBe('http://127.0.0.1:5173/')
+})
+
 async function mockAPI(page: Page) {
   let owner = '12345678-1234-4234-8234-123456789abc'
   const state = {

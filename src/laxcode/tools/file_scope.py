@@ -4,10 +4,15 @@ from contextlib import contextmanager
 
 from laxcode.skills import file_tree, skill_directory
 from laxcode.tools.context import ToolContext
+from laxcode.tools.errors import ToolError
 
 
 @contextmanager
 def file_scope(context: ToolContext, skill_name: str | None, *, create=False):
+    # A common model mistake must not silently create a skill directory and
+    # report a successful workspace deliverable. Reject before touching disk.
+    if skill_name == "null":
+        raise ToolError("INVALID_FILE_SCOPE")
     if skill_name is None:
         yield context.workspace
     else:

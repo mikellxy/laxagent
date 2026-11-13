@@ -22,7 +22,7 @@ class TextEdit(BaseModel):
 class EditFileArgs(BaseModel):
     model_config = ConfigDict(strict=True, extra="forbid")
 
-    skill_name: str | None = Field(default=None, description="Skill name to edit; JSON null selects workspace; the string 'null' selects a skill named null.")
+    skill_name: str | None = Field(default=None, description="Skill name to edit; JSON null selects workspace; the string 'null' is invalid and the operation will be rejected.")
 
     path: str = Field(min_length=1, description="Existing file relative to the selected workspace or skill; no symlinks or '..'.")
     edits: list[TextEdit] = Field(min_length=1, description="Non-overlapping edits, all matched against the original file.")

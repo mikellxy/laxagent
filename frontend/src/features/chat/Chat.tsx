@@ -270,7 +270,7 @@ export function Chat({ owner, sessionId, onMissing }: { owner: string; sessionId
         {incompatible && <div className={styles.attachmentHint} role="status">{snapshot.detail?.has_appendix
           ? '此会话包含附件，请选择支持多模态的模型，或新建会话'
           : '当前模型不支持附件，请更换模型或移除附件'}</div>}
-        <textarea ref={textarea} aria-label="消息输入" value={draft} rows={1} onChange={e => setDraft(e.target.value)}
+        <textarea ref={textarea} aria-label="消息输入" placeholder="向 LaxAgent 提问" value={draft} rows={1} onChange={e => setDraft(e.target.value)}
           onKeyDown={event => {
             if (!mobile && event.key === 'Enter' && !event.shiftKey && !event.nativeEvent.isComposing && event.nativeEvent.keyCode !== 229) { event.preventDefault(); void send() }
           }} />

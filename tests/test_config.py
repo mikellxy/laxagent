@@ -12,6 +12,7 @@ def test_load_config(config_data, tmp_path):
     assert config.api_server.port == 8000
     assert config.recursion_limit == -1
     assert config.llm_router.port == 8001
+    assert config.eval_server.port == 8002
     assert config.llm.default_model == "example:model-name"
     assert config.nats.url == "nats://127.0.0.1:4222"
     assert config.database.name == "laxagent_test"
@@ -40,6 +41,11 @@ def test_recursion_limit_config(config_data, tmp_path, limit):
     lambda c: c["api_server"].update(port=0),
     lambda c: c["llm_router"].update(port=65536),
     lambda c: c["llm_router"].update(port=8000),
+    lambda c: c.update(eval_server={"port": 8000}),
+    lambda c: c.update(eval_server={"port": 8001}),
+    lambda c: c.update(eval_server={"port": 0}),
+    lambda c: c.update(eval_server={"port": True}),
+    lambda c: c["api_server"].update(port=8002),
     lambda c: c["llm"].update(default_model="missing:model"),
     lambda c: c["llm"]["provider_list"].append(c["llm"]["provider_list"][0]),
     lambda c: c["llm"]["provider_list"][0].update(name="bad:name"),

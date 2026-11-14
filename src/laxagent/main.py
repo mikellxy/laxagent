@@ -9,13 +9,14 @@ import uvicorn
 from laxagent.api.app import create_app
 from laxagent.config import AppConfig, load_config
 from laxagent.llm_router.app import create_router_app
+from laxagent.eval_api.app import create_eval_app
 
 app = create_app()
 
 
 class ManagedServer(uvicorn.Server):
     def capture_signals(self):
-        # One supervisor owns signals so the API shuts down before the router.
+        # One supervisor shuts down eval, then API/runtime, then the model router.
         return nullcontext()
 
     async def serve(self, sockets=None):
@@ -28,13 +29,18 @@ class ManagedServer(uvicorn.Server):
 async def run_servers(config: AppConfig) -> None:
     stop = asyncio.Event()
     loop = asyncio.get_running_loop()
+    api_app = create_app(config)
     servers = [
         ManagedServer(uvicorn.Config(
             create_router_app(config.llm), host="127.0.0.1", port=config.llm_router.port,
             timeout_graceful_shutdown=10,
         )),
         ManagedServer(uvicorn.Config(
-            create_app(config), host="127.0.0.1", port=config.api_server.port,
+            api_app, host="127.0.0.1", port=config.api_server.port,
+            timeout_graceful_shutdown=10,
+        )),
+        ManagedServer(uvicorn.Config(
+            create_eval_app(api_app), host="127.0.0.1", port=config.eval_server.port,
             timeout_graceful_shutdown=10,
         )),
     ]
@@ -69,7 +75,7 @@ async def run_servers(config: AppConfig) -> None:
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Start the API server and internal LLM router")
+    parser = argparse.ArgumentParser(description="Start the API, LLM router and private eval server")
     parser.add_argument("--config", type=Path, default=Path("config/config.json"))
     args = parser.parse_args()
     try:

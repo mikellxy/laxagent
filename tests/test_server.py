@@ -31,6 +31,7 @@ def available_port():
 
 @contextmanager
 def launch(config_data, tmp_path):
+    config_data.setdefault("eval_server", {"port": available_port()})
     config_path = tmp_path / "config.json"
     config_path.write_text(json.dumps(config_data))
     log_path = tmp_path / "server.log"
@@ -71,7 +72,7 @@ def assert_port_closed(port):
         assert sock.connect_ex(("127.0.0.1", port)) != 0
 
 
-def test_two_servers_stream_to_openai_sdk_and_shutdown(config_data, tmp_path):
+def test_three_servers_stream_to_openai_sdk_and_shutdown(config_data, tmp_path):
     release = threading.Event()
     captured = []
 
@@ -100,6 +101,12 @@ def test_two_servers_stream_to_openai_sdk_and_shutdown(config_data, tmp_path):
             with launch(config_data, tmp_path) as (process, log_path):
                 response = wait_for_api(process, f"http://127.0.0.1:{api_port}/openapi.json", log_path)
                 assert "/api/v1/login" in response.json()["paths"]
+                assert not any(path.startswith("/eval") for path in response.json()["paths"])
+                eval_port = config_data["eval_server"]["port"]
+                evaluation = wait_for_api(process, f"http://127.0.0.1:{eval_port}/openapi.json", log_path)
+                assert set(evaluation.json()["paths"]) == {
+                    "/eval/create_session", "/eval/collect",
+                }
                 with OpenAI(
                     api_key="placeholder", base_url=f"http://127.0.0.1:{router_port}/v1",
                     max_retries=0, timeout=2,
@@ -119,6 +126,7 @@ def test_two_servers_stream_to_openai_sdk_and_shutdown(config_data, tmp_path):
                 assert "sk-private-test" not in log_path.read_text()
             assert_port_closed(api_port)
             assert_port_closed(router_port)
+            assert_port_closed(eval_port)
         finally:
             release.set()
             upstream.shutdown()
@@ -146,6 +154,20 @@ def test_router_bind_failure_never_starts_api(config_data, tmp_path):
         with launch(config_data, tmp_path) as (process, _):
             assert process.wait(timeout=15) != 0
         assert_port_closed(api_port)
+
+
+def test_eval_bind_failure_stops_api_and_router(config_data, tmp_path):
+    with socket.socket() as occupied:
+        occupied.bind(("127.0.0.1", 0))
+        occupied.listen()
+        config_data["eval_server"] = {"port": occupied.getsockname()[1]}
+        config_data["api_server"]["port"] = api_port = available_port()
+        config_data["llm_router"]["port"] = router_port = available_port()
+        with launch(config_data, tmp_path) as (process, log_path):
+            assert process.wait(timeout=15) != 0
+            assert "sk-private-test" not in log_path.read_text()
+        assert_port_closed(api_port)
+        assert_port_closed(router_port)
 
 
 def test_nats_unavailable_stops_both_listeners(config_data, tmp_path):

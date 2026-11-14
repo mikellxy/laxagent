@@ -68,7 +68,7 @@ def main():
         return result
     config = json.loads(Path(CONFIG).read_text())
     api_port = config["api_server"]["port"]
-    if 8080 in (api_port, config["llm_router"]["port"]):
+    if 8080 in (api_port, config["llm_router"]["port"], config.get("eval_server", {}).get("port", 8002)):
         print("Port 8080 is reserved for the container HTTP forwarder", file=sys.stderr)
         return 1
     result = run_step(UV + ["python", "src/laxagent/sandbox/bubblewrap.py", "--probe"])

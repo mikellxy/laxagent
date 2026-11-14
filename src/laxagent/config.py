@@ -56,6 +56,7 @@ class AppConfig(ConfigModel):
     llm: LLMConfig
     api_server: ServerConfig
     llm_router: ServerConfig
+    eval_server: ServerConfig = Field(default_factory=lambda: ServerConfig(port=8002))
     nats: NatsConfig = Field(default_factory=NatsConfig)
     database: DatabaseConfig
     auth: AuthConfig
@@ -68,8 +69,9 @@ class AppConfig(ConfigModel):
 
     @model_validator(mode="after")
     def check_ports(self) -> Self:
-        if self.api_server.port == self.llm_router.port:
-            raise ValueError("api_server and llm_router must use different ports")
+        ports = (self.api_server.port, self.llm_router.port, self.eval_server.port)
+        if len(set(ports)) != len(ports):
+            raise ValueError("api_server, llm_router and eval_server must use different ports")
         return self
 
 

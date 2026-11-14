@@ -21,6 +21,8 @@ sudo apparmor_parser -r /etc/apparmor.d/laxagent-bwrap
 
 ## 数据保留
 
+应用进程另有默认监听 127.0.0.1:8002 的内部 Eval API。Compose 不发布或转发该端口；可在应用容器内访问，接口说明见 docs/eval-api.md。业务、LLM Router、Eval 三个监听端口均不能使用容器转发器保留的 8080。
+
 PG、JetStream、用户文件分别使用独立命名卷，普通 `down` 或重建容器会保留数据。应用使用现有 `~/laxagent` 数据路径，容器中挂载至 `/home/laxagent/laxagent`。
 
 PG 初始化参数仅在空数据卷上生效。已有数据时保留数据库并通过 SQL 修改密码，再同步 `config.json`、重建应用容器；需要重新初始化时，删除 PG 容器和 PG 数据卷会清空数据库。不要用 `down -v` 代替只删除 PG 卷，它还会删除事件和用户文件。

@@ -8,6 +8,7 @@ from laxagent.agent.state import AgentState
 from laxagent.run_errors import make_run_error
 from laxagent.appendices import materialize_input
 from laxagent.models.responses import ModelEvent, append_model_response, append_tool_message, append_reasoning, completed_reasoning, stream_response
+from laxagent.models.diagnostics import ModelDiagnostics, record_routing
 from laxagent.runtime.events import make_event
 from laxagent.tools.executor import execute_tool
 from laxagent.tools.context import ToolContext
@@ -37,9 +38,15 @@ async def call_model(state: AgentState, runtime: Runtime[AgentContext]):
             supports_multimodal=bool(runtime.context.llm and runtime.context.llm.supports_multimodal(state["model"])),
         )
     # Closing explicitly also releases the SDK stream if publishing fails or execution is cancelled.
+    diagnostics = ModelDiagnostics(
+        user_id=state["user_id"], session_id=state["session_id"], run_id=state["run_id"],
+        msg_seq=state["next_msg_seq"], resume_time=runtime.context.resume_time, model=state["model"],
+        secrets=runtime.context.diagnostic_secrets,
+    )
     async with aclosing(stream_response(
         runtime.context.client, model=state["model"], messages=wire_input,
         tools=tool_definitions(state.get("user_configs"), web_search_enabled=runtime.context.web_search is not None),
+        diagnostics=diagnostics,
     )) as stream:
         async for event in stream:
             if event.type == "started":
@@ -60,7 +67,8 @@ async def call_model(state: AgentState, runtime: Runtime[AgentContext]):
             elif event.type == "completed":
                 reasoning = reasoning or completed_reasoning(event.output or [])
                 return {"tool_node_state_uncertain": False,
-                        "pending_model_response": {"event": asdict(event), "reasoning": reasoning}}
+                        "pending_model_response": {"event": asdict(event), "reasoning": reasoning,
+                                                   "diagnostic_path": str(diagnostics.path)}}
     raise make_run_error("model_stream_ended")
 
 
@@ -81,6 +89,7 @@ async def save_model(state: AgentState, runtime: Runtime[AgentContext]):
         msg_seq=state["next_msg_seq"], resume_time=runtime.context.resume_time,
     ))
     message = {"role": "assistant", "content": event.text, **metadata}
+    record_routing(pending.get("diagnostic_path"), calls)
     return {"messages": [*state["messages"], message], "next_msg_seq": next_seq,
             "pending_tool_calls": calls, "pending_model_response": None,
             "model_input": append_model_response(state["model_input"], event)}

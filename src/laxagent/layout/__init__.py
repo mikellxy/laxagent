@@ -21,3 +21,7 @@ def get_skills_dir(user_id: str) -> Path:
 
 def get_appendices_dir(user_id: str) -> Path:
     return get_user_data_dir(user_id) / "appendix"
+
+
+def get_run_diagnostics_dir(user_id: str, run_id: int) -> Path:
+    return get_user_data_dir(user_id) / "diagnostics" / "runs" / str(run_id)

@@ -1,4 +1,4 @@
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
 from openai import AsyncOpenAI
@@ -19,3 +19,4 @@ class AgentContext:
     builtin_skills_dir: Path | None = None
     web_search: WebSearchService | None = None
     llm: LLMConfig | None = None
+    diagnostic_secrets: tuple[str, ...] = field(default=(), repr=False)

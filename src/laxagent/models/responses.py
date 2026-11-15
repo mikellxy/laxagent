@@ -1,11 +1,13 @@
 from collections.abc import AsyncIterator
 from dataclasses import dataclass
+import sys
 from typing import Literal
 
 import httpx2
 from openai import APIError, AsyncOpenAI
 
 from laxagent.run_errors import make_run_error
+from laxagent.models.diagnostics import ModelDiagnostics
 
 
 @dataclass(frozen=True)
@@ -120,6 +122,7 @@ def append_tool_message(model_input: list[dict], message: dict) -> list[dict]:
 async def stream_response(
     client: AsyncOpenAI, *, model: str, messages: list[dict],
     tools: list[dict] | None = None,
+    diagnostics: ModelDiagnostics | None = None,
 ) -> AsyncIterator[ModelEvent]:
     started = False
     # Argument deltas identify the output item, not its function call ID.
@@ -130,6 +133,8 @@ async def stream_response(
         )
         async with stream:
             async for chunk in stream:
+                if diagnostics is not None:
+                    diagnostics.observe(chunk.model_dump(mode="json", exclude_unset=True, warnings=False))
                 # SDK serialization warnings can echo untrusted upstream values into logs.
                 event = chunk.model_dump(mode="json", exclude_none=True, warnings=False)
                 kind = event["type"]
@@ -168,6 +173,8 @@ async def stream_response(
                     response = event["response"]
                     text = completed_content(response)
                     calls = completed_tool_calls(response)
+                    if diagnostics is not None:
+                        diagnostics.parsed(text, calls)
                     yield ModelEvent("completed", text=text, usage=response.get("usage"),
                                      tool_calls=calls, output=response["output"])
                     return
@@ -186,6 +193,9 @@ async def stream_response(
         raise make_run_error("model_request_failed") from None
     except (KeyError, TypeError, ValueError, AttributeError):
         raise make_run_error("invalid_model_stream") from None
+    finally:
+        if diagnostics is not None:
+            diagnostics.finish(sys.exc_info()[1])
 
 
 def delta_text(event: dict) -> str:

@@ -48,6 +48,10 @@ def create_app(config: AppConfig | None = None) -> FastAPI:
                 builtin_skills_dir=config.builtin_skills_dir,
                 web_search=web_search,
                 llm=config.llm,
+                diagnostic_secrets=(config.auth.jwt_secret.get_secret_value(),
+                                    config.database.password.get_secret_value(),
+                                    *(provider.api_key.get_secret_value() for provider in config.llm.provider_list),
+                                    *((config.web_search.api_key.get_secret_value(),) if config.web_search else ())),
             )
             app.state.graph = build_graph(checkpointer=checkpointer)
             app.state.task_manager = TaskManager(app.state.graph, app.state.agent_context,

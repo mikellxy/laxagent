@@ -38,6 +38,7 @@ config/config.json
 .idea/
 .vscode/
 .DS_Store
+.mcp.json
 
 # Local agent instructions
 AGENTS.md

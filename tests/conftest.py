@@ -58,6 +58,7 @@ def config_data(database_config):
         "api_server": {"port": 8000},
         "llm_router": {"port": 8001},
         "database": dict(database_config),
+        "nats": {"url": os.getenv("NATS_URL", "nats://127.0.0.1:4222")},
         "auth": {"jwt_secret": "test-only-jwt-secret-at-least-32-bytes-for-test-coverage"},
     }
 

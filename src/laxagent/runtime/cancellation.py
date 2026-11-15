@@ -1,6 +1,7 @@
 """JetStream control messages; execution state remains in PostgreSQL."""
 import asyncio
 import logging
+import traceback
 from contextlib import asynccontextmanager, suppress
 from datetime import datetime
 from typing import Literal
@@ -119,7 +120,7 @@ class CancellationBus:
         while True:
             try:
                 messages = await sub.fetch(batch=1, timeout=1)
-            except nats.errors.TimeoutError:
+            except TimeoutError:
                 continue
             except nats.errors.Error:
                 raise EventStoreError("取消结果接收失败，请重试") from None
@@ -151,7 +152,11 @@ class CancellationBus:
     async def _consume(self, sub, handler):
         while True:
             try:
-                messages = await sub.fetch(batch=32, timeout=1)
+                try:
+                    messages = await sub.fetch(batch=32, timeout=1)
+                except TimeoutError:
+                    # nats-py may raise builtin TimeoutError on an idle batch fetch.
+                    continue
                 for message in messages:
                     try:
                         command = CancelCommand.model_validate_json(message.data)
@@ -161,8 +166,13 @@ class CancellationBus:
                         # Scheduling is immediate; do not block other runs on one tool's cleanup.
                         handler(command)
                     await message.ack()
-            except nats.errors.TimeoutError:
-                continue
             except nats.errors.Error as exc:
                 logger.warning("Cancellation subscription error (%s)", type(exc).__name__)
+                await asyncio.sleep(1)
+            except Exception as exc:
+                # Log frame locations without exception payloads, source lines or locals.
+                frames = " -> ".join(f"{frame.filename}:{frame.lineno} in {frame.name}"
+                                     for frame in traceback.extract_tb(exc.__traceback__))
+                logger.error("Cancellation listener error (%s); %s", type(exc).__name__, frames)
+                # CancelledError remains uncaught so shutdown also interrupts this backoff.
                 await asyncio.sleep(1)

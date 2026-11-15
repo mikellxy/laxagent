@@ -96,7 +96,7 @@ async def test_orphan_times_out_keeps_intent_and_blocks_chat_and_delete(chat_api
         assert (await remote.get(f'/api/v1/sessions/{run.session_id}')).status_code == 200
         assert (await remote.post(path)).status_code == 504
         assert (await h.context.repository.get_run(run.id, run.user_id)).cancel_requested_at == requested
-        assert (await manager.cancellation.js.stream_info('cancel_result')).state.consumer_count == 0
+        assert (await manager.cancellation.js.stream_info(manager.cancellation.RESULT_STREAM)).state.consumer_count == 0
 
 
 @pytest.mark.anyio

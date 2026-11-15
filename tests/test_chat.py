@@ -15,6 +15,7 @@ from laxagent.agent.graph import build_graph
 from laxagent.api.app import create_app
 from laxagent.config import AppConfig
 from laxagent.runtime.events import EventStore, EventStoreError
+from laxagent.runtime.cancellation import CancellationBus
 from laxagent.runtime.runner import run_agent
 from laxagent.runtime.task_manager import TaskManager
 from laxagent.storage.database import DatabaseError
@@ -27,6 +28,15 @@ from test_tool_loop import tool_response
 
 @pytest.fixture
 async def chat_api(repository, conversation, config_data, monkeypatch):
+    # Fault injection must never delete consumers/commands belonging to a running app.
+    suffix = uuid4().hex
+    for key, value in {
+        'COMMAND_STREAM': 'TEST_COMMANDS_' + suffix,
+        'RESULT_STREAM': 'TEST_RESULTS_' + suffix,
+        'COMMAND_SUBJECT': 'test.commands.' + suffix,
+        'RESULT_SUBJECT': 'test.results.' + suffix,
+    }.items():
+        monkeypatch.setattr(CancellationBus, key, value)
     config = AppConfig.model_validate(config_data)
     app = create_app()
     app.state.config = config
@@ -57,6 +67,8 @@ async def chat_api(repository, conversation, config_data, monkeypatch):
                 await manager.close()
                 for run_id in created:
                     await events.js.delete_stream(events.stream_name(run_id))
+                for stream in (manager.cancellation.COMMAND_STREAM, manager.cancellation.RESULT_STREAM):
+                    await events.js.delete_stream(stream)
 
 
 def chat_path(h):

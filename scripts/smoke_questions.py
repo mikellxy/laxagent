@@ -10,6 +10,7 @@ from pathlib import Path
 import subprocess
 import sys
 import tempfile
+import time
 from uuid import uuid4
 
 import httpx2
@@ -18,10 +19,13 @@ from laxagent.config import load_config
 from smoke_resume import free_port, ready, report
 
 
-async def events(api, run_id, attempt):
+async def events(api, run_id, attempt, last_seq=None):
     result = []
+    params = {'resume_time': attempt}
+    if last_seq is not None:
+        params['last_seq'] = last_seq
     async with asyncio.timeout(240):
-        async with api.stream('GET', f'/api/v1/runs/{run_id}/events?resume_time={attempt}') as response:
+        async with api.stream('GET', f'/api/v1/runs/{run_id}/events', params=params) as response:
             response.raise_for_status()
             async for line in response.aiter_lines():
                 if line.startswith('data: '):
@@ -75,6 +79,16 @@ async def smoke(args):
                     assert paused['status'] == 'paused' and paused['finished_at'] is None
                     assert first[-1]['content']['status'] == 'paused'
                     report(progress='paused and SSE ended', run_id=run_id)
+                    history = (await api.get(f'/api/v1/sessions/{session_id}/messages')).json()['items']
+                    last_seq = max((item['seq'] for item in history), default=0)
+                    start = time.perf_counter()
+                    replay = await events(api, run_id, 0, last_seq)
+                    elapsed_ms = round((time.perf_counter() - start) * 1000, 1)
+                    assert replay == [event for event in first if event['msg_seq'] is None or event['msg_seq'] > last_seq]
+                    assert [item['content'] for item in replay if item['type'] == 'ask_user_question'] == [question]
+                    assert replay[-1]['type'] == 'sse_end'
+                    report(progress='filtered question replay', last_seq=last_seq, full_events=len(first),
+                           filtered_events=len(replay), replay_ms=elapsed_ms)
                     answers = [{'question': item['question'], 'answer': '自定义方案-验收' if index == 0 else '用户未回答'}
                                for index, item in enumerate(question['questions'])]
                     body = {'resume_time': 0, 'interrupt_id': question['interrupt_id'], 'answers': answers}

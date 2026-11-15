@@ -97,6 +97,8 @@ export class Conversation {
     if (this.disposed) return Promise.resolve()
     if (reconnect) {
       this.reconnectWanted = true
+      // A failed question-status check must be able to replay the paused stream again.
+      if (!this.question) this.pausedStreamRead = null
       this.streamAbort?.abort()
       this.buffered = []
     }
@@ -175,13 +177,13 @@ export class Conversation {
       if (this.disposed || abort.signal.aborted || event.run_id !== run.run_id || (event.resume_time ?? 0) !== run.resume_time) return
       this.retryDelay = 500
       // The first model/tool event proves preparation has progressed; read the user row once.
-      if (event.msg_seq !== null && this.checkedRun !== attempt(run)) {
+      if (active(run) && event.msg_seq !== null && this.checkedRun !== attempt(run)) {
         this.checkedRun = attempt(run)
         void this.refresh(false)
       }
       if (this.syncing) this.buffered.push(event)
       else this.apply(event)
-    }, abort.signal, run.resume_time).catch(error => {
+    }, abort.signal, run.resume_time, this.boundary).catch(error => {
       if (this.disposed || abort.signal.aborted) return
       this.error = messageOf(error); this.emit(); this.scheduleReconnect()
     })
@@ -318,7 +320,11 @@ export class Conversation {
       }
       this.emit()
     } catch (error) {
-      if (!this.disposed) { this.error = messageOf(error); this.emit() }
+      // sse_end may have started a history refresh; don't let it erase this retryable error.
+      if (this.syncFlight) await this.syncFlight
+      if (!this.disposed && attempt(this.detail?.latest_run) === `${event.run_id}:${event.resume_time ?? 0}`) {
+        this.error = messageOf(error); this.emit()
+      }
     }
   }
 

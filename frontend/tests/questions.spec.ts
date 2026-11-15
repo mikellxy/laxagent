@@ -113,3 +113,46 @@ test.describe('mobile questions', () => {
     expect(posts).not.toContain('/api/v1/runs/1/answers')
   })
 })
+
+for (const width of [1440, 360]) {
+  test(`refresh keeps history visible while recovering the question at width ${width}`, async ({ page }) => {
+    await page.setViewportSize({ width, height: 800 })
+    await mockQuestions(page)
+    await page.goto('/')
+    await page.getByRole('button', { name: '以游客登录' }).click()
+    await expect(page.getByLabel('回答问题', { exact: true })).toBeVisible()
+    let release!: () => void
+    const gate = new Promise<void>(resolve => { release = resolve })
+    await page.route('**/api/v1/runs/1/events?**', async route => {
+      expect(new URL(route.request().url()).searchParams.get('last_seq')).toBe('2')
+      await gate
+      await route.fallback()
+    })
+    await page.reload()
+    await expect(page.getByText('请先询问我', { exact: true })).toBeVisible()
+    await expect(page.getByRole('status')).toHaveText('正在恢复待回答问题…')
+    await expect(page.getByRole('textbox', { name: '消息输入', exact: true })).toHaveCount(0)
+    await expect(page.getByRole('button', { name: '停止任务', exact: true })).toBeInViewport()
+    await page.screenshot({ path: `test-results/question-recovery-${width}.png` })
+    release()
+    await expect(page.getByLabel('回答问题', { exact: true })).toBeVisible()
+    await expect(page.getByText('正在恢复待回答问题…', { exact: true })).toHaveCount(0)
+  })
+}
+
+test('failed question confirmation offers retry and reloads the paused stream', async ({ page }) => {
+  await mockQuestions(page)
+  let fail = true
+  await page.route('**/api/v1/runs/1', route => {
+    if (fail) { fail = false; return route.fulfill({ status: 503, contentType: 'application/json', body: '{"detail":"暂时不可用"}' }) }
+    return route.fallback()
+  })
+  await page.goto('/')
+  await page.getByRole('button', { name: '以游客登录' }).click()
+  await expect(page.getByRole('status')).toHaveText('待回答问题恢复失败')
+  await expect(page.getByRole('alert')).toBeVisible()
+  await expect(page.getByText('请先询问我', { exact: true })).toBeVisible()
+  await page.getByRole('button', { name: '重新加载问题', exact: true }).click()
+  await expect(page.getByLabel('回答问题', { exact: true })).toBeVisible()
+  await expect(page.getByRole('button', { name: '重新加载问题', exact: true })).toHaveCount(0)
+})

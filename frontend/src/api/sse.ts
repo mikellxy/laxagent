@@ -39,8 +39,10 @@ export async function consumeSSE(body: ReadableStream<Uint8Array>, onEvent: (eve
     reader.releaseLock()
   }
 }
-export async function streamRun(runId: number, onEvent: (event: StreamEvent) => void, signal: AbortSignal, resumeTime = 0) {
-  const response = await request(`/runs/${runId}/events?resume_time=${resumeTime}`, { signal, headers: { Accept: 'text/event-stream' } })
+export async function streamRun(runId: number, onEvent: (event: StreamEvent) => void, signal: AbortSignal, resumeTime = 0, lastSeq?: number) {
+  const params = new URLSearchParams({ resume_time: String(resumeTime) })
+  if (lastSeq !== undefined) params.set('last_seq', String(lastSeq))
+  const response = await request(`/runs/${runId}/events?${params}`, { signal, headers: { Accept: 'text/event-stream' } })
   if (!response.body) throw new Error('事件连接不可用')
   await consumeSSE(response.body, onEvent, signal)
 }

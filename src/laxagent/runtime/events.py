@@ -138,17 +138,20 @@ def encode_sse(event: Event, sequence: int | None = None) -> bytes:
             f"data: {json.dumps(event, ensure_ascii=False)}\n\n").encode()
 
 
-async def stream_events(sub, run_id: int, *, resume_time=0, heartbeat=15, idle_timeout=330) -> AsyncIterator[bytes]:
+async def stream_events(sub, run_id: int, *, resume_time=0, last_seq: int | None = None,
+                        heartbeat=15, idle_timeout=330) -> AsyncIterator[bytes]:
     loop = asyncio.get_running_loop()
     last_event = loop.time()
+    batch = 1
     while True:
         remaining = idle_timeout - (loop.time() - last_event)
         if remaining <= 0:
             yield encode_sse(make_event(run_id, "error", {}, error="Event consumption timed out", resume_time=resume_time))
             return
         try:
-            messages = await sub.fetch(batch=1, timeout=min(heartbeat, remaining))
-        except nats.errors.TimeoutError:
+            messages = await sub.fetch(batch=batch, timeout=min(heartbeat, remaining))
+        except TimeoutError:
+            batch = 1
             yield b": heartbeat\n\n"
             continue
         except nats.errors.Error:
@@ -156,15 +159,21 @@ async def stream_events(sub, run_id: int, *, resume_time=0, heartbeat=15, idle_t
             return
         for message in messages:
             try:
+                # Batch only the known backlog; waiting for a large live batch delays tokens.
+                batch = min(128, max(1, message.metadata.num_pending))
                 event = json.loads(message.data)
                 # Filter before forwarding terminal events or unfinished chunks.
                 if event.get("resume_time", 0) != resume_time:
+                    continue
+                last_event = loop.time()
+                # History already supplies these message bodies. Null-seq control events
+                # (questions, errors and sse_end) must still reach the client.
+                if last_seq is not None and event.get("msg_seq") is not None and event["msg_seq"] <= last_seq:
                     continue
                 payload = encode_sse(event, message.metadata.sequence.stream)
             except (ValueError, KeyError, TypeError):
                 yield encode_sse(make_event(run_id, "error", {}, error="Invalid stored event", resume_time=resume_time))
                 return
-            last_event = loop.time()
             yield payload
             if event["type"] == "sse_end":
                 return

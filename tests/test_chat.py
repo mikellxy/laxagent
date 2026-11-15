@@ -116,6 +116,13 @@ async def test_chat_snapshots_model_checkpoint_and_sse_replay(chat_api):
     first = await h.api.get(f"/api/v1/runs/{run_id}/events")
     second = await h.api.get(f"/api/v1/runs/{run_id}/events")
     assert first.content == second.content
+    filtered = await h.api.get(f"/api/v1/runs/{run_id}/events?last_seq=2")
+    decode = lambda response: [json.loads(line[6:]) for line in response.text.splitlines() if line.startswith("data: ")]
+    assert filtered.status_code == 200
+    assert decode(filtered) == [event for event in decode(first) if event["msg_seq"] is None or event["msg_seq"] > 2]
+    assert decode(filtered)[-1]["type"] == "sse_end"
+    for invalid in ("-1", "abc"):
+        assert (await h.api.get(f"/api/v1/runs/{run_id}/events?last_seq={invalid}")).status_code == 422
     assert '"status": "completed"' in first.text
     assert (await h.context.events.js.stream_info(h.context.events.stream_name(run_id))).state.consumer_count == 0
     assert "thread_id" not in summary and "jwt_secret" not in summary

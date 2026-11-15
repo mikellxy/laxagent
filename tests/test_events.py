@@ -63,11 +63,12 @@ async def test_cancelled_subscription_releases_consumer(run_store):
 
 
 @pytest.mark.anyio
-async def test_heartbeat_and_idle_timeout():
+@pytest.mark.parametrize("timeout_error", [TimeoutError, nats.errors.TimeoutError])
+async def test_heartbeat_and_idle_timeout(timeout_error):
     class SilentSubscription:
         async def fetch(self, batch, timeout):
             await asyncio.sleep(timeout)
-            raise nats.errors.TimeoutError()
+            raise timeout_error()
 
     output = b"".join([chunk async for chunk in stream_events(
         SilentSubscription(), 1, heartbeat=0.01, idle_timeout=0.03,
@@ -117,3 +118,56 @@ async def test_cancellation_consumers_broadcast_new_messages_and_cleanup(run_sto
         with pytest.raises(nats.errors.TimeoutError):
             await sub.fetch(timeout=.05)
     assert (await bus.js.stream_info(bus.RESULT_STREAM)).state.consumer_count == 0
+
+
+@pytest.mark.anyio
+async def test_filtered_replay_preserves_uncommitted_messages_and_control_events(run_store):
+    store, run_id = run_store
+    await store.create_run(run_id)
+    stored = [make_event(run_id, 'sse_end', {}, resume_time=0)]
+    stored += [make_event(run_id, 'reasoning_chunk', 'committed', msg_seq=2, resume_time=1) for _ in range(260)]
+    remaining = [
+        make_event(run_id, 'tool_start', {'tool_name': 'ask_user_question'}, msg_seq=3, resume_time=1),
+        make_event(run_id, 'message_chunk', 'unfinished', msg_seq=4, resume_time=1),
+        make_event(run_id, 'error', {}, error='control error', resume_time=1),
+        make_event(run_id, 'ask_user_question', {'questions': []}, resume_time=1),
+        make_event(run_id, 'sse_end', {'status': 'paused'}, resume_time=1),
+    ]
+    for event in [*stored, *remaining]:
+        await store.publish(event)
+    batches = []
+    async with store.subscribe(run_id) as sub:
+        class RecordingSubscription:
+            async def fetch(self, batch, timeout):
+                batches.append(batch)
+                return await sub.fetch(batch=batch, timeout=timeout)
+
+        output = b''.join([chunk async for chunk in stream_events(
+            RecordingSubscription(), run_id, resume_time=1, last_seq=2,
+        )])
+    received = [json.loads(line[6:]) for line in output.splitlines() if line.startswith(b'data: ')]
+    assert received == remaining
+    assert b'id: 262\nevent: tool_start' in output
+    assert batches[0] == 1 and max(batches) == 128 and len(batches) < 10
+
+
+@pytest.mark.anyio
+async def test_batch_replay_returns_to_immediate_live_delivery(run_store):
+    store, run_id = run_store
+    await store.create_run(run_id)
+    for _ in range(4):
+        await store.publish(make_event(run_id, 'message_chunk', 'backlog', msg_seq=1))
+    async with store.subscribe(run_id) as sub:
+        stream = stream_events(sub, run_id, heartbeat=2)
+        try:
+            for _ in range(4):
+                assert b'backlog' in await anext(stream)
+            pending = asyncio.create_task(anext(stream))
+            await asyncio.sleep(.05)
+            assert not pending.done()
+            await store.publish(make_event(run_id, 'message_chunk', 'live-token', msg_seq=1))
+            assert b'live-token' in await asyncio.wait_for(pending, .5)
+            await store.publish(make_event(run_id, 'sse_end', {}))
+            assert b'sse_end' in await asyncio.wait_for(anext(stream), .5)
+        finally:
+            await stream.aclose()

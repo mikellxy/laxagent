@@ -16,3 +16,13 @@ it('decodes split UTF-8 and CRLF frames, ignoring heartbeats and keeping same-se
 it('detects a connection ending without sse_end', async () => {
   await expect(consumeSSE(new ReadableStream({ start(c) { c.close() } }), () => {})).rejects.toThrow('事件连接已断开')
 })
+
+it('sends the history boundary separately from the execution attempt', async () => {
+  const { streamRun } = await import('../src/api/sse')
+  const end = 'event: sse_end\ndata: {"type":"sse_end","msg_seq":null,"content":{}}\n\n'
+  const fetch = vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response(end))
+  try {
+    await streamRun(10, vi.fn(), new AbortController().signal, 2, 8)
+    expect(fetch).toHaveBeenCalledWith('/api/v1/runs/10/events?resume_time=2&last_seq=8', expect.any(Object))
+  } finally { fetch.mockRestore() }
+})

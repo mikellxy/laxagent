@@ -110,6 +110,7 @@ export function Chat({ owner, sessionId, onMissing }: { owner: string; sessionId
   const mobile = useMobileLayout()
   const conversation = useMemo(() => new Conversation(sessionId), [sessionId])
   const snapshot = useSyncExternalStore(conversation.subscribe, conversation.getSnapshot)
+  const restoringQuestion = snapshot.detail?.latest_run?.status === 'paused' && !snapshot.question
   const canCancel = snapshot.detail?.latest_run?.status === 'waiting' || snapshot.detail?.latest_run?.status === 'running' || snapshot.detail?.latest_run?.status === 'paused'
   const catalog = useQuery({ queryKey: ['models', owner], queryFn: ({ signal }) => api.models(signal) })
   const [model, setModel] = useState('')
@@ -252,7 +253,15 @@ export function Chat({ owner, sessionId, onMissing }: { owner: string; sessionId
         pending={snapshot.question} submitting={snapshot.answering || snapshot.cancelling} onSubmit={answers => void conversation.answer(answers)} />}
       {snapshot.question && <button type="button" className={styles.questionStop} disabled={snapshot.cancelling || snapshot.answering}
         onClick={() => void conversation.cancel()}><Square size={14} />{snapshot.cancelling ? '正在取消…' : '停止任务'}</button>}
-      <div className={styles.composer} data-composer>
+      {restoringQuestion && <div className={styles.questionRecovery}>
+        <span role="status">{!snapshot.error && <LoaderCircle size={16} className="spin" aria-hidden="true" />}
+          {snapshot.error ? '待回答问题恢复失败' : '正在恢复待回答问题…'}</span>
+        {snapshot.error && <button type="button" disabled={snapshot.syncing || snapshot.cancelling}
+          onClick={() => void conversation.refresh()}>重新加载问题</button>}
+        <button type="button" disabled={snapshot.cancelling} onClick={() => void conversation.cancel()}>
+          <Square size={14} />{snapshot.cancelling ? '正在取消…' : '停止任务'}</button>
+      </div>}
+      {!restoringQuestion && <div className={styles.composer} data-composer>
         <div className={styles.composerBody}>
         {!!attachments.items.length && <DraftAttachments items={attachments.items} remove={attachments.remove} retry={attachments.retry} />}
         {attachments.error && <div className="error" role="alert">{attachments.error}</div>}
@@ -277,7 +286,7 @@ export function Chat({ owner, sessionId, onMissing }: { owner: string; sessionId
               {snapshot.busy ? <LoaderCircle size={18} className="spin" /> : <ArrowUp size={19} strokeWidth={2} />}
             </button>}
         </div>
-      </div>
+      </div>}
     </div>
   </main></WorkspaceFilesProvider>
 }

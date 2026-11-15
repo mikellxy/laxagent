@@ -71,6 +71,9 @@
 .failed { outline: 1px solid #bb7777; }
 .footer { position: relative; padding: 10px 40px 28px; }
 .questionStop { display: none; }
+.questionRecovery { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; padding: 16px; border: 1px solid #d2d4cd; border-radius: 14px; background: #fdfdfb; color: #686c63; font-size: 13px; }
+.questionRecovery > span { display: flex; align-items: center; gap: 8px; margin-right: auto; }
+.questionRecovery button { display: inline-flex; align-items: center; gap: 6px; min-height: 44px; padding: 6px 10px; border-radius: 7px; border: 1px solid #d2d4cd; }
 .footer > * { max-width: 960px; margin-left: auto; margin-right: auto; }
 .composer { background: #fdfdfb; border: 1px solid #d2d4cd; border-radius: 14px; padding: 15px 15px 11px; box-shadow: 0 1px 2px #00000004; }
 .composer:focus-within { border-color: #b0b7ae; }

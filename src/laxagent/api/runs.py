@@ -81,7 +81,8 @@ async def subscription(run_id: ResourceId, resume_time: Annotated[int | None, Qu
 
 
 @router.get("/runs/{run_id}/events")
-async def events(run_id: ResourceId, sub=Depends(subscription, scope="request")):
+async def events(run_id: ResourceId, last_seq: Annotated[int | None, Query(ge=0)] = None,
+                 sub=Depends(subscription, scope="request")):
     consumer, attempt = sub
-    return StreamingResponse(stream_events(consumer, run_id, resume_time=attempt), media_type="text/event-stream",
+    return StreamingResponse(stream_events(consumer, run_id, resume_time=attempt, last_seq=last_seq), media_type="text/event-stream",
                              headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})

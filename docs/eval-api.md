@@ -8,7 +8,7 @@ uv run python -m laxagent.main --config config/config.json
 
 业务 API 默认 127.0.0.1:8000，LLM Router 默认 127.0.0.1:8001，独立 Eval API 默认 127.0.0.1:8002。eval_server.port 可修改端口，省略时为 8002，三个端口不能重复。
 
-Eval 仅提供 create_session 和 collect，不校验 JWT，只在内部 loopback 监听器注册。业务 API、前端和 LLM Router 不提供这些路由；现有反向代理和 Compose 继续只发布业务端口。Eval 复用业务应用的数据库、AgentContext 和 TaskManager，不重复创建运行时。停止时依次关闭 Eval、业务 API、LLM Router。
+Eval 提供 create_session、init_session 和 collect，不校验 JWT，只在内部 loopback 监听器注册。业务 API、前端和 LLM Router 不提供这些路由；现有反向代理和 Compose 继续只发布业务端口。Eval 复用业务应用的数据库、AgentContext 和 TaskManager，不重复创建运行时。停止时依次关闭 Eval、业务 API、LLM Router。
 
 ## 创建会话
 
@@ -25,6 +25,20 @@ HTTP 201：
 ```json
 {"user_id": "<generated UUID>", "project_id": 100, "session_id": 101}
 ```
+
+## 初始化工作区（可选）
+
+`POST /eval/init_session`，multipart/form-data：普通字段 `session_id`（正整数），文件字段 `package`（ZIP）。无需 JWT。创建会话之后、第一轮 chat 之前调用。
+
+```sh
+curl -F session_id=101 -F package=@bug.zip http://127.0.0.1:8002/eval/init_session
+```
+
+HTTP 200：`{"session_id": 101, "files": ["src/app.py", "tests/test_app.py"]}`。files 为导入的普通文件相对路径，排序输出。ZIP 根目录直接对应 workspace，保留普通文件权限和空目录，不复制额外顶层包目录。支持向已有目录补充文件，不覆盖同名文件；重复上传同一份非空包返回 409。
+
+workspace 由同项目会话共享；导入要求整个项目尚未产生任何 run（包括终态 run），否则 409。导入期间锁定项目及其会话，阻止同项目新会话创建和 chat 提交；不存在或已删除会话返回 404。
+
+ZIP 压缩包最多 64 MiB，解压最多 256 MiB、10000 项，超限返回 413。非法 ZIP、CRC 错误、重复或越界路径、符号链接、特殊文件、加密条目返回 400。目标文件或链接冲突返回 409，文件系统故障返回 503。文件先完整解压校验，再发布；发布中普通错误回滚本次新增文件和目录，已有文件保留。进程强杀或主机故障不保证文件系统事务回滚。
 
 ## 登录与发起对话
 
@@ -43,7 +57,7 @@ body 沿用业务 ChatRequest：
 
 HTTP 202 返回 `run_id`、`session_id`、`status: waiting` 和 `resume_time: 0`，只表示已受理。后续等待、查询 run 继续使用业务接口和同一个 JWT。
 
-评测配置的 before_chat 钩子可在每轮请求之前调用登录，再将响应中的 access_token 写入运行时 values。create_session/collect 保留在 8002，业务 chat 仍执行 JWT、会话归属、模型和附件校验。
+评测配置的 before_chat 钩子可在每轮请求之前调用登录，再将响应中的 access_token 写入运行时 values。create_session/init_session/collect 保留在 8002，业务 chat 仍执行 JWT、会话归属、模型和附件校验。
 
 ## 收集工作区与轨迹
 

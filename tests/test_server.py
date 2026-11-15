@@ -105,7 +105,7 @@ def test_three_servers_stream_to_openai_sdk_and_shutdown(config_data, tmp_path):
                 eval_port = config_data["eval_server"]["port"]
                 evaluation = wait_for_api(process, f"http://127.0.0.1:{eval_port}/openapi.json", log_path)
                 assert set(evaluation.json()["paths"]) == {
-                    "/eval/create_session", "/eval/collect",
+                    "/eval/create_session", "/eval/init_session", "/eval/collect",
                 }
                 with OpenAI(
                     api_key="placeholder", base_url=f"http://127.0.0.1:{router_port}/v1",

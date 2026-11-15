@@ -41,6 +41,25 @@ class EvalStore:
             return session
 
     @asynccontextmanager
+    async def initialization(self, session_id: int):
+        async with self.db.transaction() as tx:
+            # Lock the project first: create_session uses it too. Then lock all
+            # its sessions, since chat admission locks sessions and workspace is shared.
+            project_id = await tx.scalar(self.session_query(session_id).with_only_columns(Session.project_id))
+            if project_id is None:
+                raise DatabaseError("Session not found", 404)
+            await tx.scalar(select(Project).where(Project.id == project_id).with_for_update())
+            sessions = list(await tx.scalars(select(Session).where(
+                Session.project_id == project_id,
+            ).order_by(Session.id).with_for_update()))
+            session = next((row for row in sessions if row.id == session_id and row.deleted_at is None), None)
+            if session is None:
+                raise DatabaseError("Session not found", 404)
+            if await tx.scalar(select(Run.id).where(Run.project_id == project_id).limit(1)) is not None:
+                raise DatabaseError("Initialization requires a project with no runs", 409)
+            yield session
+
+    @asynccontextmanager
     async def snapshot(self, session_id: int, run_id: int):
         # create_run/resume/delete take the same session lock. Keep it until the
         # archive is built so another turn cannot start halfway through collection.

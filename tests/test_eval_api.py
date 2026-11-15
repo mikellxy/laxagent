@@ -204,7 +204,7 @@ async def test_eval_routes_are_not_on_public_application(eval_api):
     public = eval_api.owner.openapi()["paths"]
     private = eval_api.app.openapi()["paths"]
     assert not any(path.startswith("/eval") for path in public)
-    assert set(private) == {"/eval/create_session", "/eval/collect"}
+    assert set(private) == {"/eval/create_session", "/eval/init_session", "/eval/collect"}
     assert "application/zip" in private["/eval/collect"]["post"]["responses"]["200"]["content"]
 
 

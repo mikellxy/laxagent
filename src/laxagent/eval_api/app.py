@@ -2,8 +2,9 @@
 
 from contextlib import asynccontextmanager
 from tempfile import TemporaryFile
+from typing import Annotated
 
-from fastapi import Depends, FastAPI, HTTPException
+from fastapi import Depends, FastAPI, HTTPException, Form, UploadFile
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 from starlette.concurrency import run_in_threadpool
 
@@ -11,6 +12,8 @@ from laxagent.api.dependencies import get_repository
 from laxagent.api.workspace_files import FileDownload
 from laxagent.eval_api.archive import write_archive
 from laxagent.eval_api.store import EvalStore
+from laxagent.eval_api.initialize import initialize_workspace, PackageError
+from laxagent.layout import get_project_workdir
 
 
 class CreateSessionRequest(BaseModel):
@@ -36,6 +39,11 @@ class CollectRequest(BaseModel):
     model_config = ConfigDict(extra="forbid", strict=True)
     session_id: int = Field(gt=0)
     run_id: int = Field(gt=0)
+
+
+class InitSessionResponse(BaseModel):
+    session_id: int
+    files: list[str]
 
 
 def get_eval_store(repository=Depends(get_repository)):
@@ -66,6 +74,23 @@ def create_eval_app(api_app: FastAPI) -> FastAPI:
     async def create_session(body: CreateSessionRequest, store=Depends(get_eval_store)):
         session = await store.create_session(body.session_name)
         return {"user_id": session.user_id, "project_id": session.project_id, "session_id": session.id}
+
+    @app.post("/eval/init_session", response_model=InitSessionResponse)
+    async def init_session(session_id: Annotated[int, Form(gt=0)], package: UploadFile,
+                           store=Depends(get_eval_store)):
+        try:
+            async with store.initialization(session_id) as session:
+                files = await run_in_threadpool(
+                    initialize_workspace, package.file,
+                    get_project_workdir(session.user_id, session.project_id),
+                )
+            return {"session_id": session.id, "files": files}
+        except PackageError as exc:
+            raise HTTPException(exc.status_code, str(exc)) from None
+        except OSError:
+            raise HTTPException(503, "Workspace could not be initialized") from None
+        finally:
+            await package.close()
 
     @app.post("/eval/collect", status_code=200, response_class=FileDownload, responses={
         200: {"content": {"application/zip": {"schema": {"type": "string", "format": "binary"}}}},

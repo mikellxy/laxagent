@@ -12,6 +12,15 @@ from nats.js import api
 from nats.js.errors import NotFoundError
 
 
+logger = logging.getLogger(__name__)
+
+# These previews are replaced by complete messages/history, never used to execute tools.
+LOSSY_EVENT_TYPES = frozenset({
+    "message_start", "message_chunk", "reasoning_chunk", "refusal_chunk",
+    "tool_call_start", "tool_call_delta",
+})
+
+
 class Event(TypedDict):
     run_id: int
     resume_time: int
@@ -92,14 +101,25 @@ class EventStore:
                 raise EventStoreError() from None
 
     async def publish(self, event: Event):
-        try:
-            await self.js.publish(
-                self.subject(event["run_id"]),
-                json.dumps(event, ensure_ascii=False).encode(),
-                stream=self.stream_name(event["run_id"]),
-            )
-        except nats.errors.Error:
-            raise EventStoreError() from None
+        payload = json.dumps(event, ensure_ascii=False).encode()
+        # A lost acknowledgement must not duplicate an already stored text delta.
+        headers = {"Nats-Msg-Id": uuid4().hex}
+        for attempt in range(3):
+            try:
+                await self.js.publish(
+                    self.subject(event["run_id"]), payload,
+                    stream=self.stream_name(event["run_id"]), headers=headers,
+                )
+                return
+            except nats.errors.Error:
+                if attempt < 2:
+                    await asyncio.sleep(0.1 * 2**attempt)
+                    continue
+                if event["type"] in LOSSY_EVENT_TYPES:
+                    logger.warning("Dropped preview event %s for run %s after 3 publish attempts",
+                                   event["type"], event["run_id"])
+                    return
+                raise EventStoreError() from None
 
     @asynccontextmanager
     async def subscribe(self, run_id: int):

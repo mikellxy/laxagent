@@ -1,11 +1,46 @@
 import asyncio
 from contextlib import suppress
 from types import SimpleNamespace
+from unittest.mock import AsyncMock
 
+import nats
 import pytest
 
 from laxagent.agent.nodes.loop import call_model
+from laxagent.runtime.events import EventStore
 from model_helpers import ModelStream, client_for, completed
+
+
+@pytest.mark.anyio
+async def test_model_completes_with_full_output_when_all_previews_are_dropped(monkeypatch):
+    publish = AsyncMock(side_effect=nats.errors.TimeoutError())
+    store = EventStore(SimpleNamespace(jetstream=lambda **kwargs: SimpleNamespace(publish=publish)))
+    monkeypatch.setattr("laxagent.runtime.events.asyncio.sleep", AsyncMock())
+    final = completed("Complete answer")
+    final["response"]["output"].append({
+        "type": "function_call", "call_id": "call-a", "name": "write_file", "arguments": '{"content":"final"}',
+    })
+    source = ModelStream([
+        {"type": "response.created", "response": {}},
+        {"type": "response.output_text.delta", "delta": "Complete"},
+        {"type": "response.output_item.added", "item": {
+            "type": "function_call", "id": "item-a", "call_id": "call-a", "name": "write_file", "arguments": "",
+        }},
+        {"type": "response.function_call_arguments.delta", "item_id": "item-a", "delta": "partial"},
+        final,
+    ])
+    async with client_for(source, []) as client:
+        result = await call_model(
+            {"user_id": "test-user", "session_id": 40, "run_id": 49, "next_msg_seq": 8,
+             "model": "chosen:model", "model_input": []},
+            SimpleNamespace(context=SimpleNamespace(client=client, resume_time=0, web_search=None,
+                                                    diagnostic_secrets=(), events=store)),
+        )
+    event = result["pending_model_response"]["event"]
+    assert event["text"] == "Complete answer"
+    assert event["tool_calls"][0]["arguments"] == '{"content":"final"}'
+    assert publish.await_count == 12
+    assert source.closed
 
 
 @pytest.mark.anyio

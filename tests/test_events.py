@@ -1,10 +1,84 @@
 import asyncio
 import json
+from types import SimpleNamespace
+from unittest.mock import AsyncMock
 
 import nats
 import pytest
 
-from laxagent.runtime.events import EventStoreError, make_event, stream_events
+from laxagent.runtime.events import EventStore, EventStoreError, make_event, stream_events
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize("kind", [
+    "message_start", "message_chunk", "reasoning_chunk", "refusal_chunk",
+    "tool_call_start", "tool_call_delta",
+])
+async def test_preview_publish_failure_is_dropped_after_three_attempts(kind, monkeypatch, caplog):
+    publish = AsyncMock(side_effect=nats.errors.TimeoutError("secret-key"))
+    store = EventStore(SimpleNamespace(jetstream=lambda **kwargs: SimpleNamespace(publish=publish)))
+    monkeypatch.setattr("laxagent.runtime.events.asyncio.sleep", AsyncMock())
+    await store.publish(make_event(1, kind, "private-content", msg_seq=2))
+    assert publish.await_count == 3
+    assert "Dropped preview event" in caplog.text
+    assert "secret-key" not in caplog.text and "private-content" not in caplog.text
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize("kind", [
+    "message_end", "tool_start", "tool_end", "ask_user_question", "sse_end", "error", "new_event",
+])
+async def test_non_preview_publish_failure_still_propagates(kind, monkeypatch):
+    publish = AsyncMock(side_effect=nats.errors.TimeoutError("secret-key"))
+    store = EventStore(SimpleNamespace(jetstream=lambda **kwargs: SimpleNamespace(publish=publish)))
+    monkeypatch.setattr("laxagent.runtime.events.asyncio.sleep", AsyncMock())
+    with pytest.raises(EventStoreError, match="^Event storage unavailable$"):
+        await store.publish(make_event(1, kind, {}))
+    assert publish.await_count == 3
+
+
+@pytest.mark.anyio
+async def test_publish_retry_reuses_payload_and_id_but_next_event_has_new_id(monkeypatch):
+    publish = AsyncMock(side_effect=[nats.errors.TimeoutError(), nats.errors.TimeoutError(), None, None])
+    store = EventStore(SimpleNamespace(jetstream=lambda **kwargs: SimpleNamespace(publish=publish)))
+    monkeypatch.setattr("laxagent.runtime.events.asyncio.sleep", AsyncMock())
+    event = make_event(1, "message_chunk", "hello", msg_seq=2)
+    await store.publish(event)
+    await store.publish(event)
+    first, second, third, following = publish.await_args_list
+    assert first == second == third
+    assert first.kwargs["headers"]["Nats-Msg-Id"] != following.kwargs["headers"]["Nats-Msg-Id"]
+
+
+@pytest.mark.anyio
+async def test_publish_retry_remains_cancellable(monkeypatch):
+    publish = AsyncMock(side_effect=nats.errors.TimeoutError())
+    store = EventStore(SimpleNamespace(jetstream=lambda **kwargs: SimpleNamespace(publish=publish)))
+    monkeypatch.setattr("laxagent.runtime.events.asyncio.sleep", AsyncMock(side_effect=asyncio.CancelledError()))
+    with pytest.raises(asyncio.CancelledError):
+        await store.publish(make_event(1, "message_chunk", "hello", msg_seq=2))
+    assert publish.await_count == 1
+
+
+@pytest.mark.anyio
+async def test_lost_publish_ack_does_not_duplicate_stored_preview(run_store, monkeypatch):
+    store, run_id = run_store
+    await store.create_run(run_id)
+    publish = store.js.publish
+    attempts = 0
+
+    async def lose_first_ack(*args, **kwargs):
+        nonlocal attempts
+        attempts += 1
+        result = await publish(*args, **kwargs)
+        if attempts == 1:
+            raise nats.errors.TimeoutError()
+        return result
+
+    monkeypatch.setattr(store.js, "publish", lose_first_ack)
+    await store.publish(make_event(run_id, "message_chunk", "hello", msg_seq=2))
+    assert attempts == 2
+    assert (await store.js.stream_info(store.stream_name(run_id))).state.messages == 1
 
 
 @pytest.mark.anyio

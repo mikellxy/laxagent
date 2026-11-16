@@ -11,6 +11,7 @@ class RunError(Exception):
         super().__init__(message)
         self.code: str | None = None
         self.incomplete = incomplete
+        self.retryable = False
 
 
 class ModelError(RunError):
@@ -116,7 +117,7 @@ RUN_FAILURES: dict[str, FailureDefinition] = {
 }
 
 
-def make_run_error(code: str) -> RunError:
+def make_run_error(code: str, *, retryable: bool = False) -> RunError:
     """Create only catalog-defined exceptions; callers cannot override their payload."""
     definition = RUN_FAILURES[code]
     exception = definition["exception"]
@@ -126,6 +127,7 @@ def make_run_error(code: str) -> RunError:
         raise ValueError("Run failure messages must not be empty")
     error.code = code
     error.incomplete = definition.get("incomplete", False)
+    error.retryable = retryable
     return error
 
 

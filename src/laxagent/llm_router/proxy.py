@@ -9,16 +9,19 @@ from openai import APIConnectionError, APIStatusError, APITimeoutError, AsyncOpe
 from openai import AsyncAPIResponse
 
 from laxagent.llm_router.config import LLMConfig
+from laxagent.models.errors import retryable_request_error
 
 
 class ProxyError(Exception):
-    def __init__(self, status: int, code: str, message: str):
+    def __init__(self, status: int, code: str, message: str, *, retryable: bool = False):
         super().__init__(message)
         self.status = status
         self.code = code
+        self.retryable = retryable
 
     def body(self) -> dict[str, Any]:
-        return {"error": {"code": self.code, "message": str(self), "type": "router_error"}}
+        return {"error": {"code": self.code, "message": str(self), "type": "router_error",
+                          "retryable": self.retryable}}
 
 
 class LLMProxy:
@@ -46,11 +49,12 @@ class LLMProxy:
         try:
             response = await manager.__aenter__()
         except APIStatusError as exc:
-            raise ProxyError(exc.status_code, "upstream_error", "Upstream rejected the request") from None
+            raise ProxyError(exc.status_code, "upstream_error", "Upstream rejected the request",
+                             retryable=retryable_request_error(exc)) from None
         except APITimeoutError:
-            raise ProxyError(504, "upstream_timeout", "Upstream request timed out") from None
+            raise ProxyError(504, "upstream_timeout", "Upstream request timed out", retryable=True) from None
         except APIConnectionError:
-            raise ProxyError(502, "upstream_unavailable", "Cannot connect to upstream") from None
+            raise ProxyError(502, "upstream_unavailable", "Cannot connect to upstream", retryable=True) from None
 
         try:
             content_type = response.headers.get("content-type", "").split(";", 1)[0].strip().lower()

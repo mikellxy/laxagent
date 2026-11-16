@@ -259,7 +259,7 @@ async def test_graph_load_survives_failed_model_and_resume(chat_api, monkeypatch
         executed.append(args)
         return {"exit_code": 0, "stdout": "restored"}
     monkeypatch.setattr(importlib.import_module("laxagent.tools.builtin.skills"), "run_bash", run)
-    streams = [response("load_skill", {"name": "manual"}, "load"), ModelStream([]),
+    streams = [response("load_skill", {"name": "manual"}, "load"), *[ModelStream([]) for _ in range(3)],
                response("run_skill_scripts", {"name": "manual", "runner": "python3", "script": "scripts/run.py", "args": []}, "run"),
                ModelStream([completed("done")])]
     captured = []

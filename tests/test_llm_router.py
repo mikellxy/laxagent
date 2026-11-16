@@ -37,7 +37,8 @@ class TrackedStream(httpx2.AsyncByteStream):
 
 @pytest.fixture
 def upstream(monkeypatch):
-    state = SimpleNamespace(requests=[], streams=[], clients=[], mode="normal", status=200, content_type="text/event-stream")
+    state = SimpleNamespace(requests=[], streams=[], clients=[], mode="normal", status=200,
+                            content_type="text/event-stream", error_code=None)
 
     async def handle(request):
         state.requests.append(request)
@@ -46,7 +47,7 @@ def upstream(monkeypatch):
         if state.mode == "connect_error":
             raise httpx2.ConnectError("sk-private-test", request=request)
         if state.status != 200:
-            return httpx2.Response(state.status, json={"error": {"message": "sk-private-test"}})
+            return httpx2.Response(state.status, json={"error": {"message": "sk-private-test", "code": state.error_code}})
         stream = TrackedStream(state.mode)
         state.streams.append(stream)
         return httpx2.Response(200, headers={"content-type": state.content_type}, stream=stream)
@@ -116,7 +117,7 @@ def test_output_limit_always_comes_from_config(config_data, upstream, requested_
     assert json.loads(upstream.requests[0].content)["max_output_tokens"] == 32
 
 
-@pytest.mark.parametrize("status", [401, 429, 500])
+@pytest.mark.parametrize("status", [400, 401, 403, 408, 429, 500, 502, 503, 504])
 def test_upstream_http_errors_are_sanitized_and_not_retried(config_data, upstream, status):
     upstream.status = status
     with TestClient(router_module.create_router_app(LLMConfig.model_validate(config_data["llm"]))) as client:
@@ -124,7 +125,17 @@ def test_upstream_http_errors_are_sanitized_and_not_retried(config_data, upstrea
     assert response.status_code == status
     assert "sk-private-test" not in response.text
     assert response.json()["error"]["code"] == "upstream_error"
+    assert response.json()["error"]["retryable"] == (status in (408, 429, 500, 502, 503, 504))
     assert len(upstream.requests) == 1
+
+
+def test_quota_exhaustion_remains_nonretryable_after_router_sanitization(config_data, upstream):
+    upstream.status = 429
+    upstream.error_code = "insufficient_quota"
+    with TestClient(router_module.create_router_app(LLMConfig.model_validate(config_data["llm"]))) as client:
+        response = client.post("/v1/responses", json={"model": "example:model-name", "stream": True})
+    assert response.json()["error"]["retryable"] is False
+    assert "sk-private-test" not in response.text
 
 
 def test_transport_and_midstream_errors(config_data, upstream):
@@ -133,6 +144,7 @@ def test_transport_and_midstream_errors(config_data, upstream):
             upstream.mode = mode
             response = client.post("/v1/responses", json={"model": "example:model-name", "stream": True})
             assert response.status_code == status
+            assert response.json()["error"]["retryable"] is True
             assert "sk-private-test" not in response.text
         upstream.mode = "error"
         response = client.post("/v1/responses", json={"model": "example:model-name", "stream": True})
@@ -150,6 +162,7 @@ def test_malformed_json_and_non_sse_upstream(config_data, upstream):
         response = client.post("/v1/responses", json={"model": "example:model-name", "stream": True})
         assert response.status_code == 502
         assert response.json()["error"]["code"] == "invalid_upstream_response"
+        assert response.json()["error"]["retryable"] is False
 
 
 def test_downstream_disconnect_closes_upstream(config_data, upstream):

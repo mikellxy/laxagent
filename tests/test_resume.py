@@ -23,7 +23,7 @@ async def resume(h, run_id, attempt=0):
 async def test_model_failure_resumes_same_run_with_original_config_and_is_exclusive(chat_api):
     h = chat_api
     captured = []
-    async with client_for([ModelStream([]), ModelStream([completed('recovered')])], captured) as client:
+    async with client_for([ModelStream([]) for _ in range(3)] + [ModelStream([completed('recovered')])], captured) as client:
         h.context.client = client
         run_id = (await h.api.post(chat_path(h), json=payload())).json()['run_id']
         failed = await wait_run(h, run_id)
@@ -40,7 +40,9 @@ async def test_model_failure_resumes_same_run_with_original_config_and_is_exclus
         assert ended['error'] is ended['error_code'] is ended['error_desc'] is None
         current = await h.context.repository.get_run(run_id, original.user_id)
         assert current.thread_id == original.thread_id and current.created_at == original.created_at
-        assert captured[0]['input'] == captured[1]['input'] and captured[0]['tools'] == captured[1]['tools']
+        assert len(captured) == 4
+        assert all(request['input'] == captured[0]['input'] and request['tools'] == captured[0]['tools']
+                   for request in captured[1:])
         _, rows = await message_snapshot(h.context.repository, original.session_id)
         assert rows[0] == rows[1] and [r.role for r in rows[0]] == ['user', 'assistant']
         events = (await h.api.get(f'/api/v1/runs/{run_id}/events')).text
@@ -87,7 +89,7 @@ async def test_cancelled_tool_gets_unknown_results_then_new_tools_execute(chat_a
 @pytest.mark.anyio
 async def test_postgres_checkpoint_survives_connection_and_graph_recreation(chat_api, migrated_database):
     h = chat_api
-    async with client_for([ModelStream([]) for _ in range(4)] + [ModelStream([completed('after restart')])], []) as client:
+    async with client_for([ModelStream([]) for _ in range(12)] + [ModelStream([completed('after restart')])], []) as client:
         h.context.client = client
         async with open_checkpointer(migrated_database) as saver:
             h.manager.graph = build_graph(saver)
@@ -210,7 +212,7 @@ async def test_resume_authorization_latest_status_and_request_validation(chat_ap
 @pytest.mark.anyio
 async def test_repeated_failed_resumes_increment_once_and_reject_stale_attempts(chat_api):
     h = chat_api
-    async with client_for([ModelStream([]), ModelStream([]), ModelStream([completed('ok')])], []) as client:
+    async with client_for([ModelStream([]) for _ in range(6)] + [ModelStream([completed('ok')])], []) as client:
         h.context.client = client
         run_id = (await h.api.post(chat_path(h), json=payload())).json()['run_id']
         await wait_run(h, run_id)
@@ -235,10 +237,10 @@ async def test_resume_does_not_wait_for_old_terminal_events(chat_api, monkeypatc
             await release.wait()
         await publish(event)
     monkeypatch.setattr(h.context.events, 'publish', blocked)
-    async with client_for([ModelStream([]), ModelStream([completed('done')])], []) as client:
+    async with client_for([ModelStream([]) for _ in range(3)] + [ModelStream([completed('done')])], []) as client:
         h.context.client = client
         run_id = (await h.api.post(chat_path(h), json=payload())).json()['run_id']
-        await asyncio.wait_for(publishing.wait(), 3)
+        await asyncio.wait_for(publishing.wait(), 5)
         assert (await h.api.get(f'/api/v1/runs/{run_id}')).json()['status'] == 'failed'
         pending = asyncio.create_task(resume(h, run_id))
         try:
@@ -273,7 +275,7 @@ async def test_resume_survives_http_disconnect_and_can_be_cancelled_again(chat_a
         entered.set()
         await release.wait()
         return await original(*args)
-    async with client_for([ModelStream([]), ModelStream([], wait=generating)], []) as client:
+    async with client_for([ModelStream([]) for _ in range(3)] + [ModelStream([], wait=generating)], []) as client:
         h.context.client = client
         run_id = (await h.api.post(chat_path(h), json=payload())).json()['run_id']
         await wait_run(h, run_id)

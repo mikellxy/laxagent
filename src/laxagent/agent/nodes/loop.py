@@ -69,7 +69,7 @@ async def call_model(state: AgentState, runtime: Runtime[AgentContext]):
                 return {"tool_node_state_uncertain": False,
                         "pending_model_response": {"event": asdict(event), "reasoning": reasoning,
                                                    "diagnostic_path": str(diagnostics.path)}}
-    raise make_run_error("model_stream_ended")
+    raise make_run_error("model_stream_ended", retryable=True)
 
 
 async def save_model(state: AgentState, runtime: Runtime[AgentContext]):

@@ -161,10 +161,10 @@ async def test_old_execution_cleanup_keeps_resumed_worker_registered(chat_api, m
         await publish(event)
 
     monkeypatch.setattr(h.context.events, 'publish', blocked)
-    async with client_for([ModelStream([]), ModelStream([], wait=running)], []) as client:
+    async with client_for([ModelStream([]) for _ in range(3)] + [ModelStream([], wait=running)], []) as client:
         h.context.client = client
         run_id = (await h.api.post(chat_path(h), json=payload())).json()['run_id']
-        await asyncio.wait_for(publishing.wait(), 2)
+        await asyncio.wait_for(publishing.wait(), 5)
         old = h.manager.executions[run_id, 0]
         try:
             response = await h.api.post(f'/api/v1/runs/{run_id}/resume', json={'resume_time': 0})

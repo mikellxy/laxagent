@@ -8,6 +8,7 @@ from openai import APIError, AsyncOpenAI
 
 from laxagent.run_errors import make_run_error
 from laxagent.models.diagnostics import ModelDiagnostics
+from laxagent.models.errors import retryable_provider_error, retryable_request_error
 
 
 @dataclass(frozen=True)
@@ -187,10 +188,11 @@ async def stream_response(
                         raise make_run_error("model_incomplete_content_filter")
                     raise make_run_error("model_incomplete_unspecified")
                 elif kind in ("response.failed", "error"):
-                    raise make_run_error("model_stream_failed")
-        raise make_run_error("model_stream_ended")
-    except (APIError, httpx2.HTTPError):
-        raise make_run_error("model_request_failed") from None
+                    error = event["response"].get("error") if kind == "response.failed" else event
+                    raise make_run_error("model_stream_failed", retryable=retryable_provider_error(error))
+        raise make_run_error("model_stream_ended", retryable=True)
+    except (APIError, httpx2.HTTPError) as exc:
+        raise make_run_error("model_request_failed", retryable=retryable_request_error(exc)) from None
     except (KeyError, TypeError, ValueError, AttributeError):
         raise make_run_error("invalid_model_stream") from None
     finally:

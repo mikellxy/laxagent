@@ -31,7 +31,7 @@ async def test_paths_survive_postgres_resume_and_reset_for_next_run(chat_api, mi
     h = chat_api
     captured = []
     streams = [ModelStream([calls(('write_file', {'path': 'result.txt', 'content': 'done'}))]),
-               ModelStream([]), ModelStream([query()]), ModelStream([completed('recovered')]),
+               *[ModelStream([]) for _ in range(3)], ModelStream([query()]), ModelStream([completed('recovered')]),
                ModelStream([query()]), ModelStream([completed('new run')])]
     async with client_for(streams, captured) as client:
         h.context.client = client
@@ -43,7 +43,7 @@ async def test_paths_survive_postgres_resume_and_reset_for_next_run(chat_api, mi
             h.manager.graph = build_graph(saver)
             assert (await h.api.post(f'/api/v1/runs/{run_id}/resume', json={'resume_time': 0})).status_code == 202
             assert (await wait_run(h, run_id))['status'] == 'success'
-            assert last_paths(captured[3]) == ['result.txt']
+            assert last_paths(captured[5]) == ['result.txt']
             new_id = (await h.api.post(chat_path(h), json=payload())).json()['run_id']
             assert (await wait_run(h, new_id))['status'] == 'success'
             assert last_paths(captured[-1]) == []

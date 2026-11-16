@@ -162,8 +162,9 @@ def _all_tool_definitions() -> list[dict]:
         "type": "function", "name": "bash", "strict": True,
         "description": (
             "Run a non-interactive Bash command in a fresh Linux bubblewrap sandbox, starting in workspace. "
-            "Only workspace changes persist. /tmp is for intermediate files and disappears on exit; "
-            "write all final deliverables to workspace. Host network is shared, system tools are read-only. "
+            "Only workspace changes persist. Create and use /tmp files within the same call; they disappear when it ends. "
+            "Write final deliverables and any scripts or intermediate files needed across calls to workspace. "
+            "Host network is shared, system tools are read-only. "
             "No shell state or background processes survive a call. timeout_seconds=null uses 120s (max 300s). "
             "Nonzero command exits are returned with output. Each output stream retains at most 32 KiB "
             "of source bytes (head and tail) plus a truncation marker. Never automatically retry side effects."

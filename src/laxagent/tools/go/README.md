@@ -1,6 +1,6 @@
 # 沙箱文件工具
 
-当前阶段已迁移 `read_file`、`write_file`、`edit_file`，其他工具、系统提示词和部署流程尚未切换。
+`read_file`、`write_file`、`edit_file` 使用 Go 二进制；bash 共用挂载配置，默认目录为 `/user/project/{project_id}`。`load_skill` 返回入口内容及沙箱绝对路径文件清单，不保存执行快照。
 
 - Go 1.22 或更新版本；仅使用标准库。
 - 从仓库根目录执行 `bash scripts/build_read_file.sh`，生成当前 Go 架构的 Linux 二进制到 `src/laxagent/tools/bin/read_file`。可通过 `GOARCH=amd64` 或 `GOARCH=arm64` 指定部署架构，产物不入库。
@@ -14,4 +14,4 @@
 - Go 写入与编辑共用 `internal/fileops` 的目录描述符、普通文件检查和原子替换；编辑要求目标存在，写入允许创建目标。
 - 执行器不接收 workspace；写入和编辑成功后 Python 侧只将当前项目内的文件登记为预览候选，包括无变化编辑，技能、其他项目和删除操作不登记。
 
-相关单元测试：在本目录运行 `go test ./internal/readfile ./internal/writefile ./internal/editfile ./internal/fileops`；在仓库根目录运行 `uv run pytest tests/test_read_file.py tests/test_write_file.py tests/test_edit_file.py`。Go 测试覆盖分页、匹配规则和文件操作，Linux 环境额外验证目录描述符和父目录创建；Python 测试隔离进程调用，验证工具适配、挂载参数和结果协议。真实 bwrap 与全仓测试留到整体迁移完成后执行。
+相关单元测试：在本目录运行 `go test ./internal/readfile ./internal/writefile ./internal/editfile ./internal/fileops`；在仓库根目录运行 `uv run pytest tests/test_read_file.py tests/test_write_file.py tests/test_edit_file.py`。Go 测试覆盖分页、匹配规则和文件操作，Linux 环境额外验证目录描述符和父目录创建；Python 测试隔离进程调用，验证工具适配、挂载参数和结果协议。Linux 全仓（含真实 bwrap）测试：`uv run pytest -m ""`。部署会在目标平台构建三个二进制，并通过 `scripts/probe_file_tools.py` 验证读写、编辑与 bash 路径互通。

@@ -38,7 +38,7 @@ npm --prefix "$SRC/frontend" run build
 ssh_with "mkdir -p '$DEST' '$DEST/config'"
 
 rsync -az --delete \
-  --exclude .git --exclude .venv --exclude __pycache__ \
+  --exclude .git --exclude .venv --exclude __pycache__ --exclude /src/laxagent/tools/bin/ \
   --exclude '*.pyc' --exclude '*.pyo' --exclude .pytest_cache \
   --exclude '*.swp' --exclude .DS_Store \
   --exclude node_modules --exclude test-results --exclude playwright-report \
@@ -67,7 +67,7 @@ else
   echo "warning: config/config.json not found, VM keeps its existing config" >&2
 fi
 
-ssh_with "cd '$DEST' && ~/.local/bin/uv sync"
+ssh_with "cd '$DEST' && bash scripts/build_file_tools.sh && ~/.local/bin/uv sync && ~/.local/bin/uv run --no-sync python scripts/probe_file_tools.py"
 
 echo
 echo "deployed to VM '$VM_NAME':~/code/laxagent"

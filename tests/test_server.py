@@ -231,7 +231,7 @@ def test_chat_returns_before_model_finishes_and_sse_disconnect_does_not_cancel(c
             return user_id, session.id
 
     async def cleanup():
-        async with EventStore.connect("nats://127.0.0.1:4222") as store:
+        async with EventStore.connect(config_data["nats"]["url"]) as store:
             await store.js.delete_stream(store.stream_name(run_id))
 
     with ThreadingHTTPServer(("127.0.0.1", 0), Upstream) as upstream:

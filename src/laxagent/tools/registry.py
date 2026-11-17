@@ -128,7 +128,7 @@ def _all_tool_definitions() -> list[dict]:
         "type": "function", "name": "read_file", "strict": True,
         "description": (
             "Read UTF-8 text inside a Linux sandbox using an absolute path. "
-            "User projects are under /user/project and skills under /user/skills; no skill_name argument. "
+            "User projects are under /user/project and skills under /user/skills. "
             "No '..' or symlinks. At most 2000 lines / 50 KiB. "
             "Offsets count original bytes including LF/CRLF; characters are never split. "
             "If eof=false, continue at last_line_no+1, byte 1 when last_line_complete=true; "
@@ -139,7 +139,7 @@ def _all_tool_definitions() -> list[dict]:
         "type": "function", "name": "write_file", "strict": True,
         "description": (
             "Write UTF-8 text inside a Linux sandbox using an absolute path, creating missing parents. "
-            "User projects are under /user/project and skills under /user/skills; no skill_name argument. "
+            "User projects are under /user/project and skills under /user/skills. "
             "operation=write creates or atomically overwrites. operation=delete deletes ordinary files, "
             "requires content=null, and cannot delete directories. Missing files count as deleted. "
             "No '..' or symlinks. Read existing files before overwriting them. "
@@ -150,7 +150,7 @@ def _all_tool_definitions() -> list[dict]:
         "type": "function", "name": "edit_file", "strict": True,
         "description": (
             "Edit existing UTF-8 text inside a Linux sandbox using an absolute path. Read it first. "
-            "User projects are under /user/project and skills under /user/skills; no skill_name argument. "
+            "User projects are under /user/project and skills under /user/skills. "
             "No '..' or symlinks. "
             "Each nonempty old_text must uniquely "
             "match the original file, and matched byte ranges must not overlap. Exact matching takes priority; "

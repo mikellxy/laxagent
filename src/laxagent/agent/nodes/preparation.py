@@ -62,7 +62,7 @@ async def prepare(state: AgentState, runtime: Runtime[AgentContext]):
         appendix=state.get("appendix", []),
         expected_seq=state.get("next_msg_seq"), replay_safe=True,
     )
-    messages = [{"role": "system", "content": system_prompt(workspace, state.get("user_configs"), skills)}, *messages]
+    messages = [{"role": "system", "content": system_prompt(str(layout.get_sandbox_project_workdir(str(state["project_id"]))), state.get("user_configs"), skills)}, *messages]
     return {
         "workspace": workspace, "pending_tool_calls": [],
         "model_input": messages_to_input(messages),

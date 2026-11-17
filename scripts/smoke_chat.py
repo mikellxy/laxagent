@@ -103,7 +103,7 @@ def main():
     parser.add_argument("--config", type=Path, default=Path("config/config.json"))
     parser.add_argument("--base-url")
     parser.add_argument("--model")
-    parser.add_argument("--query", default='请调用 read_file 读取 workspace 的 hello.txt 第 1 行，从第 1 字节开始，共读 1 行。参数省略 skill_name 字段，不要传字符串 "null"，然后回复文件内容。')
+    parser.add_argument("--query", default='请调用 read_file 读取 workspace 的 hello.txt 第 1 行，从第 1 字节开始，共读 1 行。使用当前 workspace 下的沙箱绝对路径，然后回复文件内容。')
     args = parser.parse_args()
     try:
         asyncio.run(smoke(args))

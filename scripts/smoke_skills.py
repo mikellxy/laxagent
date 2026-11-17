@@ -31,14 +31,17 @@ async def smoke(args):
         async with db.transaction() as tx:
             assert await tx.scalar(select(Run.id).where(Run.status.in_(["waiting", "running"])).limit(1)) is None, \
                 "Wait for existing active runs before starting this smoke test"
-    ports = [free_port(), free_port()]
-    while ports[0] == ports[1]:
-        ports[1] = free_port()
+    ports = []
+    while len(ports) < 3:
+        port = free_port()
+        if port not in ports:
+            ports.append(port)
     user_id, marker = str(uuid4()), "skill-smoke-" + uuid4().hex
     with tempfile.TemporaryDirectory(prefix="laxagent-skills-smoke-") as temporary:
         root = Path(temporary)
         raw = json.loads(args.config.read_text())
-        raw["api_server"]["port"], raw["llm_router"]["port"] = ports
+        raw["api_server"]["port"], raw["llm_router"]["port"] = ports[:2]
+        raw.setdefault("eval_server", {})["port"] = ports[2]
         if config.frontend:
             raw["frontend"]["dist_dir"] = config.frontend.dist_dir
         private_config = root / "config.json"
@@ -69,20 +72,26 @@ async def smoke(args):
                         "配套 scripts/main.py 的初始完整内容如下：\n" + script +
                         "\n创建后用 read_file 读取脚本，再用 edit_file 将两处 BEFORE 分别改为 " + marker +
                         "（每处提供足够上下文确保匹配唯一）。用 write_file 创建 obsolete.txt，再用 delete 操作删除它。"
-                        "最后 load_skill smoke-demo，并用 run_skill_scripts 的 python3 执行 scripts/main.py，"
-                        "args=[\"{workspace}/skill-result.txt\"]。确认成功后简短回复。不要用 bash 替代这些工具。"
+                        "最后 load_skill smoke-demo，并用 bash 调用 python3 执行 /user/skills/smoke-demo/scripts/main.py，"
+                        "输出参数使用当前 workspace 的绝对路径加 /skill-result.txt。文件维护使用文件工具，bash 只用于执行脚本。确认成功后用独立段落的 workspace 链接展示结果文件。"
                     )
                     second_id, events = await chat_round(api, session_id, config.llm.default_model, query)
                     tools = [e["content"].get("tool_name") for e in events if e["type"] == "tool_end"]
-                    assert {"load_skill", "write_file", "read_file", "edit_file", "run_skill_scripts"} <= set(tools)
+                    assert {"load_skill", "write_file", "read_file", "edit_file", "bash"} <= set(tools)
                     assert (workspace / "skill-result.txt").read_text() == marker
                     skill = get_skills_dir(user_id) / "smoke-demo"
                     assert not (skill / "obsolete.txt").exists()
                     assert marker in (skill / "scripts/main.py").read_text()
                     assert any(e["type"] == "tool_end" and e["content"].get("tool_name") == "load_skill"
                                and e["content"].get("result", {}).get("name") == "skill-creator" for e in events)
-                    assert any(e["type"] == "tool_end" and e["content"].get("tool_name") == "run_skill_scripts"
+                    assert any(e["type"] == "tool_end" and e["content"].get("tool_name") == "bash"
                                and e["content"].get("result", {}).get("exit_code") == 0 for e in events)
+                    preview = await api.get(f"/api/v1/sessions/{session_id}/workspace-files/preview",
+                                            params={"path": "skill-result.txt"})
+                    assert preview.status_code == 200 and preview.json()["text"] == marker
+                    assert any(e["type"] == "tool_end" and e["content"].get("tool_name") == "load_skill"
+                               and "/user/skills/smoke-demo/SKILL.md" in e["content"].get("result", {}).get("files", [])
+                               for e in events)
                     print(json.dumps({"status": "PASS", "user_id": user_id, "session_id": session_id,
                                       "run_ids": [first_id, second_id], "tool_calls": tools}), flush=True)
             finally:

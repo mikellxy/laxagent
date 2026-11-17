@@ -5,6 +5,9 @@
 !alembic.ini
 !src/
 !src/**
+!scripts/
+!scripts/build*_file*.sh
+!scripts/probe_file_tools.py
 !migrations/
 !migrations/**
 !config/
@@ -24,3 +27,5 @@ frontend/dist/
 frontend/test-results/
 frontend/playwright-report/
 frontend/*.tsbuildinfo
+
+src/laxagent/tools/bin/

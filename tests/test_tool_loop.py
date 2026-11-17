@@ -24,6 +24,9 @@ from test_agent import MemoryEvents, state
 from laxagent.web_search import WebSearchService
 
 
+pytestmark = pytest.mark.sandbox_linux
+
+
 @pytest.fixture(autouse=True)
 def workspace_file(conversation):
     workspace = get_project_workdir(conversation["user_id"], conversation["project_id"])
@@ -31,7 +34,8 @@ def workspace_file(conversation):
     (workspace / "hello.txt").write_text(Path("tests/fixtures/workspace/hello.txt").read_text(), encoding="utf-8")
 
 
-def tool_response(paths=("hello.txt", "hello.txt")):
+def tool_response(paths=("hello.txt", "hello.txt"), *, project_id=1):
+    paths = [f"/user/project/{project_id}/{path}" if not path.startswith("/") else path for path in paths]
     response = completed("")
     response["response"]["output"] = [
         {"type": "reasoning", "id": "rs_test", "summary": [], "encrypted_content": "opaque"},
@@ -46,7 +50,7 @@ def tool_response(paths=("hello.txt", "hello.txt")):
 @pytest.mark.anyio
 @pytest.mark.parametrize("search_status", [200, 401])
 async def test_search_dependency_results_and_checkpoints(repository, conversation, search_status):
-    first = tool_response(("unused",))
+    first = tool_response(("unused",), project_id=conversation["project_id"])
     call = first["response"]["output"][1]
     call.update(name="web_search", arguments=json.dumps({"query": "文档"}))
     captured, events = [], MemoryEvents()
@@ -90,7 +94,7 @@ async def test_multiple_calls_one_assistant_and_sequential_tool_commits(reposito
                     assert json.loads(row.content) == {k: item["content"][k] for k in ("result", "error_code")}
             await super().publish(item)
 
-    first = tool_response()
+    first = tool_response(project_id=conversation["project_id"])
     streams = [ModelStream([first]), ModelStream([completed("读完了")])]
     sources = list(streams)
     captured, events = [], CheckingEvents()
@@ -142,8 +146,9 @@ async def test_multiple_calls_one_assistant_and_sequential_tool_commits(reposito
 async def test_write_edit_read_round_trip(repository, conversation, writer):
     text = "中文🙂\r\n第二行"
     edited = "中文🙂\r\n改好了"
-    path = "generated/nested/text.txt"
-    response = tool_response((path, path, path))
+    relative = "generated/nested/text.txt"
+    path = f"/user/project/{conversation['project_id']}/{relative}"
+    response = tool_response((path, path, path), project_id=conversation["project_id"])
     write_call = response["response"]["output"][1]
     write_call["name"] = writer
     write_call["arguments"] = json.dumps({"path": path, "content": text} if writer == "write_file" else {
@@ -157,16 +162,16 @@ async def test_write_edit_read_round_trip(repository, conversation, writer):
     })
     read_call = response["response"]["output"][3]
     read_call["arguments"] = json.dumps({
-        "path": "generated/nested/text.txt", "start_line_no": 1, "start_byte_no": 1, "total_lines": 10,
+        "path": path, "start_line_no": 1, "start_byte_no": 1, "total_lines": 10,
     })
     events, captured = MemoryEvents(), []
     streams = [ModelStream([response]), ModelStream([completed("写入并读取成功")])]
     async with client_for(streams, captured) as client:
         result = await run_agent(build_graph(), state(conversation), AgentContext(client, events, repository))
     workspace = get_project_workdir(conversation["user_id"], conversation["project_id"])
-    assert (workspace / path).read_bytes() == edited.encode()
+    assert (workspace / relative).read_bytes() == edited.encode()
     assert {tool["name"] for tool in captured[0]["tools"]} == {
-        "read_file", "write_file", "edit_file", "bash", "load_skill", "run_skill_scripts", "ask_user_question", "list_written_files",
+        "read_file", "write_file", "edit_file", "bash", "load_skill", "ask_user_question", "list_written_files",
         "read_appendix", "ask_appendices",
     }
     _, tables = await message_snapshot(repository, conversation["session_id"])
@@ -205,7 +210,7 @@ async def test_written_file_survives_result_persistence_or_event_failure(reposit
     workspace = get_project_workdir(conversation["user_id"], conversation["project_id"])
     if tool == "edit_file":
         (workspace / "written.txt").write_bytes(b"old")
-    response = tool_response(("written.txt", "never.txt"))
+    response = tool_response(("written.txt", "never.txt"), project_id=conversation["project_id"])
     for call in response["response"]["output"][1:]:
         path = json.loads(call["arguments"])["path"]
         call["name"] = tool
@@ -240,7 +245,7 @@ async def test_written_file_survives_result_persistence_or_event_failure(reposit
 
 @pytest.mark.anyio
 async def test_tool_error_is_persisted_and_other_calls_continue(repository, conversation):
-    streams = [ModelStream([tool_response(("missing.txt", "hello.txt"))]), ModelStream([completed("ok")])]
+    streams = [ModelStream([tool_response(("missing.txt", "hello.txt"), project_id=conversation["project_id"])]), ModelStream([completed("ok")])]
     events, captured = MemoryEvents(), []
     async with client_for(streams, captured) as client:
         result = await run_agent(build_graph(), state(conversation), AgentContext(client, events, repository))
@@ -257,7 +262,7 @@ async def test_tool_error_is_persisted_and_other_calls_continue(repository, conv
 @pytest.mark.parametrize("fail_at,expected_count", [("tool_start", 2), ("tool_end", 3)])
 async def test_tool_publish_failure_stops_without_second_call(repository, conversation, fail_at, expected_count):
     events, captured = MemoryEvents(fail_at), []
-    async with client_for(ModelStream([tool_response()]), captured) as client:
+    async with client_for(ModelStream([tool_response(project_id=conversation["project_id"])]), captured) as client:
         with pytest.raises(RunError, match="Event storage unavailable"):
             await run_agent(build_graph(), state(conversation), AgentContext(client, events, repository))
     next_seq, tables = await message_snapshot(repository, conversation["session_id"])
@@ -275,7 +280,7 @@ async def test_tool_transaction_failure_rolls_back_and_never_emits_end(repositor
     event.listen(SessionMessage, "before_insert", fail)
     events = MemoryEvents()
     try:
-        async with client_for(ModelStream([tool_response()]), []) as client:
+        async with client_for(ModelStream([tool_response(project_id=conversation["project_id"])]), []) as client:
             with pytest.raises(RunError, match="Run data operation failed"):
                 await run_agent(build_graph(), state(conversation), AgentContext(client, events, repository))
     finally:
@@ -296,7 +301,7 @@ async def test_cancelling_tool_does_not_persist_partial_result(monkeypatch, repo
 
     monkeypatch.setattr("laxagent.agent.nodes.loop.execute_tool", wait)
     events = MemoryEvents()
-    async with client_for(ModelStream([tool_response()]), []) as client:
+    async with client_for(ModelStream([tool_response(project_id=conversation["project_id"])]), []) as client:
         task = asyncio.create_task(run_agent(build_graph(), state(conversation), AgentContext(client, events, repository)))
         await asyncio.wait_for(entered.wait(), 2)
         task.cancel()
@@ -312,7 +317,7 @@ async def test_cancelling_tool_does_not_persist_partial_result(monkeypatch, repo
 async def test_repeated_tool_requests_stop_at_graph_limit(repository, conversation):
     streams = []
     for index in range(25):
-        response = tool_response(("hello.txt",))
+        response = tool_response(("hello.txt",), project_id=conversation["project_id"])
         response["response"]["output"][-1]["call_id"] = f"c{index}"
         streams.append(ModelStream([response]))
     events, captured = MemoryEvents(), []
@@ -331,7 +336,7 @@ async def test_unlimited_tool_loop_completes_beyond_old_graph_limit(repository, 
 
     streams = []
     for index in range(30):
-        response = tool_response(("hello.txt",))
+        response = tool_response(("hello.txt",), project_id=conversation["project_id"])
         response["response"]["output"][-1]["call_id"] = f"c{index}"
         streams.append(ModelStream([response]))
     streams.append(ModelStream([completed("读完了")]))
@@ -353,7 +358,7 @@ async def test_shutdown_waits_for_bash_cleanup(repository, conversation):
     from test_bash_linux import assert_gone, wait_file
 
     token = "laxagent-" + uuid4().hex
-    response = tool_response(("unused",))
+    response = tool_response(("unused",), project_id=conversation["project_id"])
     call = response["response"]["output"][-1]
     call["name"] = "bash"
     call["arguments"] = json.dumps({

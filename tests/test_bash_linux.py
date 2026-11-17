@@ -22,14 +22,16 @@ pytestmark = [pytest.mark.sandbox_linux, pytest.mark.anyio]
 
 
 @pytest.fixture
-def area():
+def area(monkeypatch):
     assert sys.platform == "linux", "Run real sandbox acceptance in Lima/Linux"
     assert os.access(backend.BWRAP, os.X_OK), "Install bubblewrap and configure AppArmor first"
     # A home-based root proves isolation is not merely a side effect of replacing /tmp.
     with tempfile.TemporaryDirectory(prefix=".laxagent-test-", dir=pwd.getpwuid(os.getuid()).pw_dir) as directory:
         root = Path(directory)
-        workspace = root / "workspace"
-        workspace.mkdir()
+        monkeypatch.setattr(Path, "home", classmethod(lambda cls: root))
+        workspace = root / "laxagent" / "test-user" / "project" / "42"
+        workspace.mkdir(parents=True)
+        (workspace.parent.parent / "skills").mkdir()
         yield root, workspace
 
 
@@ -71,7 +73,7 @@ async def test_mounts_environment_and_persistent_deliverables(area, monkeypatch)
     monkeypatch.setenv("PYTHONPATH", str(root))
     command = f"""
 set -eu
-test "$PWD" = {shlex.quote(str(workspace))}
+test "$PWD" = /user/project/42
 test ! -e {shlex.quote(str(outside))}
 test ! -e link
 test ! -e /proc/1/root{shlex.quote(str(outside))}
@@ -257,10 +259,10 @@ async def test_status_is_drained_even_after_process_exit(area, monkeypatch):
 async def test_parent_crash_cleans_sandbox(area):
     token = "laxagent-" + uuid4().hex
     command = f"touch ready; setsid bash -c 'trap \"\" TERM; while :; do sleep 1; done' {token} & wait"
-    code = ("import asyncio,sys; from laxagent.tools.builtin.bash import BashArgs,bash; "
-            "from unittest.mock import Mock; from laxagent.tools.context import ToolContext; "
-            "asyncio.run(bash(ToolContext('test-user',Mock(),sys.argv[1]),"
-            "BashArgs(command=sys.argv[2],timeout_seconds=None)))")
+    code = ("import sys; from pathlib import Path; from laxagent.sandbox.bubblewrap import run_bash; "
+            "root=Path(sys.argv[1]).parent.parent; "
+            "run_bash(((root/'project','/user/project'),(root/'skills','/user/skills')), "
+            "'/user/project/42',sys.argv[2])")
     worker = await asyncio.create_subprocess_exec(sys.executable, "-c", code, str(area[1]), command,
                                                    stdout=asyncio.subprocess.DEVNULL, stderr=asyncio.subprocess.DEVNULL)
     try:

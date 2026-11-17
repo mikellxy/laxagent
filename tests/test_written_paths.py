@@ -9,7 +9,12 @@ from test_chat import chat_api, chat_path, payload, wait_run
 from test_questions import QUESTIONS, answer_body, paused
 
 
-def calls(*items):
+pytestmark = pytest.mark.sandbox_linux
+
+
+def calls(*items, project_id=1):
+    items = [(name, {**args, "path": f"/user/project/{project_id}/{args['path']}"} if "path" in args else args)
+             for name, args in items]
     response = completed('')
     response['response']['output'] = [
         {'type': 'function_call', 'call_id': f'call_{i}', 'id': f'fc_{i}', 'name': name, 'arguments': json.dumps(args)}
@@ -19,7 +24,7 @@ def calls(*items):
 
 
 def query():
-    return calls(('list_written_files', {}))
+    return calls(('list_written_files', {}), project_id=1)
 
 
 def last_paths(request):
@@ -30,7 +35,7 @@ def last_paths(request):
 async def test_paths_survive_postgres_resume_and_reset_for_next_run(chat_api, migrated_database):
     h = chat_api
     captured = []
-    streams = [ModelStream([calls(('write_file', {'path': 'result.txt', 'content': 'done'}))]),
+    streams = [ModelStream([calls(('write_file', {'path': 'result.txt', 'content': 'done'}), project_id=h.conversation['project_id'])]),
                *[ModelStream([]) for _ in range(3)], ModelStream([query()]), ModelStream([completed('recovered')]),
                ModelStream([query()]), ModelStream([completed('new run')])]
     async with client_for(streams, captured) as client:
@@ -59,7 +64,7 @@ async def test_query_after_question_sees_preceding_writes_and_noop_edits(chat_ap
     first = calls(('write_file', {'path': './a.txt', 'content': 'same'}),
                   ('ask_user_question', {'questions': QUESTIONS}),
                   ('edit_file', {'path': 'a.txt', 'edits': [{'old_text': 'same', 'new_text': 'same'}]}),
-                  ('write_file', {'path': 'empty.txt', 'content': ''}), ('list_written_files', {}))
+                  ('write_file', {'path': 'empty.txt', 'content': ''}), ('list_written_files', {}), project_id=h.conversation['project_id'])
     async with client_for([ModelStream([first]), ModelStream([completed('done')])], captured) as client:
         h.context.client = client
         run_id = (await h.api.post(chat_path(h), json=payload())).json()['run_id']

@@ -22,16 +22,6 @@ def file_path(path: str) -> Path:
     return relative
 
 
-def encode_text(text: str) -> bytes:
-    try:
-        content = text.encode("utf-8")
-    except UnicodeEncodeError:
-        raise ToolError("NOT_UTF8_TEXT") from None
-    if b"\x00" in content:
-        raise ToolError("NOT_UTF8_TEXT")
-    return content
-
-
 def file_error_code(exc: OSError, fallback: str) -> str:
     return {errno.EACCES: "ACCESS_DENIED", errno.EPERM: "ACCESS_DENIED",
             errno.EROFS: "ACCESS_DENIED", errno.ELOOP: "INVALID_PATH",
@@ -72,16 +62,6 @@ def file_mode(directory: int, name: str, *, allow_missing: bool) -> int:
     if not stat.S_ISREG(info.st_mode):
         raise ToolError("NOT_A_FILE")
     return info.st_mode & 0o777
-
-
-def read_bytes(directory: int, name: str) -> bytes:
-    # Check before opening to reject sockets/devices; fstat checks again after open.
-    file_mode(directory, name, allow_missing=False)
-    fd = os.open(name, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=directory)
-    with os.fdopen(fd, "rb") as file:
-        if not stat.S_ISREG(os.fstat(file.fileno()).st_mode):
-            raise ToolError("NOT_A_FILE")
-        return file.read()
 
 
 def atomic_replace(directory: int, name: str, content: bytes, *, allow_missing: bool = True) -> None:

@@ -1,8 +1,6 @@
 import asyncio
 from dataclasses import replace
-import importlib
 import json
-import os
 from pathlib import Path
 from uuid import uuid4
 
@@ -10,7 +8,6 @@ import pytest
 
 from laxagent import layout
 from laxagent.skills import builtin_snapshots, initialize_skills, parse_metadata, skill_catalog, SkillError
-from laxagent.tools.builtin.skills import LoadSkillArgs, load_skill
 from laxagent.tools.executor import execute_tool
 from laxagent.tools.registry import tool_definitions
 from tool_helpers import tool_context
@@ -35,42 +32,6 @@ def skill_context(tmp_path):
 
 async def call(context, tool, **args):
     return await execute_tool(tool, json.dumps(args), context=context)
-
-
-async def write(context, path, content, name="example", **extra):
-    return await call(context, "write_file", skill_name=name, path=path, content=content, **extra)
-
-
-@pytest.mark.anyio
-@pytest.mark.parametrize("scope", [{}, {"skill_name": None}, {"skill_name": "null"}])
-async def test_null_scope_uses_workspace(skill_context, scope):
-    context = skill_context
-    workspace = Path(context.workspace)
-    # Workspace SKILL.md is ordinary text, with no skill metadata validation.
-    result = await call(context, "write_file", **scope, path="SKILL.md", content="old")
-    assert result == {"error_code": None, "result": {"path": "SKILL.md", "bytes_written": 3}}
-    assert (workspace / "SKILL.md").read_text() == "old"
-    assert context.written_workspace_paths == ["SKILL.md"]
-
-    context.written_workspace_paths.clear()
-    result = await call(context, "edit_file", **scope, path="SKILL.md",
-                        edits=[{"old_text": "old", "new_text": "new"}])
-    assert result["error_code"] is None
-    assert "skill_name" not in result["result"] and "files" not in result["result"]
-    assert (workspace / "SKILL.md").read_text() == "new"
-    assert context.written_workspace_paths == ["SKILL.md"]
-
-    result = await call(context, "read_file", **scope, path="SKILL.md",
-                        start_line_no=1, start_byte_no=1, total_lines=10)
-    assert result["error_code"] is None
-    assert result["result"]["text"] == "new"
-    assert not (layout.get_skills_dir(context.user_id) / "null").exists()
-
-    # Selecting workspace preserves the existing prohibition on workspace deletion.
-    (workspace / "page.html").write_text("keep")
-    result = await call(context, "write_file", **scope, path="page.html", operation="delete", content=None)
-    assert result["error_code"] == "INVALID_ARGUMENTS"
-    assert (workspace / "page.html").read_text() == "keep"
 
 
 @pytest.mark.parametrize("content", [
@@ -110,92 +71,6 @@ async def test_seed_is_concurrent_idempotent_and_never_repairs_existing_skill(sk
 
 
 @pytest.mark.anyio
-async def test_create_read_edit_delete_and_metadata_atomicity(skill_context):
-    context = skill_context
-    result = await write(context, "scripts/run.py", "print('old')")
-    assert result["result"]["files"] == ["scripts/run.py"]
-    assert skill_catalog(context.user_id) == []
-    assert (await call(context, "load_skill", name="example"))["error_code"] == "INVALID_SKILL_METADATA"
-    assert (await write(context, "SKILL.md", entry()))["error_code"] is None
-    loaded = await call(context, "load_skill", name="example")
-    assert loaded["result"] == {"name": "example", "content": entry(), "files": ["SKILL.md", "scripts/run.py"]}
-    assert json.loads(json.dumps(context.loaded_skills)) == context.loaded_skills
-    read = await call(context, "read_file", skill_name="example", path="scripts/run.py",
-                      start_line_no=1, start_byte_no=1, total_lines=10)
-    assert read["result"]["text"] == "print('old')"
-    result = await call(context, "edit_file", skill_name="example", path="scripts/run.py",
-                        edits=[{"old_text": "old", "new_text": "new"}])
-    assert result["error_code"] is None and result["result"]["files"] == loaded["result"]["files"]
-    for tool, arguments in [
-        ("write_file", {"content": entry("wrong")}),
-        ("edit_file", {"edits": [{"old_text": "name: example", "new_text": "name: wrong"}]}),
-    ]:
-        result = await call(context, tool, skill_name="example", path="SKILL.md", **arguments)
-        assert result["error_code"] == "INVALID_SKILL_METADATA"
-        assert load_skill(context, LoadSkillArgs(name="example"))["content"] == entry()
-    for _ in range(2):
-        result = await write(context, "scripts/run.py", None, operation="delete")
-        assert result["error_code"] is None and result["result"]["files"] == ["SKILL.md"]
-    assert (await write(context, "SKILL.md", None, operation="delete"))["error_code"] == "SKILL_ENTRY_REQUIRED"
-    assert (await write(context, "scripts", None, operation="delete"))["error_code"] == "NOT_A_FILE"
-    assert (await call(context, "write_file", path="x", content=None, operation="delete"))["error_code"] == "INVALID_ARGUMENTS"
-    assert (await write(context, "empty", ""))["result"]["bytes_written"] == 0
-    assert (layout.get_skills_dir(context.user_id) / "example/empty").is_file()
-
-
-@pytest.mark.anyio
-async def test_invalid_creation_and_missing_delete_do_not_create_directories(skill_context):
-    context = skill_context
-    assert (await write(context, "SKILL.md", entry("wrong")))["error_code"] == "INVALID_SKILL_METADATA"
-    result = await write(context, "missing/file", None, operation="delete")
-    assert result == {"error_code": None, "result": {
-        "path": "missing/file", "deleted": False, "skill_name": "example", "files": [],
-    }}
-    assert list(layout.get_skills_dir(context.user_id).iterdir()) == []
-
-
-@pytest.mark.anyio
-async def test_catalog_hides_manual_skill_but_allows_explicit_load(skill_context):
-    context = skill_context
-    await write(context, "SKILL.md", entry("auto"), name="auto")
-    await write(context, "SKILL.md", entry("manual", "allow_auto_use: false\n"), name="manual")
-    assert skill_catalog(context.user_id) == [{"name": "auto", "description": "Test purpose"}]
-    assert (await call(context, "load_skill", name="manual"))["error_code"] is None
-    other = replace(context, user_id=str(uuid4()), loaded_skills={})
-    initialize_skills(other.user_id, None)
-    assert (await call(other, "load_skill", name="auto"))["error_code"] == "SKILL_NOT_FOUND"
-
-
-@pytest.mark.anyio
-async def test_skill_paths_links_and_special_files_never_escape(skill_context, tmp_path):
-    context = skill_context
-    await write(context, "SKILL.md", entry())
-    outside = tmp_path / "outside"
-    outside.mkdir()
-    secret = outside / "secret"
-    secret.write_text("private")
-    root = layout.get_skills_dir(context.user_id) / "example"
-    (root / "link").symlink_to(outside, target_is_directory=True)
-    for tool, arguments in [
-        ("write_file", {"content": "changed"}),
-        ("read_file", {"start_line_no": 1, "start_byte_no": 1, "total_lines": 10}),
-        ("edit_file", {"edits": [{"old_text": "private", "new_text": "changed"}]}),
-    ]:
-        for path in ["../outside/secret", "/secret", "link/secret"]:
-            assert (await call(context, tool, skill_name="example", path=path, **arguments))["error_code"] == "INVALID_PATH"
-    assert secret.read_text() == "private"
-    assert (await call(context, "load_skill", name="example"))["error_code"] == "INVALID_SKILL_FILE"
-    (root / "link").unlink()
-    os.link(secret, root / "hardlink")
-    assert (await call(context, "load_skill", name="example"))["error_code"] == "INVALID_SKILL_FILE"
-    (root / "hardlink").unlink()
-    os.mkfifo(root / "fifo")
-    assert (await call(context, "load_skill", name="example"))["error_code"] == "INVALID_SKILL_FILE"
-    for name in ["../example", "x/y", "/example", "x--y"]:
-        assert (await call(context, "load_skill", name=name))["error_code"] == "INVALID_SKILL_NAME"
-
-
-@pytest.mark.anyio
 async def test_run_skill_scripts_is_removed(tmp_path):
     from laxagent.tools.registry import TOOLS
 
@@ -222,25 +97,21 @@ def test_all_model_schemas_require_every_property():
 
 
 @pytest.mark.anyio
-async def test_graph_load_survives_failed_model_and_resume(chat_api, monkeypatch):
+async def test_graph_reload_after_resume_uses_current_files_without_saved_state(chat_api, monkeypatch):
     h = chat_api
     h.context.builtin_skills_dir = BUILTINS
     context = replace(tool_context("unused"), user_id=h.conversation["user_id"])
     initialize_skills(context.user_id, None)
-    await write(context, "SKILL.md", entry("manual", "allow_auto_use: false\n", "HIDDEN_BODY"), name="manual")
-    await write(context, "scripts/run.py", "print('restored')", name="manual")
+    root = layout.get_skills_dir(context.user_id) / "manual"
+    root.mkdir()
+    (root / "SKILL.md").write_text(entry("manual", "allow_auto_use: false\n", "HIDDEN_BODY"))
     def response(name, args, call_id):
         event = completed("")
         event["response"]["output"] = [{"type": "function_call", "name": name, "arguments": json.dumps(args),
                                        "call_id": call_id, "id": "fc_" + call_id}]
         return ModelStream([event])
-    executed = []
-    def run(*args, **kwargs):
-        executed.append(args)
-        return {"exit_code": 0, "stdout": "restored"}
-    monkeypatch.setattr(importlib.import_module("laxagent.tools.builtin.skills"), "run_bash", run)
     streams = [response("load_skill", {"name": "manual"}, "load"), *[ModelStream([]) for _ in range(3)],
-               response("run_skill_scripts", {"name": "manual", "runner": "python3", "script": "scripts/run.py", "args": []}, "run"),
+               response("load_skill", {"name": "manual"}, "reload"),
                ModelStream([completed("done")])]
     captured = []
     async with client_for(streams, captured) as client:
@@ -250,10 +121,13 @@ async def test_graph_load_survives_failed_model_and_resume(chat_api, monkeypatch
         run_record = await h.context.repository.get_run(run_id, context.user_id)
         config = {"configurable": {"thread_id": run_record.thread_id}}
         checkpoint = await h.graph.aget_state(config)
-        assert checkpoint.values["loaded_skills"]["manual"]["files"] == ["SKILL.md", "scripts/run.py"]
+        assert "loaded_skills" not in checkpoint.values
+        (root / "SKILL.md").write_text(entry("manual", "allow_auto_use: false\n", "UPDATED_BODY"))
         prompt = captured[0]["input"][0]["content"]
         assert '"name": "laxagent"' in prompt and '"name": "skill-creator"' in prompt
         assert "HIDDEN_BODY" not in prompt and '"name": "manual"' not in prompt
         assert (await h.api.post(f"/api/v1/runs/{run_id}/resume", json={"resume_time": 0})).status_code == 202
         assert (await wait_run(h, run_id))["status"] == "success"
-        assert len(executed) == 1
+        outputs = [item["output"] for item in captured[-1]["input"] if item.get("type") == "function_call_output"]
+        assert "UPDATED_BODY" in outputs[-1]
+        assert "/user/skills/manual/SKILL.md" in outputs[-1]

@@ -6,7 +6,7 @@ from uuid import uuid4
 import pytest
 from PIL import Image
 
-from laxagent.layout import get_project_workdir
+from laxagent.layout import get_project_workdir, get_skills_dir
 from laxagent.tools.builtin.edit_file import EditFileArgs, EditFileError, edit_file
 from laxagent.tools.builtin.write_file import WriteFileArgs, write_file
 from laxagent.tools.builtin.list_written_files import ListWrittenFilesArgs, list_written_files
@@ -15,20 +15,26 @@ from test_chat import chat_api
 from tool_helpers import tool_context
 
 
-def test_candidate_paths_are_ordered_deduplicated_and_include_noops(tmp_path):
-    context = replace(tool_context(tmp_path), user_id=str(uuid4()))
+@pytest.mark.anyio
+@pytest.mark.sandbox_linux
+async def test_candidate_paths_are_ordered_deduplicated_and_include_noops(tmp_path):
+    user_id = str(uuid4())
+    tmp_path = get_project_workdir(user_id, 42)
+    tmp_path.mkdir(parents=True)
+    get_skills_dir(user_id).mkdir()
+    context = replace(tool_context(tmp_path), user_id=user_id)
     for path in ['./nested//a.txt', 'b.txt', 'nested/a.txt']:
-        write_file(context, WriteFileArgs(path=path, content='same'))
+        await write_file(context, WriteFileArgs(path="/user/project/42/" + path, content='same'))
     (tmp_path / 'existing.txt').write_text('same')
-    edit_file(context, EditFileArgs(path='existing.txt', edits=[{'old_text': 'same', 'new_text': 'same'}]))
-    edit_file(context, EditFileArgs(path='b.txt', edits=[{'old_text': 'same', 'new_text': ''}]))
+    await edit_file(context, EditFileArgs(path='/user/project/42/existing.txt', edits=[{'old_text': 'same', 'new_text': 'same'}]))
+    await edit_file(context, EditFileArgs(path='/user/project/42/b.txt', edits=[{'old_text': 'same', 'new_text': ''}]))
     with pytest.raises(EditFileError):
-        edit_file(context, EditFileArgs(path='missing', edits=[{'old_text': 'a', 'new_text': 'b'}]))
-    write_file(context, WriteFileArgs(path='empty', content=''))
+        await edit_file(context, EditFileArgs(path='/user/project/42/missing', edits=[{'old_text': 'a', 'new_text': 'b'}]))
+    await write_file(context, WriteFileArgs(path='/user/project/42/empty', content=''))
     assert list_written_files(context, ListWrittenFilesArgs()) == {
         'paths': ['nested/a.txt', 'b.txt', 'existing.txt', 'empty'],
     }
-    write_file(context, WriteFileArgs(skill_name='demo', path='extra.txt', content='skill'))
+    await write_file(context, WriteFileArgs(path='/user/skills/demo/extra.txt', content='skill'))
     assert 'extra.txt' not in context.written_workspace_paths
     result = list_written_files(context, ListWrittenFilesArgs())
     result['paths'].clear()

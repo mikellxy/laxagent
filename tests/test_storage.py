@@ -133,7 +133,7 @@ async def test_preparation_orders_context_and_hides_database_fields(repository, 
     assert result["pending_tool_calls"] == []
     assert result["next_msg_seq"] == 4
     assert result["messages"] == [
-        {"role": "system", "content": system_prompt(result["workspace"])},
+        {"role": "system", "content": system_prompt(f"/user/project/{conversation['project_id']}")},
         {"role": "user", "content": "first"}, {"role": "assistant", "content": "second"},
         {"role": "user", "content": "third"},
     ]

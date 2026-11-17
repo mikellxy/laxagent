@@ -35,6 +35,9 @@ COPY pyproject.toml uv.lock ./
 RUN --mount=type=cache,target=/root/.cache/uv \
     UV_CACHE_DIR=/root/.cache/uv uv sync --locked --no-dev --no-install-project --python /usr/bin/python3
 COPY src/ ./src/
+COPY scripts/build*_file*.sh scripts/probe_file_tools.py ./scripts/
+RUN --mount=type=cache,target=/root/.cache/go-build \
+    GOCACHE=/root/.cache/go-build bash scripts/build_file_tools.sh
 RUN --mount=type=cache,target=/root/.cache/uv \
     UV_CACHE_DIR=/root/.cache/uv uv sync --locked --no-dev --python /usr/bin/python3
 COPY alembic.ini ./

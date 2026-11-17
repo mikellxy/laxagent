@@ -1,19 +1,14 @@
-"""Real Linux/bwrap skill execution; missing sandbox dependencies must fail."""
-
+"""Real file-tool and skill-script workflows in bubblewrap."""
 import asyncio
 from dataclasses import replace
 import json
-import os
 from pathlib import Path
-import pwd
-import sys
-import tempfile
+import shlex
 from uuid import uuid4
 
 import pytest
 
 from laxagent import layout
-from laxagent.sandbox.bubblewrap import BWRAP
 from laxagent.tools.executor import execute_tool
 from tool_helpers import tool_context
 
@@ -21,35 +16,38 @@ pytestmark = [pytest.mark.sandbox_linux, pytest.mark.anyio]
 
 
 @pytest.fixture
-def context(monkeypatch):
-    assert sys.platform == "linux" and os.access(BWRAP, os.X_OK)
-    with tempfile.TemporaryDirectory(prefix=".laxagent-skills-test-", dir=pwd.getpwuid(os.getuid()).pw_dir) as temporary:
-        root = Path(temporary)
-        monkeypatch.setattr(Path, "home", classmethod(lambda cls: root))
-        workspace = root / "workspace"
-        workspace.mkdir()
-        (root / "secret").write_text("private")
-        yield replace(tool_context(workspace), user_id=str(uuid4()))
+def context():
+    user_id = str(uuid4())
+    workspace = layout.get_project_workdir(user_id, 42)
+    workspace.mkdir(parents=True)
+    layout.get_skills_dir(user_id).mkdir()
+    return replace(tool_context(workspace), user_id=user_id)
 
 
 async def call(context, tool, **args):
     return await execute_tool(tool, json.dumps(args), context=context)
 
 
+async def write(context, path, content, operation="write"):
+    return await call(context, "write_file", path=path, content=content, operation=operation)
+
+
 async def setup_skill(context, script):
     for path, content in {
         "SKILL.md": "---\nname: test-skill\ndescription: Exercise the sandbox\n---\nRun scripts/main.py.",
-        "scripts/main.py": script,
-        "references/data.txt": "reference",
+        "scripts/main.py": script, "references/data.txt": "reference",
     }.items():
-        result = await call(context, "write_file", skill_name="test-skill", path=path, content=content)
+        result = await write(context, "/user/skills/test-skill/" + path, content)
         assert result["error_code"] is None, result
-    assert (await call(context, "load_skill", name="test-skill"))["error_code"] is None
+    result = await call(context, "load_skill", name="test-skill")
+    assert result["error_code"] is None, result
+    assert result["result"]["files"] == ["/user/skills/test-skill/" + path for path in
+                                           ["SKILL.md", "references/data.txt", "scripts/main.py"]]
 
 
-async def run(context, args, timeout=None):
-    return await call(context, "run_skill_scripts", name="test-skill", runner="python3",
-                      script="scripts/main.py", args=args, timeout_seconds=timeout)
+async def run(context, args=(), timeout=None):
+    return await call(context, "bash", command=shlex.join([
+        "python3", "/user/skills/test-skill/scripts/main.py", *args]), timeout_seconds=timeout)
 
 
 async def wait_file(path):
@@ -58,75 +56,97 @@ async def wait_file(path):
             await asyncio.sleep(.02)
 
 
-async def test_skill_readonly_mount_resources_workspace_and_literal_arguments(context):
-    await setup_skill(context, '''import json, os, sys
+async def test_skill_files_and_bash_share_paths_and_current_project(context):
+    await setup_skill(context, '''import json, sys
 from pathlib import Path
-assert str(Path.cwd()) == '/skill'
-assert Path('references/data.txt').read_text() == 'reference'
-for target in ['SKILL.md', 'scripts/main.py', 'new.txt']:
-    try:
-        Path(target).write_text('must fail')
-    except OSError:
-        pass
-    else:
-        raise AssertionError('writable skill')
-assert not Path(sys.argv[2]).exists()
-assert not Path(sys.argv[3]).exists()
-Path(sys.argv[1]).write_text(json.dumps(sys.argv[4:]))
-print('verified')
+assert str(Path.cwd()) == '/user/project/42'
+root = Path(__file__).parent.parent
+assert (root / 'references/data.txt').read_text() == 'reference'
+(root / 'references/data.txt').write_text('changed by bash')
+Path('result.json').write_text(json.dumps(sys.argv[1:]))
+print('BEFORE')
 ''')
-    original = layout.get_skills_dir(context.user_id) / "test-skill"
-    output = Path(context.workspace) / "out file.json"
-    result = await run(context, ["{workspace}/out file.json", str(original), str(Path.home() / "secret"),
-                                 "$(touch hacked)", "; touch hacked", "a|b", "中文"])
+    path = "/user/skills/test-skill/scripts/main.py"
+    read = await call(context, "read_file", path=path, start_line_no=1, start_byte_no=1, total_lines=100)
+    assert "BEFORE" in read["result"]["text"]
+    edited = await call(context, "edit_file", path=path, edits=[{"old_text": "BEFORE", "new_text": "AFTER"}])
+    assert edited["error_code"] is None
+    args = ["$(touch hacked)", "; touch hacked", "a|b", "中文"]
+    result = await run(context, args)
     assert result["error_code"] is None and result["result"]["exit_code"] == 0, result
-    assert json.loads(output.read_text()) == ["$(touch hacked)", "; touch hacked", "a|b", "中文"]
+    assert result["result"]["stdout"] == "AFTER\n"
+    assert json.loads((Path(context.workspace) / "result.json").read_text()) == args
     assert not (Path(context.workspace) / "hacked").exists()
-    assert (original / "SKILL.md").read_text().startswith("---")
+    assert (layout.get_skills_dir(context.user_id) / "test-skill/references/data.txt").read_text() == "changed by bash"
+    assert context.written_workspace_paths == []
+    # Entry edits are ordinary file operations; validation happens when loading.
+    assert (await write(context, "/user/skills/test-skill/SKILL.md", "invalid"))["error_code"] is None
+    assert (await call(context, "load_skill", name="test-skill"))["error_code"] == "INVALID_SKILL_METADATA"
+    for _ in range(2):
+        assert (await write(context, "/user/skills/test-skill/SKILL.md", None, "delete"))["error_code"] is None
+    assert (await call(context, "load_skill", name="test-skill"))["error_code"] == "INVALID_SKILL_METADATA"
 
 
-async def test_timeout_and_cancel_cleanup_leave_completed_workspace_writes(context):
-    await setup_skill(context, '''import sys, time
+async def test_timeout_cancel_and_live_resources(context):
+    await setup_skill(context, '''import time
 from pathlib import Path
-Path(sys.argv[1]).write_text('started')
+Path('started').write_text('started')
 print('partial', flush=True)
-time.sleep(30)
-Path(sys.argv[2]).write_text('should not finish')
+while not Path('release').exists(): time.sleep(.02)
+Path('result').write_text(Path('/user/skills/test-skill/references/data.txt').read_text())
 ''')
     workspace = Path(context.workspace)
-    result = await run(context, ["{workspace}/started", "{workspace}/finished"], timeout=1)
+    result = await run(context, timeout=1)
     assert result["error_code"] == "BASH_TIMEOUT", result
     assert result["result"]["stdout"] == "partial\n"
-    assert (workspace / "started").read_text() == "started" and not (workspace / "finished").exists()
+    assert (workspace / "started").exists() and not (workspace / "result").exists()
     (workspace / "started").unlink()
-    task = asyncio.create_task(run(context, ["{workspace}/started", "{workspace}/finished"]))
-    await wait_file(workspace / "started")
-    task.cancel()
-    await asyncio.sleep(0)
-    task.cancel()
-    with pytest.raises(asyncio.CancelledError):
-        await asyncio.wait_for(task, 5)
-    assert not (workspace / "finished").exists()
-
-
-async def test_running_script_reads_same_snapshot_after_user_skill_update(context):
-    await setup_skill(context, '''import sys, time
-from pathlib import Path
-Path(sys.argv[1]).write_text('started')
-while not Path(sys.argv[2]).exists(): time.sleep(.02)
-Path(sys.argv[3]).write_text(Path('references/data.txt').read_text())
-''')
-    workspace = Path(context.workspace)
-    task = asyncio.create_task(run(context, ["{workspace}/started", "{workspace}/release", "{workspace}/result"]))
+    task = asyncio.create_task(run(context))
     try:
         await wait_file(workspace / "started")
-        changed = await call(context, "write_file", skill_name="test-skill", path="references/data.txt", content="new")
-        assert changed["error_code"] is None
-        (workspace / "release").touch()
-        result = await asyncio.wait_for(task, 5)
-        assert result["error_code"] is None and result["result"]["exit_code"] == 0, result
-        assert (workspace / "result").read_text() == "reference"
-        assert (await run(context, []))["error_code"] == "SKILL_CHANGED"
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await asyncio.wait_for(task, 5)
+        assert not (workspace / "result").exists()
     finally:
         task.cancel()
         await asyncio.gather(task, return_exceptions=True)
+    (workspace / "started").unlink()
+    task = asyncio.create_task(run(context))
+    try:
+        await wait_file(workspace / "started")
+        assert (await write(context, "/user/skills/test-skill/references/data.txt", "live"))["error_code"] is None
+        (workspace / "release").touch()
+        result = await asyncio.wait_for(task, 5)
+        assert result["result"]["exit_code"] == 0, result
+        assert (workspace / "result").read_text() == "live"
+    finally:
+        task.cancel()
+        await asyncio.gather(task, return_exceptions=True)
+
+
+async def test_isolation_and_file_tool_boundaries(context):
+    data = layout.get_user_data_dir(context.user_id)
+    for name in ("appendix", "session", "diagnostics"):
+        (data / name).mkdir()
+        (data / name / "private").write_text("secret")
+    other = layout.get_project_workdir(str(uuid4()), 42)
+    other.mkdir(parents=True)
+    (other / "secret").write_text("secret")
+    second = layout.get_project_workdir(context.user_id, 43)
+    second.mkdir()
+    result = await write(context, "/user/project/43/shared.txt", "shared")
+    assert result["error_code"] is None and (second / "shared.txt").read_text() == "shared"
+    assert context.written_workspace_paths == []
+    result = await call(context, "bash", command="test ! -e /user/appendix && test ! -e /user/session && test ! -e /user/diagnostics && test ! -e " + shlex.quote(str(other)), timeout_seconds=None)
+    assert result["result"]["exit_code"] == 0
+    (Path(context.workspace) / "link").symlink_to(other / "secret")
+    for path in ("relative.txt", "/user/project/42/../43/shared.txt", "/user/project/42/link"):
+        assert (await write(context, path, "leak"))["error_code"] is not None
+    assert (other / "secret").read_text() == "secret"
+    # JSON transport preserves a page larger than bash's 32 KiB output buffer.
+    path = "/user/project/42/large.txt"
+    text = "中文" * 8000
+    assert (await write(context, path, text))["error_code"] is None
+    result = await call(context, "read_file", path=path, start_line_no=1, start_byte_no=1, total_lines=1)
+    assert result["result"]["text"] == text and result["result"]["eof"]

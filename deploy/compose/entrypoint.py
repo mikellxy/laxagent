@@ -74,6 +74,9 @@ def main():
     result = run_step(UV + ["python", "src/laxagent/sandbox/bubblewrap.py", "--probe"])
     if result or stopping:
         return result
+    result = run_step(UV + ["python", "scripts/probe_file_tools.py"])
+    if result or stopping:
+        return result
     result = run_step(UV + ["alembic", "-x", f"config={CONFIG}", "upgrade", "head"])
     if result or stopping:
         return result

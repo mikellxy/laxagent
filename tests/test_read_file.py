@@ -10,6 +10,7 @@ from types import SimpleNamespace
 import pytest
 
 from laxagent import layout
+from laxagent.sandbox import bubblewrap
 from laxagent.sandbox.bubblewrap import SandboxError
 from laxagent.tools.executor import execute_tool
 from laxagent.tools.registry import tool_definitions
@@ -59,12 +60,12 @@ async def test_file_errors_and_no_host_fallback(context, monkeypatch):
         "error_code": "FILE_NOT_FOUND", "result": {},
     }
     monkeypatch.setattr(tool, "run_file_tool", backend.run_file_tool)
-    monkeypatch.setattr(backend, "sys", SimpleNamespace(platform="darwin"))
+    monkeypatch.setattr(bubblewrap, "sys", SimpleNamespace(platform="darwin"))
     assert (await execute_tool("read_file", json.dumps(REQUEST), context=context))["error_code"] == "SANDBOX_UNAVAILABLE"
 
 
-@pytest.mark.parametrize("tool_name", ["read_file", "write_file", "edit_file"])
-def test_profile_mounts_only_projects_skills_and_direct_binary(tmp_path, monkeypatch, tool_name):
+@pytest.mark.parametrize("tool_name", ["read_file", "write_file", "edit_file", "bash"])
+def test_profiles_share_mounts_and_reject_invalid_sources(tmp_path, monkeypatch, tool_name):
     root = tmp_path.resolve()
     projects, skills = root / "project", root / "skills"
     projects.mkdir()
@@ -78,26 +79,39 @@ def test_profile_mounts_only_projects_skills_and_direct_binary(tmp_path, monkeyp
         # Only the fixed Linux system files are simulated on non-Linux hosts.
         return path if str(path).startswith("/etc/") else original_resolve(path, *args, **kwargs)
 
-    monkeypatch.setattr(backend, "sys", SimpleNamespace(platform="linux"))
+    monkeypatch.setattr(bubblewrap, "sys", SimpleNamespace(platform="linux"))
     monkeypatch.setattr(backend, "BIN_DIR", root)
     monkeypatch.setattr(Path, "resolve", resolve)
-    monkeypatch.setattr(backend.os, "access", lambda path, mode: True if path == backend.BWRAP else original_access(path, mode))
+    monkeypatch.setattr(backend.os, "access", lambda path, mode: True if path == bubblewrap.BWRAP else original_access(path, mode))
     mounts = ((projects, "/user/project"), (skills, "/user/skills"))
-    argv = backend.build_argv(tool_name, mounts, 17)
+    def build(mounts):
+        if tool_name == "bash":
+            return bubblewrap.build_argv(mounts, "/user/project/42", "python3 /user/skills/demo/scripts/run.py", 17)
+        return backend.build_argv(tool_name, mounts, 17)
+
+    argv = build(mounts)
     binds = [argv[i + 1:i + 3] for i, value in enumerate(argv) if value == "--bind"]
     assert binds == [[str(projects), "/user/project"], [str(skills), "/user/skills"]]
-    assert argv[-2:] == ["--", f"/{tool_name}"]
-    assert argv[argv.index("--chdir") + 1] == "/"
-    assert ["--ro-bind", str(binary), f"/{tool_name}"] == argv[argv.index(str(binary)) - 1:argv.index(str(binary)) + 2]
+    if tool_name == "bash":
+        assert argv[argv.index("--chdir") + 1] == "/user/project/42"
+        assert argv[-6:] == ["--", "/bin/bash", "--noprofile", "--norc", "-c", "python3 /user/skills/demo/scripts/run.py"]
+        assert "/skill" not in argv
+        assert bubblewrap.SANDBOX_PATH in argv
+    else:
+        assert argv[-2:] == ["--", f"/{tool_name}"]
+        assert argv[argv.index("--chdir") + 1] == "/"
+        assert ["--ro-bind", str(binary), f"/{tool_name}"] == argv[argv.index(str(binary)) - 1:argv.index(str(binary)) + 2]
     assert not any("appendix" in value or "diagnostics" in value for value in argv)
     linked_skills = root / "linked-skills"
     linked_skills.symlink_to(skills, target_is_directory=True)
     for invalid_source in (linked_skills, root / "missing", binary):
-        with pytest.raises(SandboxError, match=f"{tool_name.upper()}_INVALID_WORKSPACE"):
-            backend.build_argv(tool_name, ((projects, "/user/project"), (invalid_source, "/user/skills")), 17)
-    monkeypatch.setattr(backend, "BIN_DIR", root / "missing")
-    with pytest.raises(SandboxError, match=f"{tool_name.upper()}_UNAVAILABLE"):
-        backend.build_argv(tool_name, mounts, 17)
+        code = "SANDBOX_INVALID_WORKSPACE" if tool_name == "bash" else f"{tool_name.upper()}_INVALID_WORKSPACE"
+        with pytest.raises(SandboxError, match=code):
+            build(((projects, "/user/project"), (invalid_source, "/user/skills")))
+    if tool_name != "bash":
+        monkeypatch.setattr(backend, "BIN_DIR", root / "missing")
+        with pytest.raises(SandboxError, match=f"{tool_name.upper()}_UNAVAILABLE"):
+            build(mounts)
 
 
 def test_complete_json_larger_than_bash_output_limit():

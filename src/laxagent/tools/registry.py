@@ -8,7 +8,7 @@ from laxagent.tools.builtin.appendices import ReadAppendixArgs, AskAppendicesArg
 
 from laxagent.tools.builtin.ask_user_question import AskUserQuestionArgs, ask_user_question
 from laxagent.tools.builtin.bash import BashArgs, bash
-from laxagent.tools.builtin.skills import LoadSkillArgs, RunSkillScriptsArgs, load_skill, run_skill_scripts
+from laxagent.tools.builtin.skills import LoadSkillArgs, load_skill
 from laxagent.tools.builtin.edit_file import EditFileArgs, edit_file
 from laxagent.tools.builtin.read_file import ReadFileArgs, read_file
 from laxagent.tools.builtin.write_file import WriteFileArgs, write_file
@@ -37,7 +37,6 @@ TOOLS = {
     "edit_file": Tool(EditFileArgs, edit_file),
     "bash": Tool(BashArgs, bash),
     "load_skill": Tool(LoadSkillArgs, load_skill),
-    "run_skill_scripts": Tool(RunSkillScriptsArgs, run_skill_scripts),
     "write_memory": Tool(WriteMemoryArgs, write_memory),
     "list_memory_abstracts": Tool(ListMemoryAbstractsArgs, list_memory_abstracts),
     "get_memory_details": Tool(GetMemoryDetailsArgs, get_memory_details),
@@ -163,8 +162,8 @@ def _all_tool_definitions() -> list[dict]:
     }, {
         "type": "function", "name": "bash", "strict": True,
         "description": (
-            "Run a non-interactive Bash command in a fresh Linux bubblewrap sandbox, starting in workspace. "
-            "Only workspace changes persist. Create and use /tmp files within the same call; they disappear when it ends. "
+            "Run a non-interactive Bash command in a fresh Linux bubblewrap sandbox, starting in /user/project/{project_id}. "
+            "User projects under /user/project and skills under /user/skills are writable and persist. Create and use /tmp files within the same call; they disappear when it ends. "
             "Write final deliverables and any scripts or intermediate files needed across calls to workspace. "
             "Host network is shared, system tools are read-only. "
             "No shell state or background processes survive a call. timeout_seconds=null uses 120s (max 300s). "
@@ -181,17 +180,6 @@ def _all_tool_definitions() -> list[dict]:
             "to system rules and the user's current request."
         ),
         "parameters": LoadSkillArgs.model_json_schema(),
-    }, {
-        "type": "function", "name": "run_skill_scripts", "strict": True,
-        "description": (
-            "Execute one script from a skill successfully loaded in this run. runner is one executable name "
-            "(e.g. python3, bash), script is an exact relative path from load_skill, args are literal strings "
-            "with {workspace} substitution. No pipelines or shell expansion. The skill and its resources "
-            "are mounted read-only as the initial directory; write deliverables to workspace. "
-            "Changed skills require reloading. Shares bash's sandbox, output limits and cancellation cleanup. "
-            "timeout_seconds=null uses 120 seconds (max 300). Never blindly retry side effects."
-        ),
-        "parameters": RunSkillScriptsArgs.model_json_schema(),
     }, {
         "type": "function", "name": "write_memory", "strict": True,
         "description": (

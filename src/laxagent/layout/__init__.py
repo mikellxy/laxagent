@@ -22,7 +22,7 @@ def get_user_sandbox_mounts(user_id: str) -> tuple[tuple[Path, str], ...]:
 
 
 def get_sandbox_project_workdir(project_id: str) -> PurePosixPath:
-    """Used to relate file-tool results to the current project's preview paths."""
+    """Current project path shared by sandbox cwd and file preview registration."""
     return PurePosixPath("/user/project") / project_id
 
 

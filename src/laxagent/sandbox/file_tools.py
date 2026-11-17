@@ -1,7 +1,4 @@
-"""Shared file-tool profile and structured stdin/stdout transport.
-
-The legacy bash/skill profiles remain unchanged during the staged migration.
-"""
+"""File-tool profile and structured transport using the shared sandbox mounts."""
 
 from concurrent.futures import CancelledError
 import json
@@ -9,13 +6,12 @@ import os
 from pathlib import Path
 import selectors
 import subprocess
-import sys
 import tempfile
 from threading import Event
 import time
 
 from laxagent.sandbox.bubblewrap import (
-    BWRAP, OutputBuffer, SandboxError, _StatusPipe, _read_ready, _stop_process,
+    OutputBuffer, SandboxError, _StatusPipe, _read_ready, _stop_process, build_mount_argv,
 )
 
 MAX_RESPONSE_BYTES = 1024 * 1024
@@ -36,33 +32,10 @@ class JSONOutput:
 
 
 def build_argv(tool_name: str, mounts: tuple[tuple[Path, str], ...], status_fd: int) -> list[str]:
+    args = build_mount_argv(mounts, invalid_mount_code=f"{tool_name.upper()}_INVALID_WORKSPACE")
     binary = BIN_DIR / tool_name
-    if sys.platform != "linux" or not os.access(BWRAP, os.X_OK):
-        raise SandboxError("SANDBOX_UNAVAILABLE")
-    # layout supplies the mount table. Only filesystem state can
-    # change between preparation and this call, so check directories, not format.
-    try:
-        for source, _ in mounts:
-            if source.resolve(strict=True) != source or not source.is_dir():
-                raise SandboxError(f"{tool_name.upper()}_INVALID_WORKSPACE")
-    except (OSError, RuntimeError):
-        raise SandboxError(f"{tool_name.upper()}_INVALID_WORKSPACE") from None
     if not binary.is_file() or not os.access(binary, os.X_OK):
         raise SandboxError(f"{tool_name.upper()}_UNAVAILABLE")
-    args = [BWRAP, "--unshare-user", "--unshare-pid", "--unshare-ipc", "--unshare-uts",
-            "--share-net", "--disable-userns", "--cap-drop", "ALL", "--die-with-parent", "--new-session"]
-    for path in ("/usr", "/bin", "/sbin", "/lib", "/lib64"):
-        if path != "/lib64" or Path(path).exists():
-            args += ["--ro-bind", path, path]
-    for path in ("/etc/ld.so.cache", "/etc/nsswitch.conf", "/etc/hosts", "/etc/resolv.conf", "/etc/ssl/certs"):
-        try:
-            source = str(Path(path).resolve(strict=True))
-        except (OSError, RuntimeError):
-            raise SandboxError("SANDBOX_UNAVAILABLE") from None
-        args += ["--ro-bind", source, path]
-    args += ["--proc", "/proc", "--dev", "/dev", "--perms", "1777", "--tmpfs", "/tmp"]
-    for source, target in mounts:
-        args += ["--bind", str(source), target]
     return args + [
         "--ro-bind", str(binary), f"/{tool_name}", "--chdir", "/",
         "--clearenv", "--setenv", "HOME", "/tmp", "--setenv", "TMPDIR", "/tmp",

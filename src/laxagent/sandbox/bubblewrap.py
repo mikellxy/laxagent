@@ -28,21 +28,17 @@ class SandboxError(Exception):
         self.result = result if result is not None else {}
 
 
-def build_argv(workspace: str, command: str, status_fd: int, *, skill_dir: str | None = None) -> list[str]:
+def build_mount_argv(mounts: tuple[tuple[Path, str], ...], *, invalid_mount_code: str) -> list[str]:
+    """Build the shared runtime and user mounts from the trusted layout table."""
     if sys.platform != "linux" or not os.access(BWRAP, os.X_OK):
         raise SandboxError("SANDBOX_UNAVAILABLE")
-    root = Path(workspace)
+    # Only filesystem state can change after layout computes the mount table.
     try:
-        if not root.is_absolute() or root.resolve(strict=True) != root or not root.is_dir():
-            raise SandboxError("SANDBOX_INVALID_WORKSPACE")
-    except (OSError, RuntimeError, ValueError):
-        raise SandboxError("SANDBOX_INVALID_WORKSPACE") from None
-    # Never let a workspace bind replace a runtime/system mount or the sandbox root.
-    reserved = ("/usr", "/bin", "/sbin", "/lib", "/lib64", "/etc", "/proc", "/dev", "/tmp", "/skill")
-    if root == Path("/") or any(root == Path(p) or root in Path(p).parents for p in reserved):
-        raise SandboxError("SANDBOX_INVALID_WORKSPACE")
-    if any(Path(p) in root.parents for p in reserved if p != "/tmp"):
-        raise SandboxError("SANDBOX_INVALID_WORKSPACE")
+        for source, _ in mounts:
+            if source.resolve(strict=True) != source or not source.is_dir():
+                raise SandboxError(invalid_mount_code)
+    except (OSError, RuntimeError):
+        raise SandboxError(invalid_mount_code) from None
     args = [BWRAP, "--unshare-user", "--unshare-pid", "--unshare-ipc", "--unshare-uts",
             "--share-net", "--disable-userns", "--cap-drop", "ALL", "--die-with-parent", "--new-session"]
     for path in ("/usr", "/bin", "/sbin", "/lib"):
@@ -56,22 +52,19 @@ def build_argv(workspace: str, command: str, status_fd: int, *, skill_dir: str |
         except (OSError, RuntimeError):
             raise SandboxError("SANDBOX_UNAVAILABLE") from None
         args += ["--ro-bind", source, path]
-    args += ["--proc", "/proc", "--dev", "/dev", "--perms", "1777", "--tmpfs", "/tmp",
-             "--bind", workspace, workspace]
-    if skill_dir is not None:
-        source = Path(skill_dir)
-        try:
-            if not source.is_absolute() or source.resolve(strict=True) != source or not source.is_dir():
-                raise SandboxError("INVALID_SKILL_FILE")
-        except (OSError, RuntimeError):
-            raise SandboxError("INVALID_SKILL_FILE") from None
-        args += ["--ro-bind", skill_dir, "/skill"]
-    args += ["--chdir", "/skill" if skill_dir is not None else workspace, "--clearenv",
-             "--setenv", "PATH", SANDBOX_PATH, "--setenv", "HOME", "/tmp",
-             "--setenv", "TMPDIR", "/tmp", "--setenv", "LANG", "C.UTF-8",
-             "--remount-ro", "/", "--json-status-fd", str(status_fd),
-             "--", "/bin/bash", "--noprofile", "--norc", "-c", command]
+    args += ["--proc", "/proc", "--dev", "/dev", "--perms", "1777", "--tmpfs", "/tmp"]
+    for source, target in mounts:
+        args += ["--bind", str(source), target]
     return args
+
+
+def build_argv(mounts: tuple[tuple[Path, str], ...], cwd: str, command: str, status_fd: int) -> list[str]:
+    args = build_mount_argv(mounts, invalid_mount_code="SANDBOX_INVALID_WORKSPACE")
+    return args + ["--chdir", cwd, "--clearenv",
+                   "--setenv", "PATH", SANDBOX_PATH, "--setenv", "HOME", "/tmp",
+                   "--setenv", "TMPDIR", "/tmp", "--setenv", "LANG", "C.UTF-8",
+                   "--remount-ro", "/", "--json-status-fd", str(status_fd),
+                   "--", "/bin/bash", "--noprofile", "--norc", "-c", command]
 
 
 class OutputBuffer:
@@ -187,19 +180,17 @@ def _read_ready(selector: selectors.BaseSelector, timeout: float) -> None:
             selector.unregister(key.fd)
 
 
-def run_bash(workspace: str, command: str, timeout: float = 120, *, stop_event: Event | None = None,
-             skill_dir: str | None = None) -> dict:
+def run_bash(mounts: tuple[tuple[Path, str], ...], cwd: str, command: str, timeout: float = 120,
+             *, stop_event: Event | None = None) -> dict:
     deadline = time.monotonic() + timeout
     if stop_event is not None and stop_event.is_set():
         raise CancelledError
-    if sys.platform != "linux" or not os.access(BWRAP, os.X_OK):
-        raise SandboxError("SANDBOX_UNAVAILABLE")
     stdout, stderr = OutputBuffer(), OutputBuffer()
     status = _StatusPipe()
     process = None
     timed_out = failure = stopping = False
     try:
-        argv = build_argv(workspace, command, status.write_fd, **({"skill_dir": skill_dir} if skill_dir else {}))
+        argv = build_argv(mounts, cwd, command, status.write_fd)
         with selectors.DefaultSelector() as selector:
             process = _start(argv, status.write_fd)
             status.close_writer()
@@ -243,8 +234,14 @@ def run_bash(workspace: str, command: str, timeout: float = 120, *, stop_event: 
 
 def probe() -> None:
     # A home-based directory proves that /tmp is not accidentally masking the workspace bind.
-    with tempfile.TemporaryDirectory(prefix=".laxagent-sandbox-probe-", dir=Path.home()) as workspace:
-        result = run_bash(workspace, "pwd && python3 --version && go version", timeout=10)
+    with tempfile.TemporaryDirectory(prefix=".laxagent-sandbox-probe-", dir=Path.home()) as directory:
+        root = Path(directory).resolve()
+        workspace = root / "project" / "probe"
+        workspace.mkdir(parents=True)
+        skills = root / "skills"
+        skills.mkdir()
+        mounts = ((workspace.parent, "/user/project"), (skills, "/user/skills"))
+        result = run_bash(mounts, "/user/project/probe", "pwd && python3 --version && go version", timeout=10)
         if result["exit_code"] != 0:
             raise SandboxError("SANDBOX_PROBE_FAILED", result)
         print(result["stdout"], end="")

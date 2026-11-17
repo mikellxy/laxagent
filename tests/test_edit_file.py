@@ -9,6 +9,7 @@ from types import SimpleNamespace
 import pytest
 
 from laxagent import layout
+from laxagent.sandbox import bubblewrap
 from laxagent.sandbox.bubblewrap import SandboxError
 from laxagent.tools.executor import execute_tool
 from laxagent.tools.registry import tool_definitions
@@ -84,7 +85,7 @@ async def test_errors_do_not_record_candidates_or_fall_back(context, monkeypatch
         "error_code": "EDIT_NOT_FOUND", "result": {},
     }
     monkeypatch.setattr(tool, "run_file_tool", backend.run_file_tool)
-    monkeypatch.setattr(backend, "sys", SimpleNamespace(platform="darwin"))
+    monkeypatch.setattr(bubblewrap, "sys", SimpleNamespace(platform="darwin"))
     assert (await execute_tool("edit_file", json.dumps(REQUEST), context=context))["error_code"] == "SANDBOX_UNAVAILABLE"
     assert context.written_workspace_paths == []
     assert not Path(context.workspace).exists()

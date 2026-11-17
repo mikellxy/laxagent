@@ -9,6 +9,7 @@ from types import SimpleNamespace
 
 import pytest
 
+from laxagent import layout
 from laxagent.sandbox.bubblewrap import OUTPUT_HALF, OutputBuffer, SandboxError, _StatusPipe
 from laxagent.tools.executor import execute_tool
 from tool_helpers import tool_context
@@ -82,7 +83,7 @@ def test_cancelled_before_start_never_spawns(monkeypatch):
 
     monkeypatch.setattr(backend, "_start", unexpected_start)
     with pytest.raises(CancelledError):
-        backend.run_bash("/unused", "true", stop_event=stop)
+        backend.run_bash((), "/user/project/42", "true", stop_event=stop)
 
 
 @pytest.mark.parametrize("error", [FileNotFoundError, RuntimeError])
@@ -103,7 +104,7 @@ def test_spawn_failure_closes_status_pipe(monkeypatch, error):
     monkeypatch.setattr(backend, "_StatusPipe", status_pipe)
     monkeypatch.setattr(backend, "_start", fail_start)
     with pytest.raises(SandboxError if error is FileNotFoundError else error):
-        backend.run_bash("/unused", "true")
+        backend.run_bash((), "/user/project/42", "true")
     assert len(pipes) == 1
     assert pipes[0].read_fd is None and pipes[0].write_fd is None
 
@@ -114,8 +115,8 @@ async def test_bash_schema_and_async_dispatch(tmp_path, monkeypatch):
     expected = {"exit_code": 7, "stdout": "hi", "stderr": "", "timed_out": False,
                 "stdout_truncated": False, "stderr_truncated": False}
 
-    def run(workspace, command, timeout, *, stop_event):
-        called.append((workspace, command, timeout, threading.get_ident()))
+    def run(mounts, cwd, command, timeout, *, stop_event):
+        called.append((mounts, cwd, command, timeout, threading.get_ident()))
         assert not stop_event.is_set()
         return expected
 
@@ -133,8 +134,10 @@ async def test_bash_schema_and_async_dispatch(tmp_path, monkeypatch):
     result = await execute_tool("bash", '{"command":"pwd","timeout_seconds":null}', context=tool_context(tmp_path))
     assert result == {"error_code": None, "result": expected}
     assert len(called) == 1
-    assert called[0][:3] == (str(tmp_path), "pwd", 120)
-    assert called[0][3] != threading.get_ident()
+    assert called[0][:4] == (
+        layout.get_user_sandbox_mounts("test-user"), f"/user/project/{tmp_path.name}", "pwd", 120,
+    )
+    assert called[0][4] != threading.get_ident()
     definition = next(item for item in tool_definitions() if item["name"] == "bash")
     assert definition["strict"]
     assert definition["parameters"]["required"] == ["command", "timeout_seconds"]

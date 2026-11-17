@@ -4,7 +4,6 @@ import importlib
 import json
 import os
 from pathlib import Path
-import shlex
 from uuid import uuid4
 
 import pytest
@@ -197,32 +196,13 @@ async def test_skill_paths_links_and_special_files_never_escape(skill_context, t
 
 
 @pytest.mark.anyio
-async def test_execution_requires_current_load_and_passes_literal_arguments(skill_context, monkeypatch):
-    context = skill_context
-    await write(context, "SKILL.md", entry())
-    await write(context, "scripts/run.py", "print('old')")
-    arguments = {"name": "example", "runner": "python3", "script": "scripts/run.py",
-                 "args": ["{workspace}/out file", "; touch hacked", "$(secret)", "a|b"]}
-    assert (await call(context, "run_skill_scripts", **arguments))["error_code"] == "SKILL_NOT_LOADED"
-    await call(context, "load_skill", name="example")
-    assert (await call(context, "run_skill_scripts", **{**arguments, "script": "missing.py"}))["error_code"] == "INVALID_SKILL_SCRIPT"
-    await write(context, "scripts/run.py", "print('new')")
-    assert (await call(context, "run_skill_scripts", **arguments))["error_code"] == "SKILL_CHANGED"
-    await call(context, "load_skill", name="example")
-    observed = []
-    def run(workspace, command, timeout, *, stop_event, skill_dir):
-        observed.append(Path(skill_dir))
-        assert shlex.split(command) == ["python3", "./scripts/run.py", workspace + "/out file", "; touch hacked", "$(secret)", "a|b"]
-        assert (Path(skill_dir) / "scripts/run.py").read_text() == "print('new')"
-        assert not stop_event.is_set()
-        return {"exit_code": 0}
-    monkeypatch.setattr(importlib.import_module("laxagent.tools.builtin.skills"), "run_bash", run)
-    # A new ToolContext models a graph checkpoint round-trip.
-    context = replace(context, loaded_skills=json.loads(json.dumps(context.loaded_skills)))
-    assert (await call(context, "run_skill_scripts", **arguments))["result"] == {"exit_code": 0}
-    assert observed and not observed[0].exists()
-    for runner in ["python3 -c", "../bash", "bash;id", "-python"]:
-        assert (await call(context, "run_skill_scripts", **{**arguments, "runner": runner}))["error_code"] == "INVALID_ARGUMENTS"
+async def test_run_skill_scripts_is_removed(tmp_path):
+    from laxagent.tools.registry import TOOLS
+
+    assert "run_skill_scripts" not in TOOLS
+    assert "run_skill_scripts" not in {tool["name"] for tool in tool_definitions()}
+    result = await call(tool_context(tmp_path), "run_skill_scripts", name="example")
+    assert result["error_code"] == "UNKNOWN_TOOL"
 
 
 def test_all_model_schemas_require_every_property():

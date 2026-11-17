@@ -13,12 +13,12 @@ class EvalStore:
     def __init__(self, db):
         self.db = db
 
-    async def create_session(self, name: str) -> Session:
+    async def create_session(self, name: str, *, container_id: str | None = None, container_workspace: str | None = None) -> Session:
         # All three records commit together; a failed request leaves no orphan user.
         user_id = str(uuid4())
         async with self.db.transaction() as tx:
             tx.add(User(user_id=user_id))
-            project = Project(user_id=user_id, name=name)
+            project = Project(user_id=user_id, name=name, container_id=container_id, container_workspace=container_workspace)
             tx.add(project)
             await tx.flush()
             session = Session(user_id=user_id, project_id=project.id, name=name)

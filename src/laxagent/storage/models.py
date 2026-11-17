@@ -63,6 +63,11 @@ class Appendix(Base):
 
 class Project(Base):
     __tablename__ = "projects"
+    __table_args__ = (CheckConstraint("(container_id IS NULL) = (container_workspace IS NULL)",
+                                    name="ck_projects_container_binding"),)
+
+    container_id: Mapped[str | None] = mapped_column(Text)
+    container_workspace: Mapped[str | None] = mapped_column(Text)
 
     id: Mapped[int] = mapped_column(Integer, Identity(always=True), primary_key=True)
     name: Mapped[str] = mapped_column(Text)

@@ -8,9 +8,9 @@ import jwt
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
-from laxagent.api.dependencies import get_config, get_repository
+from laxagent.api.dependencies import get_config, get_repository, get_profile
 from laxagent.api.schemas import LoginRequest, TokenResponse
-from laxagent.skills import SkillError, initialize_skills
+from laxagent.skills import SkillError
 
 router = APIRouter()
 bearer = HTTPBearer(auto_error=False)
@@ -40,10 +40,10 @@ async def get_current_user(
 
 
 @router.post("/login", response_model=TokenResponse)
-async def login(body: LoginRequest, config=Depends(get_config), repository=Depends(get_repository)):
-    initial_session_id = await repository.ensure_user(body.user_id, guest=body.from_page == "guest_login")
+async def login(body: LoginRequest, config=Depends(get_config), repository=Depends(get_repository), profile=Depends(get_profile)):
+    initial_session_id = await repository.ensure_user(body.user_id, guest=body.from_page == "guest_login" and profile.host_file_routes)
     try:
-        await asyncio.to_thread(initialize_skills, body.user_id, config.builtin_skills_dir)
+        await asyncio.to_thread(profile.login, body.user_id, config.builtin_skills_dir)
     except (OSError, SkillError):
         logger.exception("Unable to initialize login skills")
         raise HTTPException(503, "技能初始化失败，请重试登录") from None

@@ -124,11 +124,15 @@ async def test_preparation_orders_context_and_hides_database_fields(repository, 
                 transaction.add(model(seq=seq, role=role, content=content, session_id=conversation["session_id"]))
         session = await transaction.get(Session, conversation["session_id"])
         session.next_msg_seq = 3
+    context = AgentContext(None, None, repository)
+    project = await repository.get_project(conversation["user_id"], conversation["project_id"])
+    from dataclasses import replace
+    context = replace(context, **context.profile.environment(project))
     result = await prepare(
         {**conversation, "user_query": "third", "next_msg_seq": 3, "messages": []},
-        Runtime(context=AgentContext(None, None, repository)),
+        Runtime(context=context),
     )
-    assert result["workspace"] == str(get_project_workdir(conversation["user_id"], conversation["project_id"]))
+    assert result["workspace"] == f"/user/project/{conversation['project_id']}"
     assert result["model_input"] == result["messages"]
     assert result["pending_tool_calls"] == []
     assert result["next_msg_seq"] == 4

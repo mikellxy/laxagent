@@ -10,7 +10,6 @@ import secrets
 import shutil
 import stat
 from threading import Lock, RLock
-from uuid import UUID
 from weakref import WeakValueDictionary
 
 import yaml
@@ -93,12 +92,10 @@ def skill_lock(user_id: str, name: str):
 
 
 @contextmanager
-def user_skills_root(user_id: str, *, create=False):
-    if str(UUID(user_id)) != user_id:
-        raise SkillError("INVALID_SKILL_NAME")
+def skills_root(path: Path, *, create=False):
     directory = os.open(Path.home(), os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
     try:
-        for part in layout.get_skills_dir(user_id).relative_to(Path.home()).parts:
+        for part in path.relative_to(Path.home()).parts:
             if create:
                 try:
                     os.mkdir(part, mode=0o700, dir_fd=directory)
@@ -113,9 +110,15 @@ def user_skills_root(user_id: str, *, create=False):
 
 
 @contextmanager
-def skill_directory(user_id: str, name: str, *, create=False):
+def user_skills_root(user_id: str, *, create=False):
+    with skills_root(layout.get_skills_dir(user_id), create=create) as root:
+        yield root
+
+
+@contextmanager
+def skill_directory_at(path: Path, name: str, *, create=False):
     validate_name(name)
-    with skill_lock(user_id, name), user_skills_root(user_id, create=create) as root:
+    with skill_lock(str(path), name), skills_root(path, create=create) as root:
         if create:
             try:
                 os.mkdir(name, mode=0o700, dir_fd=root)
@@ -126,6 +129,12 @@ def skill_directory(user_id: str, name: str, *, create=False):
             yield directory
         finally:
             os.close(directory)
+
+
+@contextmanager
+def skill_directory(user_id: str, name: str, *, create=False):
+    with skill_directory_at(layout.get_skills_dir(user_id), name, create=create) as directory:
+        yield directory
 
 
 def _walk(directory: int, prefix="", *, depth=0):
@@ -213,7 +222,7 @@ def initialize_skills(user_id: str, source: Path | None) -> None:
     with user_skills_root(user_id, create=True) as root:
         for skill in builtins:
             name = skill.metadata["name"]
-            with skill_lock(user_id, name):
+            with skill_lock(str(layout.get_skills_dir(user_id)), name):
                 try:
                     os.stat(name, dir_fd=root, follow_symlinks=False)
                 except FileNotFoundError:
@@ -239,14 +248,18 @@ def initialize_skills(user_id: str, source: Path | None) -> None:
 
 
 def skill_catalog(user_id: str) -> list[dict]:
-    with user_skills_root(user_id) as root:
+    return skill_catalog_at(layout.get_skills_dir(user_id))
+
+
+def skill_catalog_at(path: Path) -> list[dict]:
+    with skills_root(path) as root:
         names = sorted(os.listdir(root))
     result = []
     for name in names:
         if name.startswith("."):
             continue
         try:
-            with skill_directory(user_id, name) as directory:
+            with skill_directory_at(path, name) as directory:
                 metadata = parse_metadata(name, read_skill_entry(directory))
                 file_tree(directory)
             if metadata["allow_auto_use"]:

@@ -22,3 +22,5 @@ Linux/Lima 中先构建二进制，再执行 `uv run pytest -m ""`，包含全�
 Go 测试在 `src/laxagent/tools/go` 执行 `go test ./...`。前端执行 `npm --prefix frontend test` 与 `npm --prefix frontend run test:browser`。
 
 真实模型冒烟在 Lima 使用被 Git 忽略的 `config/config.json`。`scripts/smoke_skills.py` 验证发现、创建、读写编辑、脚本执行和成果预览；`scripts/smoke_resume.py`、`scripts/smoke_cancel.py` 验证中断恢复、跨实例取消及副作用保留。`scripts/smoke_chat.py` 对已启动的服务验证初始化、项目复用和绝对路径读取。
+
+Docker eval 通过注入执行后端复用同一工具实现，路径直接来自容器视图；配置与验证见 [Docker eval](docker-eval.md)。

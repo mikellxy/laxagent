@@ -71,9 +71,9 @@ async def smoke(args):
                         "这是技能工具验收。请先加载 skill-creator，创建 smoke-demo 技能（description 写冒烟测试用途），"
                         "配套 scripts/main.py 的初始完整内容如下：\n" + script +
                         "\n创建后用 read_file 读取脚本，再用 edit_file 将两处 BEFORE 分别改为 " + marker +
-                        "（每处提供足够上下文确保匹配唯一）。用 write_file 创建 obsolete.txt，再用 delete 操作删除它。"
+                        "（每处提供足够上下文确保匹配唯一）。用 write_file 创建 /user/skills/smoke-demo/obsolete.txt，再用 delete 操作删除它。"
                         "最后 load_skill smoke-demo，并用 bash 调用 python3 执行 /user/skills/smoke-demo/scripts/main.py，"
-                        "输出参数使用当前 workspace 的绝对路径加 /skill-result.txt。文件维护使用文件工具，bash 只用于执行脚本。确认成功后用独立段落的 workspace 链接展示结果文件。"
+                        "输出参数使用当前 workspace 的绝对路径加 /skill-result.txt。文件维护使用文件工具，bash 命令只包含 python3 执行脚本这一条命令，不要拼接 ls 或其他命令。确认成功后用独立段落的 workspace 链接展示结果文件。"
                     )
                     second_id, events = await chat_round(api, session_id, config.llm.default_model, query)
                     tools = [e["content"].get("tool_name") for e in events if e["type"] == "tool_end"]

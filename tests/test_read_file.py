@@ -9,6 +9,7 @@ from types import SimpleNamespace
 
 import pytest
 
+from laxagent.sandbox import backend as dispatch
 from laxagent import layout
 from laxagent.sandbox import bubblewrap
 from laxagent.sandbox.bubblewrap import SandboxError
@@ -37,7 +38,7 @@ async def test_dispatch_uses_absolute_paths_and_worker(context, monkeypatch):
         assert not stop_event.is_set()
         return {"error_code": None, "result": PAGE}
 
-    monkeypatch.setattr(tool, "run_file_tool", run)
+    monkeypatch.setattr(dispatch, "run_file_tool", run)
     result = await execute_tool("read_file", json.dumps(REQUEST), context=context)
     assert result == {"error_code": None, "result": PAGE}
     assert calls[0][:2] == (layout.get_user_sandbox_mounts(context.user_id), REQUEST)
@@ -55,11 +56,11 @@ async def test_file_errors_and_no_host_fallback(context, monkeypatch):
     def missing(*args, **kwargs):
         return {"error_code": "FILE_NOT_FOUND", "result": {}}
 
-    monkeypatch.setattr(tool, "run_file_tool", missing)
+    monkeypatch.setattr(dispatch, "run_file_tool", missing)
     assert await execute_tool("read_file", json.dumps(REQUEST), context=context) == {
         "error_code": "FILE_NOT_FOUND", "result": {},
     }
-    monkeypatch.setattr(tool, "run_file_tool", backend.run_file_tool)
+    monkeypatch.setattr(dispatch, "run_file_tool", backend.run_file_tool)
     monkeypatch.setattr(bubblewrap, "sys", SimpleNamespace(platform="darwin"))
     assert (await execute_tool("read_file", json.dumps(REQUEST), context=context))["error_code"] == "SANDBOX_UNAVAILABLE"
 
@@ -179,7 +180,7 @@ async def test_cancellation_waits_for_cleanup(context, monkeypatch):
         finally:
             finished.set()
 
-    monkeypatch.setattr(tool, "run_file_tool", run)
+    monkeypatch.setattr(dispatch, "run_file_tool", run)
     task = asyncio.create_task(execute_tool("read_file", json.dumps(REQUEST), context=context))
     try:
         await asyncio.wait_for(started.wait(), 2)

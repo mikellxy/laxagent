@@ -1,5 +1,8 @@
 from dataclasses import dataclass, field
-from pathlib import Path
+from pathlib import Path, PurePosixPath
+
+from laxagent.runtime.profile import StandardProfile, DockerEvalProfile
+from laxagent.sandbox.backend import ExecutionBackend
 
 from openai import AsyncOpenAI
 
@@ -20,3 +23,9 @@ class AgentContext:
     web_search: WebSearchService | None = None
     llm: LLMConfig | None = None
     diagnostic_secrets: tuple[str, ...] = field(default=(), repr=False)
+
+    profile: StandardProfile | DockerEvalProfile = field(default_factory=StandardProfile)
+    workspace: str = ""
+    backend: ExecutionBackend | None = None
+    skill_dir: Path | None = None
+    sandbox_skill_dir: PurePosixPath | None = None

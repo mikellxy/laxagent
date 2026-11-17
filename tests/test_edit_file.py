@@ -8,6 +8,7 @@ from types import SimpleNamespace
 
 import pytest
 
+from laxagent.sandbox import backend as dispatch
 from laxagent import layout
 from laxagent.sandbox import bubblewrap
 from laxagent.sandbox.bubblewrap import SandboxError
@@ -36,7 +37,7 @@ async def test_dispatch_and_noop_candidates(context, monkeypatch):
         return {"error_code": None, "result": {"path": request["path"], "edits_applied": 1,
                                                 "bytes_written": 3 if changed else 0}}
 
-    monkeypatch.setattr(tool, "run_file_tool", run)
+    monkeypatch.setattr(dispatch, "run_file_tool", run)
     for new_text in ["new", "old"]:
         args = {**REQUEST, "edits": [{"old_text": "old", "new_text": new_text}]}
         result = await execute_tool("edit_file", json.dumps(args), context=context)
@@ -55,7 +56,7 @@ async def test_schema_and_validation(context, monkeypatch):
     def unexpected(*args, **kwargs):
         pytest.fail("Invalid input must not reach the sandbox")
 
-    monkeypatch.setattr(tool, "run_file_tool", unexpected)
+    monkeypatch.setattr(dispatch, "run_file_tool", unexpected)
     invalid = ["{", "[]", "null", {"path": "/file"}, {"edits": []},
                {**REQUEST, "path": ""}, {**REQUEST, "path": 1}, {**REQUEST, "edits": []},
                {**REQUEST, "skill_name": None}, {**REQUEST, "extra": 1}]
@@ -80,11 +81,11 @@ async def test_errors_do_not_record_candidates_or_fall_back(context, monkeypatch
     def fail(*args, **kwargs):
         return {"error_code": "EDIT_NOT_FOUND", "result": {}}
 
-    monkeypatch.setattr(tool, "run_file_tool", fail)
+    monkeypatch.setattr(dispatch, "run_file_tool", fail)
     assert await execute_tool("edit_file", json.dumps(REQUEST), context=context) == {
         "error_code": "EDIT_NOT_FOUND", "result": {},
     }
-    monkeypatch.setattr(tool, "run_file_tool", backend.run_file_tool)
+    monkeypatch.setattr(dispatch, "run_file_tool", backend.run_file_tool)
     monkeypatch.setattr(bubblewrap, "sys", SimpleNamespace(platform="darwin"))
     assert (await execute_tool("edit_file", json.dumps(REQUEST), context=context))["error_code"] == "SANDBOX_UNAVAILABLE"
     assert context.written_workspace_paths == []
@@ -111,7 +112,7 @@ async def test_cancelled_edit_has_no_candidate(context, monkeypatch):
     def cancel(*args, **kwargs):
         raise CancelledError
 
-    monkeypatch.setattr(tool, "run_file_tool", cancel)
+    monkeypatch.setattr(dispatch, "run_file_tool", cancel)
     with pytest.raises(asyncio.CancelledError):
         await execute_tool("edit_file", json.dumps(REQUEST), context=context)
     assert context.written_workspace_paths == []

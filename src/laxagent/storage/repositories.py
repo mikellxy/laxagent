@@ -311,11 +311,18 @@ class Repository:
             await transaction.flush()
         return user
 
-    async def create_project(self, user_id: str, name: str) -> Project:
+    async def get_project(self, user_id: str, project_id: int) -> Project:
+        async with self.db.transaction() as transaction:
+            project = await transaction.scalar(select(Project).where(Project.id == project_id, Project.user_id == user_id))
+            if project is None:
+                raise DatabaseError("Project not found", 404)
+            return project
+
+    async def create_project(self, user_id: str, name: str, *, container_id: str | None = None, container_workspace: str | None = None) -> Project:
         async with self.db.transaction() as transaction:
             if await transaction.scalar(select(User.id).where(User.user_id == user_id).with_for_update()) is None:
                 raise DatabaseError("User not found", 404)
-            project = Project(user_id=user_id, name=name)
+            project = Project(user_id=user_id, name=name, container_id=container_id, container_workspace=container_workspace)
             transaction.add(project)
             await transaction.flush()
         return project

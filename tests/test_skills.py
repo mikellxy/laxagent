@@ -25,7 +25,7 @@ def entry(name="example", extra="", body="Use this skill."):
 def skill_context(tmp_path):
     workspace = tmp_path / "workspace"
     workspace.mkdir()
-    context = replace(tool_context(workspace), user_id=str(uuid4()))
+    context = tool_context(workspace, user_id=str(uuid4()))
     initialize_skills(context.user_id, None)
     return context
 
@@ -100,7 +100,7 @@ def test_all_model_schemas_require_every_property():
 async def test_graph_reload_after_resume_uses_current_files_without_saved_state(chat_api, monkeypatch):
     h = chat_api
     h.context.builtin_skills_dir = BUILTINS
-    context = replace(tool_context("unused"), user_id=h.conversation["user_id"])
+    context = tool_context("unused", user_id=h.conversation["user_id"])
     initialize_skills(context.user_id, None)
     root = layout.get_skills_dir(context.user_id) / "manual"
     root.mkdir()

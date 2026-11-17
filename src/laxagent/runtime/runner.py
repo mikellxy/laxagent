@@ -37,7 +37,8 @@ async def run_agent(graph, run_id: int, context: AgentContext, *,
         run = await context.repository.claim_run(run_id, context.resume_time)
         if run is None:
             return None
-        context = replace(context, resume_time=run.resume_time)
+        project = await context.repository.get_project(run.user_id, run.project_id)
+        context = replace(context, resume_time=run.resume_time, **context.profile.environment(project))
         # Recheck ownership after dispatch; API validation is not execution authorization.
         await context.repository.get_run(run_id, run.user_id)
         model_snapshot = {"appendix_model": getattr(run, "appendix_model", None) or run.model}

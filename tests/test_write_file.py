@@ -8,6 +8,7 @@ from types import SimpleNamespace
 
 import pytest
 
+from laxagent.sandbox import backend as dispatch
 from laxagent import layout
 from laxagent.sandbox import bubblewrap
 from laxagent.sandbox.bubblewrap import SandboxError
@@ -34,7 +35,7 @@ async def test_dispatch_and_current_project_candidates(context, monkeypatch):
         assert not stop_event.is_set()
         return {"error_code": None, "result": {"path": request["path"], "bytes_written": len(request["content"].encode())}}
 
-    monkeypatch.setattr(tool, "run_file_tool", run)
+    monkeypatch.setattr(dispatch, "run_file_tool", run)
     for content in [REQUEST["content"], ""]:
         args = {**REQUEST, "content": content}
         result = await execute_tool("write_file", json.dumps(args), context=context)
@@ -52,7 +53,7 @@ async def test_schema_and_validation(context, monkeypatch):
     def unexpected(*args, **kwargs):
         pytest.fail("Invalid input must not reach the sandbox")
 
-    monkeypatch.setattr(tool, "run_file_tool", unexpected)
+    monkeypatch.setattr(dispatch, "run_file_tool", unexpected)
     for invalid in ["{", "[]", "null", {"path": "/file"}, {"content": "hi"},
                     {**REQUEST, "path": ""}, {**REQUEST, "content": True},
                     {**REQUEST, "path": 1}, {**REQUEST, "content": None},
@@ -71,7 +72,7 @@ async def test_delete_has_no_workspace_dependency_or_candidate(context, monkeypa
         assert tool_name == "write_file"
         return {"error_code": None, "result": {"path": request["path"], "deleted": True}}
 
-    monkeypatch.setattr(tool, "run_file_tool", run)
+    monkeypatch.setattr(dispatch, "run_file_tool", run)
     for path in ["/user/project/1/file.txt", "/user/skills/example/SKILL.md"]:
         result = await execute_tool("write_file", json.dumps({"operation": "delete", "path": path, "content": None}), context=context)
         assert result == {"error_code": None, "result": {"path": path, "deleted": True}}
@@ -83,9 +84,9 @@ async def test_errors_do_not_record_candidates_or_fall_back(context, monkeypatch
     def fail(*args, **kwargs):
         return {"error_code": "WRITE_FAILED", "result": {}}
 
-    monkeypatch.setattr(tool, "run_file_tool", fail)
+    monkeypatch.setattr(dispatch, "run_file_tool", fail)
     assert (await execute_tool("write_file", json.dumps(REQUEST), context=context))["error_code"] == "WRITE_FAILED"
-    monkeypatch.setattr(tool, "run_file_tool", backend.run_file_tool)
+    monkeypatch.setattr(dispatch, "run_file_tool", backend.run_file_tool)
     monkeypatch.setattr(bubblewrap, "sys", SimpleNamespace(platform="darwin"))
     assert (await execute_tool("write_file", json.dumps(REQUEST), context=context))["error_code"] == "SANDBOX_UNAVAILABLE"
     assert context.written_workspace_paths == []
@@ -113,7 +114,7 @@ async def test_cancelled_write_has_no_candidate(context, monkeypatch):
     def cancel(*args, **kwargs):
         raise CancelledError
 
-    monkeypatch.setattr(tool, "run_file_tool", cancel)
+    monkeypatch.setattr(dispatch, "run_file_tool", cancel)
     with pytest.raises(asyncio.CancelledError):
         await execute_tool("write_file", json.dumps(REQUEST), context=context)
     assert context.written_workspace_paths == []

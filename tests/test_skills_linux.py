@@ -21,7 +21,7 @@ def context():
     workspace = layout.get_project_workdir(user_id, 42)
     workspace.mkdir(parents=True)
     layout.get_skills_dir(user_id).mkdir()
-    return replace(tool_context(workspace), user_id=user_id)
+    return tool_context(workspace, user_id=user_id)
 
 
 async def call(context, tool, **args):
@@ -75,8 +75,8 @@ print('BEFORE')
     result = await run(context, args)
     assert result["error_code"] is None and result["result"]["exit_code"] == 0, result
     assert result["result"]["stdout"] == "AFTER\n"
-    assert json.loads((Path(context.workspace) / "result.json").read_text()) == args
-    assert not (Path(context.workspace) / "hacked").exists()
+    assert json.loads((layout.get_project_workdir(context.user_id, 42) / "result.json").read_text()) == args
+    assert not (layout.get_project_workdir(context.user_id, 42) / "hacked").exists()
     assert (layout.get_skills_dir(context.user_id) / "test-skill/references/data.txt").read_text() == "changed by bash"
     assert context.written_workspace_paths == []
     # Entry edits are ordinary file operations; validation happens when loading.
@@ -95,7 +95,7 @@ print('partial', flush=True)
 while not Path('release').exists(): time.sleep(.02)
 Path('result').write_text(Path('/user/skills/test-skill/references/data.txt').read_text())
 ''')
-    workspace = Path(context.workspace)
+    workspace = layout.get_project_workdir(context.user_id, 42)
     result = await run(context, timeout=1)
     assert result["error_code"] == "BASH_TIMEOUT", result
     assert result["result"]["stdout"] == "partial\n"
@@ -140,7 +140,7 @@ async def test_isolation_and_file_tool_boundaries(context):
     assert context.written_workspace_paths == []
     result = await call(context, "bash", command="test ! -e /user/appendix && test ! -e /user/session && test ! -e /user/diagnostics && test ! -e " + shlex.quote(str(other)), timeout_seconds=None)
     assert result["result"]["exit_code"] == 0
-    (Path(context.workspace) / "link").symlink_to(other / "secret")
+    (layout.get_project_workdir(context.user_id, 42) / "link").symlink_to(other / "secret")
     for path in ("relative.txt", "/user/project/42/../43/shared.txt", "/user/project/42/link"):
         assert (await write(context, path, "leak"))["error_code"] is not None
     assert (other / "secret").read_text() == "secret"

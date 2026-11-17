@@ -46,14 +46,14 @@ TOOLS = {
 MEMORY_TOOLS = frozenset({"write_memory", "list_memory_abstracts", "get_memory_details"})
 
 
-def available_tools(user_configs: dict[str, str] | None = None, *, web_search_enabled: bool = False) -> dict[str, Tool]:
+def available_tools(user_configs: dict[str, str] | None = None, *, web_search_enabled: bool = False, tool_names: frozenset[str] | None = None) -> dict[str, Tool]:
     enabled = memory_enabled(user_configs)
     return {name: tool for name, tool in TOOLS.items()
-            if (enabled or name not in MEMORY_TOOLS) and (web_search_enabled or name != "web_search")}
+            if (tool_names is None or name in tool_names) and (enabled or name not in MEMORY_TOOLS) and (web_search_enabled or name != "web_search")}
 
 
-def tool_definitions(user_configs: dict[str, str] | None = None, *, web_search_enabled: bool = False) -> list[dict]:
-    available = available_tools(user_configs, web_search_enabled=web_search_enabled)
+def tool_definitions(user_configs: dict[str, str] | None = None, *, web_search_enabled: bool = False, tool_names: frozenset[str] | None = None) -> list[dict]:
+    available = available_tools(user_configs, web_search_enabled=web_search_enabled, tool_names=tool_names)
     definitions = [definition for definition in _all_tool_definitions() if definition["name"] in available]
     for definition in definitions:
         _strict_schema(definition["parameters"])
@@ -128,7 +128,6 @@ def _all_tool_definitions() -> list[dict]:
         "type": "function", "name": "read_file", "strict": True,
         "description": (
             "Read UTF-8 text inside a Linux sandbox using an absolute path. "
-            "User projects are under /user/project and skills under /user/skills. "
             "No '..' or symlinks. At most 2000 lines / 50 KiB. "
             "Offsets count original bytes including LF/CRLF; characters are never split. "
             "If eof=false, continue at last_line_no+1, byte 1 when last_line_complete=true; "
@@ -139,7 +138,6 @@ def _all_tool_definitions() -> list[dict]:
         "type": "function", "name": "write_file", "strict": True,
         "description": (
             "Write UTF-8 text inside a Linux sandbox using an absolute path, creating missing parents. "
-            "User projects are under /user/project and skills under /user/skills. "
             "operation=write creates or atomically overwrites. operation=delete deletes ordinary files, "
             "requires content=null, and cannot delete directories. Missing files count as deleted. "
             "No '..' or symlinks. Read existing files before overwriting them. "
@@ -150,7 +148,6 @@ def _all_tool_definitions() -> list[dict]:
         "type": "function", "name": "edit_file", "strict": True,
         "description": (
             "Edit existing UTF-8 text inside a Linux sandbox using an absolute path. Read it first. "
-            "User projects are under /user/project and skills under /user/skills. "
             "No '..' or symlinks. "
             "Each nonempty old_text must uniquely "
             "match the original file, and matched byte ranges must not overlap. Exact matching takes priority; "
@@ -162,11 +159,10 @@ def _all_tool_definitions() -> list[dict]:
     }, {
         "type": "function", "name": "bash", "strict": True,
         "description": (
-            "Run a non-interactive Bash command in a fresh Linux bubblewrap sandbox, starting in /user/project/{project_id}. "
-            "User projects under /user/project and skills under /user/skills are writable and persist. Create and use /tmp files within the same call; they disappear when it ends. "
-            "Write final deliverables and any scripts or intermediate files needed across calls to workspace. "
-            "Host network is shared, system tools are read-only. "
-            "No shell state or background processes survive a call. timeout_seconds=null uses 120s (max 300s). "
+            "Run a non-interactive Bash command in a fresh shell, starting in workspace. "
+            "Shell variables and current directory do not persist across calls. "
+            "Background processes are cleaned up when the call ends. "
+            "timeout_seconds=null uses 120s (max 300s). "
             "Nonzero command exits are returned with output. Each output stream retains at most 32 KiB "
             "of source bytes (head and tail) plus a truncation marker. Never automatically retry side effects."
         ),

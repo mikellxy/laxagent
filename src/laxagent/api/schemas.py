@@ -1,4 +1,5 @@
 from datetime import datetime
+from pathlib import PurePosixPath
 from typing import Literal
 from uuid import UUID
 
@@ -151,6 +152,23 @@ class NameRequest(BaseModel):
 
 class CreateSessionRequest(BaseModel):
     model_config = ConfigDict(extra="forbid", strict=True)
+
+
+class ContainerBindingRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+    container_id: str | None = Field(default=None, pattern=r"^[A-Za-z0-9][A-Za-z0-9_.-]*$")
+    container_workspace: str | None = None
+
+    @field_validator("container_workspace")
+    @classmethod
+    def absolute_workspace(cls, value):
+        if value is not None and (not PurePosixPath(value).is_absolute() or "\x00" in value or ".." in PurePosixPath(value).parts):
+            raise ValueError("container_workspace must be an absolute container path without '..'")
+        return value
+
+
+class ProjectRequest(NameRequest, ContainerBindingRequest):
+    pass
 
 
 class ProjectResponse(BaseModel):

@@ -6,12 +6,11 @@ from uuid import UUID
 from langgraph.runtime import Runtime
 
 from laxagent import layout
-from laxagent.context.prompts import system_prompt
 from laxagent.agent.context import AgentContext
 from laxagent.agent.state import AgentState
 from laxagent.run_errors import make_run_error
 from laxagent.models.responses import messages_to_input
-from laxagent.skills import initialize_skills, skill_catalog, SkillError
+from laxagent.skills import initialize_skills, SkillError
 
 
 def _ensure_directory(home: Path, path: Path) -> None:
@@ -54,17 +53,16 @@ def initialize_workspace(state: AgentState, builtin_skills_dir: Path | None = No
 
 
 async def prepare(state: AgentState, runtime: Runtime[AgentContext]):
-    workspace = await asyncio.to_thread(initialize_workspace, state, runtime.context.builtin_skills_dir)
-    skills = await asyncio.to_thread(skill_catalog, state["user_id"])
+    prompt = await asyncio.to_thread(runtime.context.profile.prepare, runtime.context, state)
     next_seq, messages = await runtime.context.repository.append_message(
         user_id=state["user_id"], project_id=state["project_id"], session_id=state["session_id"],
         role="user", content=state["user_query"], load_context=True,
         appendix=state.get("appendix", []),
         expected_seq=state.get("next_msg_seq"), replay_safe=True,
     )
-    messages = [{"role": "system", "content": system_prompt(str(layout.get_sandbox_project_workdir(str(state["project_id"]))), state.get("user_configs"), skills)}, *messages]
+    messages = [{"role": "system", "content": prompt}, *messages]
     return {
-        "workspace": workspace, "pending_tool_calls": [],
+        "workspace": runtime.context.workspace, "pending_tool_calls": [],
         "model_input": messages_to_input(messages),
         "next_msg_seq": next_seq,
         "messages": messages,

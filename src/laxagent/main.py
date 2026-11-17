@@ -26,10 +26,10 @@ class ManagedServer(uvicorn.Server):
             raise RuntimeError("HTTP listener failed to start") from None
 
 
-async def run_servers(config: AppConfig) -> None:
+async def run_servers(config: AppConfig, *, eval_in_docker: bool = False) -> None:
     stop = asyncio.Event()
     loop = asyncio.get_running_loop()
-    api_app = create_app(config)
+    api_app = create_app(config, eval_in_docker=eval_in_docker)
     servers = [
         ManagedServer(uvicorn.Config(
             create_router_app(config.llm), host="127.0.0.1", port=config.llm_router.port,
@@ -77,10 +77,11 @@ async def run_servers(config: AppConfig) -> None:
 def main() -> None:
     parser = argparse.ArgumentParser(description="Start the API, LLM router and private eval server")
     parser.add_argument("--config", type=Path, default=Path("config/config.json"))
+    parser.add_argument("--eval_in_docker", action="store_true", help="Run tools in project-bound Docker containers")
     args = parser.parse_args()
     try:
         config = load_config(args.config)
-        asyncio.run(run_servers(config))
+        asyncio.run(run_servers(config, eval_in_docker=args.eval_in_docker))
     except (ValueError, RuntimeError) as exc:
         parser.exit(1, f"{exc}\n")
 

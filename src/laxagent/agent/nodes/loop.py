@@ -45,7 +45,7 @@ async def call_model(state: AgentState, runtime: Runtime[AgentContext]):
     )
     async with aclosing(stream_response(
         runtime.context.client, model=state["model"], messages=wire_input,
-        tools=tool_definitions(state.get("user_configs"), web_search_enabled=runtime.context.web_search is not None),
+        tools=tool_definitions(state.get("user_configs"), web_search_enabled=runtime.context.web_search is not None, tool_names=runtime.context.profile.tool_names),
         diagnostics=diagnostics,
     )) as stream:
         async for event in stream:
@@ -101,7 +101,9 @@ async def tool_node(state: AgentState, runtime: Runtime[AgentContext]):
     model_input = state["model_input"]
     appendix_model = state.get("appendix_model", state["model"])
     tool_context = ToolContext(
-        user_id=state["user_id"], repository=runtime.context.repository, workspace=state["workspace"],
+        user_id=state["user_id"], repository=runtime.context.repository, workspace=runtime.context.workspace,
+        backend=runtime.context.backend, skill_dir=runtime.context.skill_dir,
+        sandbox_skill_dir=runtime.context.sandbox_skill_dir, tool_names=runtime.context.profile.tool_names,
         written_workspace_paths=list(state.get("written_workspace_paths", [])),
         web_search=runtime.context.web_search,
         client=runtime.context.client, appendix_model=appendix_model,

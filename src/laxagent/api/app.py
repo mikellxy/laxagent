@@ -25,17 +25,19 @@ from laxagent.runtime.task_manager import TaskManager
 from laxagent.storage.database import Database, DatabaseError
 from laxagent.storage.repositories import Repository
 from laxagent.storage.checkpoints import open_checkpointer
-from laxagent.skills import builtin_snapshots
+from laxagent.runtime.profile import StandardProfile, DockerEvalProfile
+from laxagent.sandbox.bubblewrap import SandboxError
 from laxagent.web_search import WebSearchService
 
 
-def create_app(config: AppConfig | None = None) -> FastAPI:
+def create_app(config: AppConfig | None = None, *, eval_in_docker: bool = False) -> FastAPI:
+    profile = DockerEvalProfile() if eval_in_docker else StandardProfile()
     @asynccontextmanager
     async def lifespan(app: FastAPI):
         if config is None:
             yield
             return
-        builtin_snapshots(config.builtin_skills_dir)
+        profile.startup(config.builtin_skills_dir)
         async with AsyncExitStack() as stack:
             db = await stack.enter_async_context(Database.open(config.database))
             checkpointer = await stack.enter_async_context(open_checkpointer(config.database))
@@ -44,7 +46,7 @@ def create_app(config: AppConfig | None = None) -> FastAPI:
             web_search = (await stack.enter_async_context(WebSearchService.open(config.web_search))
                           if config.web_search is not None else None)
             app.state.agent_context = AgentContext(
-                client, events, Repository(db), recursion_limit=config.recursion_limit,
+                client, events, Repository(db), recursion_limit=config.recursion_limit, profile=profile,
                 builtin_skills_dir=config.builtin_skills_dir,
                 web_search=web_search,
                 llm=config.llm,
@@ -66,11 +68,19 @@ def create_app(config: AppConfig | None = None) -> FastAPI:
 
     app = FastAPI(title="LaxAgent", lifespan=lifespan)
     app.state.config = config
+    app.state.profile = profile
     app.include_router(runs_router, prefix="/api/v1")
-    app.include_router(workspace_files_router, prefix="/api/v1")
+    if profile.host_file_routes:
+        app.include_router(workspace_files_router, prefix="/api/v1")
+        for router in (appendices_router, skills_router):
+            app.include_router(router, prefix="/api/v1")
     app.include_router(auth_router, prefix="/api/v1")
-    for router in (projects_router, sessions_router, models_router, memories_router, user_configs_router, appendices_router, skills_router):
+    for router in (projects_router, sessions_router, models_router, memories_router, user_configs_router):
         app.include_router(router, prefix="/api/v1")
+
+    @app.exception_handler(SandboxError)
+    async def sandbox_error(request, exc):
+        return JSONResponse({"detail": {"error": str(exc)}}, status_code=503)
 
     @app.exception_handler(DatabaseError)
     @app.exception_handler(EventStoreError)

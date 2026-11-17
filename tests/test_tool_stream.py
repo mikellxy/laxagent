@@ -7,6 +7,7 @@ import nats
 import pytest
 
 from laxagent.agent.nodes.loop import call_model
+from laxagent.runtime.profile import StandardProfile
 from laxagent.runtime.events import EventStore
 from model_helpers import ModelStream, client_for, completed
 
@@ -33,7 +34,7 @@ async def test_model_completes_with_full_output_when_all_previews_are_dropped(mo
         result = await call_model(
             {"user_id": "test-user", "session_id": 40, "run_id": 49, "next_msg_seq": 8,
              "model": "chosen:model", "model_input": []},
-            SimpleNamespace(context=SimpleNamespace(client=client, resume_time=0, web_search=None,
+            SimpleNamespace(context=SimpleNamespace(profile=StandardProfile(), client=client, resume_time=0, web_search=None,
                                                     diagnostic_secrets=(), events=store)),
         )
     event = result["pending_model_response"]["event"]
@@ -60,7 +61,7 @@ async def test_tool_progress_is_published_before_completion_without_executing_or
     state = {"user_id": "test-user", "session_id": 40, "run_id": 49, "next_msg_seq": 8, "model": "chosen:model", "model_input": []}
     async with client_for(source, []) as client:
         # No repository/workspace/tool context: these progress events must be display-only.
-        runtime = SimpleNamespace(context=SimpleNamespace(client=client, resume_time=3, web_search=None, diagnostic_secrets=(),
+        runtime = SimpleNamespace(context=SimpleNamespace(profile=StandardProfile(), client=client, resume_time=3, web_search=None, diagnostic_secrets=(),
                                                           events=SimpleNamespace(publish=publish)))
         task = asyncio.create_task(call_model(state, runtime))
         try:
@@ -96,7 +97,7 @@ async def test_complete_response_remains_authoritative_for_tool_execution():
 
     async with client_for(source, []) as client:
         result = await call_model({"user_id": "test-user", "session_id": 40, "run_id": 49, "next_msg_seq": 8, "model": "chosen:model", "model_input": []},
-                                  SimpleNamespace(context=SimpleNamespace(client=client, resume_time=0, web_search=None, diagnostic_secrets=(),
+                                  SimpleNamespace(context=SimpleNamespace(profile=StandardProfile(), client=client, resume_time=0, web_search=None, diagnostic_secrets=(),
                                                                           events=SimpleNamespace(publish=publish))))
     assert result["pending_model_response"]["event"]["tool_calls"] == [
         {"call_id": "call-a", "name": "write_file", "arguments": '{"content":"final"}'},

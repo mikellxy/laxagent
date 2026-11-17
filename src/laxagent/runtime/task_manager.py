@@ -56,6 +56,8 @@ class TaskManager:
         return await self.control(self._submit, values)
 
     async def _submit(self, values):
+        if values.get("appendix") and not self.context.profile.attachments:
+            raise DatabaseError("Attachments are unavailable in Docker eval mode", 422)
         run = await self.context.repository.create_run(**values)
         try:
             await self.context.events.create_run(run.id)

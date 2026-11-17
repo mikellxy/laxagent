@@ -94,7 +94,7 @@ async def test_login_seeds_incrementally_and_retries_failure(web_api, repository
     assert not (layout.get_user_data_dir(owner) / "session").exists()
     failed_owner = str(uuid4())
     with monkeypatch.context() as patch:
-        patch.setattr("laxagent.api.auth.initialize_skills", Mock(side_effect=OSError("private path")))
+        patch.setattr("laxagent.runtime.profile.initialize_skills", Mock(side_effect=OSError("private path")))
         encode = Mock(side_effect=AssertionError("must not sign"))
         patch.setattr("laxagent.api.auth.jwt.encode", encode)
         response = await web_api.post("/api/v1/login", json={"user_id": failed_owner})

@@ -17,7 +17,7 @@ def entry(name="example", body="Use this skill.", extra=""):
 
 @pytest.fixture
 def context(tmp_path):
-    return replace(tool_context(tmp_path / "project" / "42"), user_id=str(uuid4()))
+    return tool_context(tmp_path / "project" / "42", user_id=str(uuid4()))
 
 
 def make_skill(context, name="example", **kwargs):
@@ -81,7 +81,7 @@ async def test_manual_load_and_user_isolation(context):
     make_skill(context, extra="allow_auto_use: false\n")
     assert skills.skill_catalog(context.user_id) == []
     assert (await load(context))["error_code"] is None
-    other = replace(context, user_id=str(uuid4()))
+    other = tool_context(context.workspace, user_id=str(uuid4()))
     assert (await load(other))["error_code"] == "SKILL_NOT_FOUND"
     assert not layout.get_skills_dir(other.user_id).exists()
 
@@ -149,7 +149,8 @@ async def test_tool_node_saves_result_without_loaded_skill_state(context):
     make_skill(context)
     repository = SimpleNamespace(append_message=AsyncMock(return_value=(2, [])))
     events = SimpleNamespace(publish=AsyncMock())
-    runtime = SimpleNamespace(context=AgentContext(client=None, events=events, repository=repository))
+    runtime = SimpleNamespace(context=AgentContext(client=None, events=events, repository=repository, workspace=context.workspace,
+                                                         skill_dir=context.skill_dir, sandbox_skill_dir=context.sandbox_skill_dir))
     state = {
         "user_id": context.user_id, "project_id": 42, "session_id": 1, "run_id": 1,
         "workspace": context.workspace, "model": "test:model", "next_msg_seq": 1,

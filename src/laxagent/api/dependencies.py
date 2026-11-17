@@ -19,3 +19,7 @@ def get_context(request: Request):
 
 def get_repository(request: Request):
     return get_context(request).repository
+
+
+def get_profile(request: Request):
+    return request.app.state.profile

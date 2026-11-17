@@ -9,6 +9,7 @@ from types import SimpleNamespace
 
 import pytest
 
+from laxagent.sandbox import backend as dispatch
 from laxagent import layout
 from laxagent.sandbox.bubblewrap import OUTPUT_HALF, OutputBuffer, SandboxError, _StatusPipe
 from laxagent.tools.executor import execute_tool
@@ -120,7 +121,7 @@ async def test_bash_schema_and_async_dispatch(tmp_path, monkeypatch):
         assert not stop_event.is_set()
         return expected
 
-    monkeypatch.setattr(tool, "run_bash", run)
+    monkeypatch.setattr(dispatch, "run_bash", run)
     for invalid in ["{", "[]", json.dumps({"command": "pwd"}),
                     json.dumps({"command": "pwd", "timeout_seconds": True}),
                     json.dumps({"command": "pwd", "timeout_seconds": 301}),
@@ -149,7 +150,7 @@ async def test_timeout_keeps_partial_output(tmp_path, monkeypatch):
     def timeout(*args, **kwargs):
         raise SandboxError("BASH_TIMEOUT", {"stdout": "partial", "timed_out": True})
 
-    monkeypatch.setattr(tool, "run_bash", timeout)
+    monkeypatch.setattr(dispatch, "run_bash", timeout)
     args = '{"command":"sleep 5","timeout_seconds":1}'
     result = await execute_tool("bash", args, context=tool_context(tmp_path))
     assert result == {"error_code": "BASH_TIMEOUT", "result": {"stdout": "partial", "timed_out": True}}
@@ -174,7 +175,7 @@ async def test_cancellation_waits_for_thread_cleanup(tmp_path, monkeypatch, fail
         finally:
             finished.set()
 
-    monkeypatch.setattr(tool, "run_bash", run)
+    monkeypatch.setattr(dispatch, "run_bash", run)
     task = asyncio.create_task(execute_tool("bash", '{"command":"true","timeout_seconds":null}',
                                             context=tool_context(tmp_path)))
     try:

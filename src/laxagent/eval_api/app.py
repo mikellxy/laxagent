@@ -8,7 +8,8 @@ from fastapi import Depends, FastAPI, HTTPException, Form, UploadFile
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 from starlette.concurrency import run_in_threadpool
 
-from laxagent.api.dependencies import get_repository
+from laxagent.api.dependencies import get_repository, get_profile
+from laxagent.api.schemas import ContainerBindingRequest
 from laxagent.api.workspace_files import FileDownload
 from laxagent.eval_api.archive import write_archive
 from laxagent.eval_api.store import EvalStore
@@ -16,7 +17,7 @@ from laxagent.eval_api.initialize import initialize_workspace, PackageError
 from laxagent.layout import get_project_workdir
 
 
-class CreateSessionRequest(BaseModel):
+class CreateSessionRequest(ContainerBindingRequest):
     model_config = ConfigDict(extra="forbid", strict=True)
     session_name: str = Field(min_length=1)
 
@@ -68,12 +69,17 @@ def create_eval_app(api_app: FastAPI) -> FastAPI:
             app.state.task_manager = None
 
     app = FastAPI(title="LaxAgent Eval", lifespan=lifespan)
+    app.state.profile = api_app.state.profile
     app.exception_handlers.update(api_app.exception_handlers)
 
     @app.post("/eval/create_session", status_code=201, response_model=CreateSessionResponse)
-    async def create_session(body: CreateSessionRequest, store=Depends(get_eval_store)):
-        session = await store.create_session(body.session_name)
+    async def create_session(body: CreateSessionRequest, store=Depends(get_eval_store), profile=Depends(get_profile)):
+        binding = await run_in_threadpool(profile.prepare_project, body.container_id, body.container_workspace)
+        session = await store.create_session(body.session_name, **binding)
         return {"user_id": session.user_id, "project_id": session.project_id, "session_id": session.id}
+
+    if not app.state.profile.host_file_routes:
+        return app
 
     @app.post("/eval/init_session", response_model=InitSessionResponse)
     async def init_session(session_id: Annotated[int, Form(gt=0)], package: UploadFile,

@@ -1,5 +1,8 @@
 from dataclasses import dataclass, field
+from pathlib import Path, PurePosixPath
 from openai import AsyncOpenAI
+
+from laxagent.sandbox.backend import ExecutionBackend
 
 from laxagent.storage.repositories import Repository
 from laxagent.web_search import WebSearchService
@@ -12,6 +15,10 @@ class ToolContext:
     user_id: str
     repository: Repository
     workspace: str
+    backend: ExecutionBackend | None = None
+    skill_dir: Path | None = None
+    sandbox_skill_dir: PurePosixPath | None = None
+    tool_names: frozenset[str] | None = None
     written_workspace_paths: list[str] = field(default_factory=list)
     web_search: WebSearchService | None = None
     client: AsyncOpenAI | None = None

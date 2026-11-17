@@ -22,7 +22,7 @@ async def test_candidate_paths_are_ordered_deduplicated_and_include_noops(tmp_pa
     tmp_path = get_project_workdir(user_id, 42)
     tmp_path.mkdir(parents=True)
     get_skills_dir(user_id).mkdir()
-    context = replace(tool_context(tmp_path), user_id=user_id)
+    context = tool_context(tmp_path, user_id=user_id)
     for path in ['./nested//a.txt', 'b.txt', 'nested/a.txt']:
         await write_file(context, WriteFileArgs(path="/user/project/42/" + path, content='same'))
     (tmp_path / 'existing.txt').write_text('same')

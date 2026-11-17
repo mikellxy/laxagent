@@ -1,8 +1,7 @@
-"""Validated user skills, bounded snapshots and descriptor-relative access."""
+"""Skill metadata, file discovery and incremental builtin initialization."""
 
 from contextlib import contextmanager
 from dataclasses import dataclass
-import hashlib
 import logging
 import os
 from pathlib import Path
@@ -156,18 +155,22 @@ def file_tree(directory: int) -> list[str]:
     return sorted(files)
 
 
+def read_skill_entry(directory: int) -> bytes:
+    fd = os.open("SKILL.md", os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=directory)
+    with os.fdopen(fd, "rb") as file:
+        info = os.fstat(file.fileno())
+        if not stat.S_ISREG(info.st_mode) or info.st_nlink != 1:
+            raise SkillError("INVALID_SKILL_FILE")
+        return file.read(MAX_SKILL_BYTES + 1)
+
+
 @dataclass(frozen=True)
-class SkillSnapshot:
+class BuiltinSkill:
     metadata: dict
     contents: dict[str, bytes]
-    digest: str
-
-    @property
-    def files(self):
-        return sorted(self.contents)
 
 
-def snapshot(directory: int, name: str) -> SkillSnapshot:
+def _read_builtin_skill(directory: int, name: str) -> BuiltinSkill:
     contents, total = {}, 0
     for parent, filename, relative in _walk(directory):
         fd = os.open(filename, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=parent)
@@ -183,15 +186,11 @@ def snapshot(directory: int, name: str) -> SkillSnapshot:
     if "SKILL.md" not in contents:
         raise SkillError("INVALID_SKILL_METADATA")
     metadata = parse_metadata(name, contents["SKILL.md"])
-    digest = hashlib.sha256()
-    for relative in sorted(contents):
-        digest.update(relative.encode("utf-8"))
-        digest.update(b"\x00")
-        digest.update(hashlib.sha256(contents[relative]).digest())
-    return SkillSnapshot(metadata, contents, digest.hexdigest())
+    return BuiltinSkill(metadata, contents)
 
 
-def builtin_snapshots(source: Path | None) -> list[SkillSnapshot]:
+def builtin_snapshots(source: Path | None) -> list[BuiltinSkill]:
+    """Read builtin files for startup validation and initial copying, not execution."""
     if source is None or not source.exists():
         return []
     root = os.open(source, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
@@ -201,7 +200,7 @@ def builtin_snapshots(source: Path | None) -> list[SkillSnapshot]:
             validate_name(name)
             child = os.open(name, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=root)
             try:
-                result.append(snapshot(child, name))
+                result.append(_read_builtin_skill(child, name))
             finally:
                 os.close(child)
         return result
@@ -248,9 +247,10 @@ def skill_catalog(user_id: str) -> list[dict]:
             continue
         try:
             with skill_directory(user_id, name) as directory:
-                skill = snapshot(directory, name)
-            if skill.metadata["allow_auto_use"]:
-                result.append({key: skill.metadata[key] for key in ("name", "description")})
+                metadata = parse_metadata(name, read_skill_entry(directory))
+                file_tree(directory)
+            if metadata["allow_auto_use"]:
+                result.append({key: metadata[key] for key in ("name", "description")})
         except (ToolError, OSError, UnicodeError):
             logger.warning("Ignoring invalid skill %r", name)
     return result
@@ -269,12 +269,7 @@ def user_skill_list(user_id: str) -> list[dict]:
             continue
         try:
             with skill_directory(user_id, name) as directory:
-                fd = os.open("SKILL.md", os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=directory)
-                with os.fdopen(fd, "rb") as file:
-                    info = os.fstat(file.fileno())
-                    if not stat.S_ISREG(info.st_mode) or info.st_nlink != 1:
-                        raise SkillError("INVALID_SKILL_FILE")
-                    metadata = parse_metadata(name, file.read(MAX_SKILL_BYTES + 1))
+                metadata = parse_metadata(name, read_skill_entry(directory))
             result.append({"name": metadata["name"], "desc": metadata["description"]})
         except (ToolError, OSError, UnicodeError):
             logger.warning("Ignoring invalid skill entry %r", name)

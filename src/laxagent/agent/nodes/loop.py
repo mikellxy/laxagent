@@ -102,7 +102,6 @@ async def tool_node(state: AgentState, runtime: Runtime[AgentContext]):
     appendix_model = state.get("appendix_model", state["model"])
     tool_context = ToolContext(
         user_id=state["user_id"], repository=runtime.context.repository, workspace=state["workspace"],
-        loaded_skills=dict(state.get("loaded_skills", {})),
         written_workspace_paths=list(state.get("written_workspace_paths", [])),
         web_search=runtime.context.web_search,
         client=runtime.context.client, appendix_model=appendix_model,
@@ -149,5 +148,5 @@ async def tool_node(state: AgentState, runtime: Runtime[AgentContext]):
     messages.append(message)
     model_input = append_tool_message(model_input, message)
     return {"messages": messages, "next_msg_seq": next_seq, "tool_call_history": tool_call_history,
-            "model_input": model_input, "pending_tool_calls": state["pending_tool_calls"][1:], "loaded_skills": tool_context.loaded_skills,
+            "model_input": model_input, "pending_tool_calls": state["pending_tool_calls"][1:],
             "written_workspace_paths": tool_context.written_workspace_paths}

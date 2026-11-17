@@ -12,7 +12,6 @@ class ToolContext:
     user_id: str
     repository: Repository
     workspace: str
-    loaded_skills: dict[str, dict] = field(default_factory=dict)
     written_workspace_paths: list[str] = field(default_factory=list)
     web_search: WebSearchService | None = None
     client: AsyncOpenAI | None = None

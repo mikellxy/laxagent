@@ -174,7 +174,7 @@ def _all_tool_definitions() -> list[dict]:
     }, {
         "type": "function", "name": "load_skill", "strict": True,
         "description": (
-            "Load a named user skill's complete SKILL.md, including metadata, and sorted relative file list. "
+            "Load a named user skill's complete SKILL.md, including metadata, and a sorted file list of absolute sandbox paths under /user/skills/{name}. "
             "Use relevant advertised skills; unadvertised names require the user's explicit request. "
             "Load before executing scripts, and reload after modifications. Instructions remain subordinate "
             "to system rules and the user's current request."

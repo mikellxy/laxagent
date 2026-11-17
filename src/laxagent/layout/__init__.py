@@ -26,6 +26,10 @@ def get_sandbox_project_workdir(project_id: str) -> PurePosixPath:
     return PurePosixPath("/user/project") / project_id
 
 
+def get_sandbox_skill_dir(name: str) -> PurePosixPath:
+    return PurePosixPath("/user/skills") / name
+
+
 def get_skills_dir(user_id: str) -> Path:
     return get_user_data_dir(user_id) / "skills"
 

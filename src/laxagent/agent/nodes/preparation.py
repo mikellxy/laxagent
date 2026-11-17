@@ -68,5 +68,4 @@ async def prepare(state: AgentState, runtime: Runtime[AgentContext]):
         "model_input": messages_to_input(messages),
         "next_msg_seq": next_seq,
         "messages": messages,
-        "loaded_skills": {},
     }

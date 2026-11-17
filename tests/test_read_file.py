@@ -1,101 +1,182 @@
+import asyncio
+from concurrent.futures import CancelledError
+import importlib
 import json
 import os
+from pathlib import Path
+import threading
+from types import SimpleNamespace
 
 import pytest
 
-from laxagent.tools.builtin.read_file import MAX_BYTES, ReadFileArgs, ReadFileError, read_file
+from laxagent import layout
+from laxagent.sandbox.bubblewrap import SandboxError
 from laxagent.tools.executor import execute_tool
+from laxagent.tools.registry import tool_definitions
 from tool_helpers import tool_context
-from laxagent.tools.results import format_result
+
+backend = importlib.import_module("laxagent.sandbox.file_tools")
+tool = importlib.import_module("laxagent.tools.builtin.read_file")
+REQUEST = {"path": "/user/project/1/text.txt", "start_line_no": 1, "start_byte_no": 1, "total_lines": 1}
+PAGE = {"text": "中文\n", "eof": True, "last_line_no": 1, "last_line_complete": True, "last_byte_no": 7}
 
 
-def read(workspace, path="text.txt", line=1, byte=1, lines=2000):
-    return read_file(tool_context(workspace), ReadFileArgs(
-        path=path, start_line_no=line, start_byte_no=byte, total_lines=lines,
-    ))
-
-
-def test_unicode_long_line_continuation_without_data_loss(tmp_path):
-    text = "中文🙂" * 10000 + "\n最后一行"
-    (tmp_path / "text.txt").write_text(text)
-    line, byte, chunks = 1, 1, []
-    while True:
-        result = read(tmp_path, line=line, byte=byte)
-        chunks.append(result["text"])
-        assert len(result["text"].encode()) <= MAX_BYTES
-        if result["eof"]:
-            break
-        line = result["last_line_no"] + int(result["last_line_complete"])
-        byte = 1 if result["last_line_complete"] else result["last_byte_no"] + 1
-    assert "".join(chunks) == text
-    assert len(chunks) > 1
-    assert result["last_line_no"] == 2 and result["last_byte_no"] == len("最后一行".encode())
-
-
-def test_line_cap_crlf_and_offsets(tmp_path):
-    (tmp_path / "text.txt").write_bytes("中a\r\n\n尾".encode())
-    assert read(tmp_path, byte=4, lines=1) == {
-        "text": "a\r\n", "eof": False, "last_line_no": 1,
-        "last_line_complete": True, "last_byte_no": 6,
-    }
-    assert read(tmp_path, line=2, lines=1)["text"] == "\n"
-    assert read(tmp_path, line=3)["text"] == "尾"
-    (tmp_path / "text.txt").write_bytes(b"x\n" * 2001)
-    result = read(tmp_path, lines=5000)
-    assert result["last_line_no"] == 2000 and not result["eof"]
-    assert read(tmp_path, line=2001)["eof"]
-
-
-def test_empty_file_and_exact_byte_limit(tmp_path):
-    (tmp_path / "text.txt").write_bytes(b"")
-    assert read(tmp_path) == {"text": "", "eof": True, "last_line_no": 0,
-                             "last_line_complete": True, "last_byte_no": 0}
-    (tmp_path / "text.txt").write_bytes(b"a" * MAX_BYTES)
-    result = read(tmp_path)
-    assert result["eof"] and result["last_line_complete"]
-    (tmp_path / "text.txt").write_bytes(b"a" * (MAX_BYTES - 2) + b"\n" + "中".encode())
-    result = read(tmp_path)
-    assert result["last_line_no"] == 1 and result["last_line_complete"] and not result["eof"]
-    assert read(tmp_path, line=2)["text"] == "中"
-
-
-@pytest.mark.parametrize("line,byte", [(1, 2), (1, 20), (2, 1)])
-def test_invalid_cursor(tmp_path, line, byte):
-    (tmp_path / "text.txt").write_text("中文\n")
-    with pytest.raises(ReadFileError, match="INVALID_POSITION"):
-        read(tmp_path, line=line, byte=byte)
-
-
-@pytest.mark.parametrize("raw", [b"a\x00b", b"\xff", b"\xe4\xb8", b"abc\xe4\n"])
-def test_rejects_binary_and_invalid_utf8(tmp_path, raw):
-    (tmp_path / "text.txt").write_bytes(raw)
-    with pytest.raises(ReadFileError, match="NOT_UTF8_TEXT"):
-        read(tmp_path)
-
-
-def test_workspace_boundary_and_special_files(tmp_path):
-    root = tmp_path / "workspace"
-    root.mkdir()
-    (tmp_path / "secret").write_text("secret")
-    (root / "link").symlink_to(tmp_path / "secret")
-    (root / "directory_link").symlink_to(tmp_path, target_is_directory=True)
-    os.mkfifo(root / "fifo")
-    for path in ["../secret", str(tmp_path / "secret"), "link", "directory_link/secret", "fifo", "."]:
-        with pytest.raises(ReadFileError):
-            read(root, path=path)
-    (root / "sub").mkdir()
-    (root / "sub/text").write_text("safe")
-    assert read(root, path="sub/text")["text"] == "safe"
+@pytest.fixture
+def context():
+    return tool_context("/unused-by-read-file")
 
 
 @pytest.mark.anyio
-async def test_executor_errors_and_guidance(tmp_path):
-    args = {"path": "missing", "start_line_no": 1, "start_byte_no": 1, "total_lines": 1}
-    result = await execute_tool("read_file", json.dumps(args), context=tool_context(tmp_path))
-    assert result == {"error_code": "FILE_NOT_FOUND", "result": {}}
-    assert format_result(result).startswith("文件不存在")
-    assert "FILE_NOT_FOUND" in format_result(result)
-    for invalid in ["{", "[]", json.dumps({**args, "start_byte_no": True}), json.dumps({**args, "extra": 1})]:
-        result = await execute_tool("read_file", invalid, context=tool_context(tmp_path))
-        assert result["error_code"] == "INVALID_ARGUMENTS"
-    assert (await execute_tool("missing", "{}", context=tool_context(tmp_path)))["error_code"] == "UNKNOWN_TOOL"
+async def test_dispatch_uses_absolute_paths_and_worker(context, monkeypatch):
+    calls = []
+
+    def run(tool_name, mounts, request, *, stop_event):
+        assert tool_name == "read_file"
+        calls.append((mounts, request, threading.get_ident()))
+        assert not stop_event.is_set()
+        return {"error_code": None, "result": PAGE}
+
+    monkeypatch.setattr(tool, "run_file_tool", run)
+    result = await execute_tool("read_file", json.dumps(REQUEST), context=context)
+    assert result == {"error_code": None, "result": PAGE}
+    assert calls[0][:2] == (layout.get_user_sandbox_mounts(context.user_id), REQUEST)
+    assert calls[0][2] != threading.get_ident()
+    definition = next(item for item in tool_definitions() if item["name"] == "read_file")
+    assert "skill_name" not in definition["parameters"]["properties"]
+    for invalid in ["{", "[]", {**REQUEST, "start_byte_no": True}, {**REQUEST, "skill_name": None}]:
+        payload = invalid if isinstance(invalid, str) else json.dumps(invalid)
+        assert (await execute_tool("read_file", payload, context=context))["error_code"] == "INVALID_ARGUMENTS"
+    assert len(calls) == 1
+
+
+@pytest.mark.anyio
+async def test_file_errors_and_no_host_fallback(context, monkeypatch):
+    def missing(*args, **kwargs):
+        return {"error_code": "FILE_NOT_FOUND", "result": {}}
+
+    monkeypatch.setattr(tool, "run_file_tool", missing)
+    assert await execute_tool("read_file", json.dumps(REQUEST), context=context) == {
+        "error_code": "FILE_NOT_FOUND", "result": {},
+    }
+    monkeypatch.setattr(tool, "run_file_tool", backend.run_file_tool)
+    monkeypatch.setattr(backend, "sys", SimpleNamespace(platform="darwin"))
+    assert (await execute_tool("read_file", json.dumps(REQUEST), context=context))["error_code"] == "SANDBOX_UNAVAILABLE"
+
+
+@pytest.mark.parametrize("tool_name", ["read_file", "write_file", "edit_file"])
+def test_profile_mounts_only_projects_skills_and_direct_binary(tmp_path, monkeypatch, tool_name):
+    root = tmp_path.resolve()
+    projects, skills = root / "project", root / "skills"
+    projects.mkdir()
+    skills.mkdir()
+    binary = root / tool_name
+    binary.write_bytes(b"test binary")
+    binary.chmod(0o755)
+    original_resolve, original_access = Path.resolve, os.access
+
+    def resolve(path, *args, **kwargs):
+        # Only the fixed Linux system files are simulated on non-Linux hosts.
+        return path if str(path).startswith("/etc/") else original_resolve(path, *args, **kwargs)
+
+    monkeypatch.setattr(backend, "sys", SimpleNamespace(platform="linux"))
+    monkeypatch.setattr(backend, "BIN_DIR", root)
+    monkeypatch.setattr(Path, "resolve", resolve)
+    monkeypatch.setattr(backend.os, "access", lambda path, mode: True if path == backend.BWRAP else original_access(path, mode))
+    mounts = ((projects, "/user/project"), (skills, "/user/skills"))
+    argv = backend.build_argv(tool_name, mounts, 17)
+    binds = [argv[i + 1:i + 3] for i, value in enumerate(argv) if value == "--bind"]
+    assert binds == [[str(projects), "/user/project"], [str(skills), "/user/skills"]]
+    assert argv[-2:] == ["--", f"/{tool_name}"]
+    assert argv[argv.index("--chdir") + 1] == "/"
+    assert ["--ro-bind", str(binary), f"/{tool_name}"] == argv[argv.index(str(binary)) - 1:argv.index(str(binary)) + 2]
+    assert not any("appendix" in value or "diagnostics" in value for value in argv)
+    linked_skills = root / "linked-skills"
+    linked_skills.symlink_to(skills, target_is_directory=True)
+    for invalid_source in (linked_skills, root / "missing", binary):
+        with pytest.raises(SandboxError, match=f"{tool_name.upper()}_INVALID_WORKSPACE"):
+            backend.build_argv(tool_name, ((projects, "/user/project"), (invalid_source, "/user/skills")), 17)
+    monkeypatch.setattr(backend, "BIN_DIR", root / "missing")
+    with pytest.raises(SandboxError, match=f"{tool_name.upper()}_UNAVAILABLE"):
+        backend.build_argv(tool_name, mounts, 17)
+
+
+def test_complete_json_larger_than_bash_output_limit():
+    response = {"error_code": None, "result": {**PAGE, "text": "\x01" * (50 * 1024)}}
+    raw = json.dumps(response).encode()
+    assert len(raw) > 32 * 1024
+    output = backend.JSONOutput()
+    for start in range(0, len(raw), 777):
+        output.feed(raw[start:start + 777])
+    assert backend.decode_response("read_file", output, 0) == response
+    output.feed(b"x" * backend.MAX_RESPONSE_BYTES)
+    assert len(output.data) == backend.MAX_RESPONSE_BYTES
+    with pytest.raises(SandboxError, match="READ_FILE_INVALID_RESPONSE"):
+        backend.decode_response("read_file", output, 0)
+
+
+@pytest.mark.parametrize("raw,code", [(b"{", 0), (b"\xff", 0),
+                                      (b'{"error_code":"FILE_NOT_FOUND","result":{}}', 1)])
+def test_invalid_response(raw, code):
+    output = backend.JSONOutput()
+    output.feed(raw)
+    with pytest.raises(SandboxError, match="READ_FILE_INVALID_RESPONSE"):
+        backend.decode_response("read_file", output, code)
+
+
+def test_spawn_failure_and_precancel_cleanup(monkeypatch):
+    pipes = []
+    original_pipe = backend._StatusPipe
+
+    def status_pipe():
+        status = original_pipe()
+        pipes.append(status)
+        return status
+
+    def fail_start(*args, **kwargs):
+        assert json.load(kwargs["stdin"]) == REQUEST
+        raise OSError("host path must not leak")
+
+    monkeypatch.setattr(backend, "_StatusPipe", status_pipe)
+    monkeypatch.setattr(backend, "build_argv", lambda *args: ["/unused"])
+    monkeypatch.setattr(backend.subprocess, "Popen", fail_start)
+    with pytest.raises(SandboxError, match="^SANDBOX_START_FAILED$"):
+        backend.run_file_tool("read_file", (), REQUEST)
+    assert pipes[0].read_fd is None and pipes[0].write_fd is None
+    stop = threading.Event()
+    stop.set()
+    with pytest.raises(CancelledError):
+        backend.run_file_tool("read_file", (), REQUEST, stop_event=stop)
+    assert len(pipes) == 1
+
+
+@pytest.mark.anyio
+async def test_cancellation_waits_for_cleanup(context, monkeypatch):
+    loop = asyncio.get_running_loop()
+    started, stopping = asyncio.Event(), asyncio.Event()
+    release, finished = threading.Event(), threading.Event()
+
+    def run(*args, stop_event):
+        loop.call_soon_threadsafe(started.set)
+        try:
+            assert stop_event.wait(5)
+            loop.call_soon_threadsafe(stopping.set)
+            assert release.wait(5)
+            raise CancelledError
+        finally:
+            finished.set()
+
+    monkeypatch.setattr(tool, "run_file_tool", run)
+    task = asyncio.create_task(execute_tool("read_file", json.dumps(REQUEST), context=context))
+    try:
+        await asyncio.wait_for(started.wait(), 2)
+        task.cancel()
+        await asyncio.wait_for(stopping.wait(), 2)
+        assert not task.done()
+        release.set()
+        with pytest.raises(asyncio.CancelledError):
+            await asyncio.wait_for(task, 2)
+        assert finished.is_set()
+    finally:
+        release.set()
+        task.cancel()
+        await asyncio.gather(task, return_exceptions=True)

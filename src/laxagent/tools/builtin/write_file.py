@@ -1,29 +1,27 @@
-import os
+from pathlib import Path, PurePosixPath
 from typing import Literal, Self
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
+from laxagent import layout
+from laxagent.sandbox.file_tools import run_file_tool
+from laxagent.tools.builtin.bash import run_cancellable_sandbox
 from laxagent.tools.context import ToolContext
 from laxagent.tools.errors import ToolError
-from laxagent.tools.workspace import atomic_replace, encode_text, file_error_code, file_path, file_mode, open_parent
-from laxagent.tools.file_scope import FileSkillName, file_scope, scope_result
-from laxagent.skills import parse_metadata
 
 
 class WriteFileArgs(BaseModel):
     model_config = ConfigDict(strict=True, extra="forbid")
 
-    skill_name: FileSkillName = Field(default=None, description="Skill name to modify; Omitting it, JSON null, or the string 'null' selects workspace.")
-    operation: Literal["write", "delete"] = Field(default="write", description="Delete is only allowed for skill files.")
-
-    path: str = Field(min_length=1, description="File path relative to the selected workspace or skill; no symlinks or '..'.")
+    operation: Literal["write", "delete"] = Field(default="write", description="Create/overwrite or delete an ordinary file; directories cannot be deleted.")
+    path: str = Field(min_length=1, description="Absolute sandbox path, e.g. /user/project/1/file.txt or /user/skills/example/SKILL.md; no symlinks or '..'.")
     content: str | None = Field(description="UTF-8 content for write (empty keeps an empty file); null for delete.")
 
     @model_validator(mode="after")
     def check_operation(self) -> Self:
         if self.operation == "delete":
-            if self.skill_name is None or self.content is not None:
-                raise ValueError("Delete requires a skill name and null content")
+            if self.content is not None:
+                raise ValueError("Delete requires null content")
         elif self.content is None:
             raise ValueError("Write requires string content")
         return self
@@ -33,35 +31,18 @@ class WriteFileError(ToolError):
     pass
 
 
-def write_file(context: ToolContext, args: WriteFileArgs) -> dict:
-    try:
-        relative = file_path(args.path)
-        if args.operation == "delete" and relative.as_posix() == "SKILL.md":
-            raise WriteFileError("SKILL_ENTRY_REQUIRED")
-        content = encode_text(args.content) if args.content is not None else None
-        if args.skill_name is not None and relative.as_posix() == "SKILL.md":
-            parse_metadata(args.skill_name, content)
-        with file_scope(context, args.skill_name, create=args.operation == "write") as root:
-            if args.operation == "delete":
-                deleted = False
-                try:
-                    with open_parent(root, relative) as directory:
-                        file_mode(directory, relative.name, allow_missing=False)
-                        os.unlink(relative.name, dir_fd=directory)
-                        deleted = True
-                except FileNotFoundError:
-                    pass
-                return scope_result(root, args.skill_name, {"path": relative.as_posix(), "deleted": deleted})
-            with open_parent(root, relative, create=True) as directory:
-                atomic_replace(directory, relative.name, content)
-            if args.skill_name is None:
-                context.record_workspace_path(relative.as_posix())
-            return scope_result(root, args.skill_name, {"path": relative.as_posix(), "bytes_written": len(content)})
-    except ToolError as exc:
-        raise WriteFileError(str(exc)) from None
-    except FileNotFoundError:
-        if args.operation == "delete":
-            return {"path": relative.as_posix(), "deleted": False, "skill_name": args.skill_name, "files": []}
-        raise WriteFileError("WRITE_FAILED") from None
-    except OSError as exc:
-        raise WriteFileError(file_error_code(exc, "WRITE_FAILED")) from None
+async def write_file(context: ToolContext, args: WriteFileArgs) -> dict:
+    response = await run_cancellable_sandbox(
+        run_file_tool, "write_file", layout.get_user_sandbox_mounts(context.user_id), args.model_dump(),
+    )
+    if response["error_code"] is not None:
+        raise WriteFileError(response["error_code"], result=response["result"])
+    result = response["result"]
+    if args.operation == "write":
+        # Execution does not depend on workspace. Only the preview candidate list
+        # needs the current project; writes to skills/other projects stay out of it.
+        workspace = layout.get_sandbox_project_workdir(Path(context.workspace).name)
+        path = PurePosixPath(result["path"])
+        if path.is_relative_to(workspace):
+            context.record_workspace_path(path.relative_to(workspace).as_posix())
+    return result

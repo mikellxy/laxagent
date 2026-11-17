@@ -1,242 +1,116 @@
-import errno
+import asyncio
+from concurrent.futures import CancelledError
 import importlib
 import json
-import os
-import stat
-from dataclasses import replace
+from pathlib import Path
+import threading
+from types import SimpleNamespace
 
 import pytest
 
-from laxagent.tools.builtin.edit_file import EditFileArgs, EditFileError, TextEdit, edit_file
+from laxagent import layout
+from laxagent.sandbox.bubblewrap import SandboxError
 from laxagent.tools.executor import execute_tool
+from laxagent.tools.registry import tool_definitions
 from tool_helpers import tool_context
-from laxagent.tools.registry import TOOLS, tool_definitions
-from laxagent.tools.results import format_result
 
-module = importlib.import_module("laxagent.tools.builtin.edit_file")
-filesystem = importlib.import_module("laxagent.tools.workspace")
-
-
-def edit(workspace, pairs, path="text.txt"):
-    return edit_file(tool_context(workspace), EditFileArgs(
-        path=path, edits=[TextEdit(old_text=old, new_text=new) for old, new in pairs],
-    ))
+backend = importlib.import_module("laxagent.sandbox.file_tools")
+tool = importlib.import_module("laxagent.tools.builtin.edit_file")
+REQUEST = {"path": "/user/project/1/file.txt", "edits": [{"old_text": "old", "new_text": "new"}]}
 
 
-def test_unordered_adjacent_edits_unicode_and_new_duplicate(tmp_path):
-    target = tmp_path / "text.txt"
-    target.write_bytes("中firstSECOND🙂last".encode())
-    result = edit(tmp_path, [("last", "first"), ("first", "longer replacement"), ("SECOND", "")], "./text.txt")
-    expected = "中longer replacement🙂first".encode()
-    assert target.read_bytes() == expected
-    assert result == {"path": "text.txt", "edits_applied": 3, "bytes_written": len(expected)}
-
-
-@pytest.mark.parametrize("original,old,new,expected", [
-    ("a\n  foo \t\nend", "foo", "bar", "a\n  bar \t\nend"),  # exact substring preserves padding
-    ("  foo\n\tfoo \t", "  foo", "bar", "bar\n\tfoo \t"),  # one exact beats multiple fuzzy matches
-    ("header\r\n    foo  \r\n\t\tbar\t\r\ntail  ", "\tfoo\n bar", " NEW\n\tBODY ",
-     "header\r\n NEW\n\tBODY \r\ntail  "),
-    ("\tfoo \r\n\tbar \r\ntail", " foo\n bar\n", "new\n", "new\ntail"),
-    ("\tfoo \n\tbar \ntail", " foo\r\n bar\r\n", "new\r\n", "new\r\ntail"),
-    ("\tfoo \r\n", " foo", "", "\r\n"),  # excluding the final newline
-    ("\tfoo \r\n", " foo\n", "", ""),  # including the final newline
-    ("\tfoo \r\n\r\n", " foo\n\n", "x", "x"),
-    ("\tfoo \r\n \t\r\n\tbar", " foo\n\n bar", "x", "x"),
-    ("\tfoo \t", " foo", "x", "x"),
-    ("a\t b", "\t ", " ", "a b"),  # pure whitespace exact matching is allowed
-])
-def test_exact_and_whitespace_matching_preserve_other_bytes(tmp_path, original, old, new, expected):
-    target = tmp_path / "text.txt"
-    target.write_bytes(original.encode())
-    edit(tmp_path, [(old, new)])
-    assert target.read_bytes() == expected.encode()
-
-
-@pytest.mark.parametrize("original,pairs,code", [
-    ("aaa", [("aa", "x")], "EDIT_AMBIGUOUS"),
-    ("foo foo", [("foo", "x")], "EDIT_AMBIGUOUS"),
-    ("\tfoo\n    foo ", [(" foo  ", "x")], "EDIT_AMBIGUOUS"),
-    ("abcde", [("abc", "x"), ("cde", "y")], "EDIT_OVERLAP"),
-    ("abcde", [("abcde", "x"), ("bc", "y")], "EDIT_OVERLAP"),
-    ("abcde", [("abc", "x"), ("abc", "y")], "EDIT_OVERLAP"),
-    ("\tfoo \nbar", [(" foo  ", "x"), ("foo", "y")], "EDIT_OVERLAP"),
-    ("first last", [("first", "NEW"), ("missing", "y")], "EDIT_NOT_FOUND"),
-    ("first last", [("first", "NEW"), ("NEW", "y")], "EDIT_NOT_FOUND"),
-    ("x foo y", [("  foo  ", "x")], "EDIT_NOT_FOUND"),  # fallback is whole-line only
-    ("a  b", [(" a b ", "x")], "EDIT_NOT_FOUND"),
-    ("\tFoo", [(" foo ", "x")], "EDIT_NOT_FOUND"),
-    ("\u00a0foo\u00a0", [(" foo ", "x")], "EDIT_NOT_FOUND"),
-    ("\t‘foo’", [(" 'foo' ", "x")], "EDIT_NOT_FOUND"),
-    ("\tfoo\n\nbar", [(" foo\nbar ", "x")], "EDIT_NOT_FOUND"),
-    ("\tfoo\nbar", [(" foo\n\nbar ", "x")], "EDIT_NOT_FOUND"),
-    ("\tfoo", [(" foo\n", "x")], "EDIT_NOT_FOUND"),
-    ("\tfoo\n", [(" foo\n\n", "x")], "EDIT_NOT_FOUND"),
-    ("\t", [("  ", "x")], "EDIT_NOT_FOUND"),  # no pure-whitespace fuzzy matching
-    ("", [("old", "new")], "EDIT_NOT_FOUND"),
-])
-def test_matching_failures_leave_entire_file_unchanged(tmp_path, original, pairs, code):
-    target = tmp_path / "text.txt"
-    target.write_bytes(original.encode())
-    before = target.stat()
-    with pytest.raises(EditFileError, match=f"^{code}$"):
-        edit(tmp_path, pairs)
-    assert target.read_bytes() == original.encode()
-    assert target.stat().st_ino == before.st_ino
-    assert not list(tmp_path.glob(".laxagent-write-*"))
-
-
-def test_no_change_does_not_replace_file(tmp_path, monkeypatch):
-    target = tmp_path / "text.txt"
-    target.write_bytes(b"original")
-    before = target.stat()
-
-    def unexpected(*args, **kwargs):
-        pytest.fail("No-op edits must not write")
-
-    monkeypatch.setattr(module, "atomic_replace", unexpected)
-    assert edit(tmp_path, [("original", "original")]) == {
-        "path": "text.txt", "edits_applied": 1, "bytes_written": 0,
-    }
-    assert target.stat() == before
-
-
-def test_each_original_offset_is_checked_before_replacement(tmp_path, monkeypatch):
-    target = tmp_path / "text.txt"
-    target.write_bytes("中first last".encode())
-    locate = module._locate_edits
-
-    def corrupt(content, edits):
-        matches = locate(content, edits)
-        # The later replacement runs first, then the earlier guard fails. Nothing is written.
-        matches[0] = replace(matches[0], start=matches[0].start + 1)
-        return matches
-
-    monkeypatch.setattr(module, "_locate_edits", corrupt)
-    with pytest.raises(EditFileError, match="EDIT_POSITION_CHANGED"):
-        edit(tmp_path, [("first", "x"), ("last", "longer")])
-    assert target.read_bytes() == "中first last".encode()
-
-
-@pytest.mark.parametrize("raw", [b"old\xff", b"old\x00", b"old\xe4\xb8"])
-def test_invalid_file_text_is_not_edited(tmp_path, raw):
-    target = tmp_path / "text.txt"
-    target.write_bytes(raw)
-    with pytest.raises(EditFileError, match="NOT_UTF8_TEXT"):
-        edit(tmp_path, [("old", "new")])
-    assert target.read_bytes() == raw
-
-
-@pytest.mark.parametrize("path,code", [
-    ("/outside", "INVALID_PATH"), ("../outside", "INVALID_PATH"), ("a/../outside", "INVALID_PATH"),
-    (".", "INVALID_PATH"), ("a/", "INVALID_PATH"), ("a/.", "INVALID_PATH"),
-    ("a/\x00", "INVALID_PATH"), ("missing", "FILE_NOT_FOUND"), ("missing/text", "FILE_NOT_FOUND"),
-])
-def test_invalid_paths_and_missing_files_never_create_directories(tmp_path, path, code):
-    before = list(tmp_path.iterdir())
-    with pytest.raises(EditFileError, match=code):
-        edit(tmp_path, [("old", "new")], path)
-    assert list(tmp_path.iterdir()) == before
-
-
-def test_symlinks_special_files_and_hard_links(tmp_path):
-    root = tmp_path / "workspace"
-    root.mkdir()
-    outside = tmp_path / "outside"
-    outside.write_bytes(b"old")
-    (root / "link").symlink_to(outside)
-    (root / "dangling").symlink_to(tmp_path / "missing")
-    (root / "parent_link").symlink_to(tmp_path, target_is_directory=True)
-    (root / "directory").mkdir()
-    os.mkfifo(root / "fifo")
-    for path, code in [("link", "INVALID_PATH"), ("dangling", "INVALID_PATH"),
-                       ("parent_link/outside", "INVALID_PATH"), ("directory", "NOT_A_FILE"),
-                       ("fifo", "NOT_A_FILE")]:
-        with pytest.raises(EditFileError, match=code):
-            edit(root, [("old", "new")], path)
-    (tmp_path / "root_link").symlink_to(root, target_is_directory=True)
-    with pytest.raises(EditFileError, match="INVALID_PATH"):
-        edit(tmp_path / "root_link", [("old", "new")])
-    os.link(outside, root / "text.txt")
-    os.chmod(outside, 0o6751)
-    edit(root, [("old", "new")])
-    assert outside.read_bytes() == b"old"
-    assert (root / "text.txt").read_bytes() == b"new"
-    assert stat.S_IMODE((root / "text.txt").stat().st_mode) == 0o751
-
-
-@pytest.mark.parametrize("operation", ["write", "fsync", "replace"])
-def test_write_failure_preserves_file_and_cleans_temporary(tmp_path, monkeypatch, operation):
-    target = tmp_path / "text.txt"
-    target.write_bytes(b"old")
-    real_write = os.write
-
-    def fail(*args, **kwargs):
-        if operation == "write":
-            real_write(args[0], b"partial")
-        raise OSError(errno.ENOSPC, "private path")
-
-    monkeypatch.setattr(filesystem.os, operation, fail)
-    with pytest.raises(EditFileError, match="^WRITE_FAILED$"):
-        edit(tmp_path, [("old", "new")])
-    assert target.read_bytes() == b"old"
-    assert not list(tmp_path.glob(".laxagent-write-*"))
-
-
-def test_target_swapped_to_symlink_before_commit(tmp_path, monkeypatch):
-    root = tmp_path / "workspace"
-    root.mkdir()
-    target = root / "text.txt"
-    target.write_bytes(b"old")
-    outside = tmp_path / "outside"
-    outside.write_bytes(b"secret")
-    real_sync = os.fsync
-
-    def swap(fd):
-        real_sync(fd)
-        target.unlink()
-        target.symlink_to(outside)
-
-    monkeypatch.setattr(filesystem.os, "fsync", swap)
-    with pytest.raises(EditFileError, match="INVALID_PATH"):
-        edit(root, [("old", "new")])
-    assert outside.read_bytes() == b"secret"
-    assert list(root.iterdir()) == [target]
+@pytest.fixture
+def context():
+    return tool_context(layout.get_project_workdir("test-user", 1))
 
 
 @pytest.mark.anyio
-async def test_strict_arguments_errors_and_tool_definition(tmp_path):
-    target = tmp_path / "text.txt"
-    target.write_bytes(b"old")
-    args = {"path": "text.txt", "edits": [{"old_text": "old", "new_text": "new"}]}
-    invalid = ["{", "[]", "null", json.dumps({**args, "extra": 1}), json.dumps({"path": "text.txt"}),
-               json.dumps({**args, "path": 1}), json.dumps({**args, "edits": []})]
-    for item in [{"old_text": "", "new_text": "x"}, {"old_text": "old"},
-                 {"old_text": "old", "new_text": True}, {"old_text": 1, "new_text": "x"},
-                 {"old_text": "old", "new_text": "x", "extra": 1}]:
-        invalid.append(json.dumps({**args, "edits": [item]}))
-    for arguments in invalid:
-        assert await execute_tool("edit_file", arguments, context=tool_context(tmp_path)) == {
-            "error_code": "INVALID_ARGUMENTS", "result": {},
-        }
-    for item, code in [({"old_text": "old", "new_text": "\ud800"}, "NOT_UTF8_TEXT"),
-                       ({"old_text": "old", "new_text": "\x00"}, "NOT_UTF8_TEXT"),
-                       ({"old_text": "o\x00ld", "new_text": "x"}, "NOT_UTF8_TEXT"),
-                       ({"old_text": "missing", "new_text": "x"}, "EDIT_NOT_FOUND")]:
-        result = await execute_tool("edit_file", json.dumps({**args, "edits": [item]}), context=tool_context(tmp_path))
-        assert result == {"error_code": code, "result": {}}
-        assert not format_result(result).startswith("{")
-    assert target.read_bytes() == b"old"
-    assert await execute_tool("edit_file", json.dumps(args), context=tool_context(tmp_path)) == {
-        "error_code": None, "result": {"path": "text.txt", "edits_applied": 1, "bytes_written": 3},
-    }
-    definitions = {item["name"]: item for item in tool_definitions({"enable_memory": "1"}, web_search_enabled=True)}
-    assert definitions.keys() == TOOLS.keys()
-    definition = definitions["edit_file"]
-    assert definition["strict"] is True
+async def test_dispatch_and_noop_candidates(context, monkeypatch):
+    calls = []
+
+    def run(tool_name, mounts, request, *, stop_event):
+        calls.append((tool_name, mounts, request, threading.get_ident()))
+        assert not stop_event.is_set()
+        changed = request["edits"][0]["old_text"] != request["edits"][0]["new_text"]
+        return {"error_code": None, "result": {"path": request["path"], "edits_applied": 1,
+                                                "bytes_written": 3 if changed else 0}}
+
+    monkeypatch.setattr(tool, "run_file_tool", run)
+    for new_text in ["new", "old"]:
+        args = {**REQUEST, "edits": [{"old_text": "old", "new_text": new_text}]}
+        result = await execute_tool("edit_file", json.dumps(args), context=context)
+        assert result == {"error_code": None, "result": {"path": args["path"], "edits_applied": 1,
+                                                         "bytes_written": 0 if new_text == "old" else 3}}
+        assert calls[-1][:3] == ("edit_file", layout.get_user_sandbox_mounts(context.user_id), args)
+        assert calls[-1][3] != threading.get_ident()
+    assert context.written_workspace_paths == ["file.txt"]
+    for path in ["/user/project/2/other.txt", "/user/project/10/other.txt", "/user/skills/example/SKILL.md"]:
+        assert (await execute_tool("edit_file", json.dumps({**REQUEST, "path": path}), context=context))["error_code"] is None
+    assert context.written_workspace_paths == ["file.txt"]
+
+
+@pytest.mark.anyio
+async def test_schema_and_validation(context, monkeypatch):
+    def unexpected(*args, **kwargs):
+        pytest.fail("Invalid input must not reach the sandbox")
+
+    monkeypatch.setattr(tool, "run_file_tool", unexpected)
+    invalid = ["{", "[]", "null", {"path": "/file"}, {"edits": []},
+               {**REQUEST, "path": ""}, {**REQUEST, "path": 1}, {**REQUEST, "edits": []},
+               {**REQUEST, "skill_name": None}, {**REQUEST, "extra": 1}]
+    for edit in [{"old_text": "", "new_text": "new"}, {"old_text": "old"},
+                 {"old_text": "old", "new_text": True}, {"old_text": 1, "new_text": "new"},
+                 {"old_text": "old", "new_text": "new", "extra": 1}]:
+        invalid.append({**REQUEST, "edits": [edit]})
+    for args in invalid:
+        payload = args if isinstance(args, str) else json.dumps(args)
+        assert (await execute_tool("edit_file", payload, context=context))["error_code"] == "INVALID_ARGUMENTS"
+    definition = next(item for item in tool_definitions() if item["name"] == "edit_file")
     schema = definition["parameters"]
-    assert schema["required"] == ["skill_name", "path", "edits"]
+    assert schema["required"] == ["path", "edits"]
     assert schema["additionalProperties"] is False
     assert schema["properties"]["edits"]["minItems"] == 1
     assert schema["$defs"]["TextEdit"]["required"] == ["old_text", "new_text"]
     assert schema["$defs"]["TextEdit"]["additionalProperties"] is False
+
+
+@pytest.mark.anyio
+async def test_errors_do_not_record_candidates_or_fall_back(context, monkeypatch):
+    def fail(*args, **kwargs):
+        return {"error_code": "EDIT_NOT_FOUND", "result": {}}
+
+    monkeypatch.setattr(tool, "run_file_tool", fail)
+    assert await execute_tool("edit_file", json.dumps(REQUEST), context=context) == {
+        "error_code": "EDIT_NOT_FOUND", "result": {},
+    }
+    monkeypatch.setattr(tool, "run_file_tool", backend.run_file_tool)
+    monkeypatch.setattr(backend, "sys", SimpleNamespace(platform="darwin"))
+    assert (await execute_tool("edit_file", json.dumps(REQUEST), context=context))["error_code"] == "SANDBOX_UNAVAILABLE"
+    assert context.written_workspace_paths == []
+    assert not Path(context.workspace).exists()
+
+
+def test_transport_preserves_literal_edits(monkeypatch):
+    edits = [{"old_text": "中文\r\n\"'`$(touch must-not-run)`\\" * 10000, "new_text": "🙂\n"}]
+
+    def inspect_request(*args, **kwargs):
+        assert json.load(kwargs["stdin"]) == {**REQUEST, "edits": edits}
+        raise OSError("do not spawn")
+
+    monkeypatch.setattr(backend, "build_argv", lambda *args: ["/edit_file"])
+    monkeypatch.setattr(backend.subprocess, "Popen", inspect_request)
+    with pytest.raises(SandboxError, match="SANDBOX_START_FAILED"):
+        backend.run_file_tool("edit_file", (), {**REQUEST, "edits": edits})
+    with pytest.raises(SandboxError, match="NOT_UTF8_TEXT"):
+        backend.run_file_tool("edit_file", (), {**REQUEST, "edits": [{"old_text": "old", "new_text": "\ud800"}]})
+
+
+@pytest.mark.anyio
+async def test_cancelled_edit_has_no_candidate(context, monkeypatch):
+    def cancel(*args, **kwargs):
+        raise CancelledError
+
+    monkeypatch.setattr(tool, "run_file_tool", cancel)
+    with pytest.raises(asyncio.CancelledError):
+        await execute_tool("edit_file", json.dumps(REQUEST), context=context)
+    assert context.written_workspace_paths == []

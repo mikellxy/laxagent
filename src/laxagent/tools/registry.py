@@ -128,8 +128,9 @@ def _all_tool_definitions() -> list[dict]:
     }, {
         "type": "function", "name": "read_file", "strict": True,
         "description": (
-            "Read UTF-8 text: skill_name=null selects workspace, otherwise the named user skill. "
-            "Paths are relative to that root. At most 2000 lines / 50 KiB. "
+            "Read UTF-8 text inside a Linux sandbox using an absolute path. "
+            "User projects are under /user/project and skills under /user/skills; no skill_name argument. "
+            "No '..' or symlinks. At most 2000 lines / 50 KiB. "
             "Offsets count original bytes including LF/CRLF; characters are never split. "
             "If eof=false, continue at last_line_no+1, byte 1 when last_line_complete=true; "
             "otherwise continue at last_line_no, last_byte_no+1. Empty files return line/byte 0."
@@ -138,19 +139,20 @@ def _all_tool_definitions() -> list[dict]:
     }, {
         "type": "function", "name": "write_file", "strict": True,
         "description": (
-            "Write UTF-8 text, creating missing parents. skill_name=null selects workspace, otherwise the named user skill. "
-            "operation=write creates or overwrites. operation=delete only deletes skill files, requires content=null, "
-            "and cannot delete SKILL.md or directories. Missing files count as deleted. "
-            "Use a relative file path without '..' or symlinks. Read existing files before overwriting them. "
-            "Content is written exactly as supplied; empty content creates or empties a file. "
-            "Skill SKILL.md metadata is validated before writing. Skill mutations also return the file list."
+            "Write UTF-8 text inside a Linux sandbox using an absolute path, creating missing parents. "
+            "User projects are under /user/project and skills under /user/skills; no skill_name argument. "
+            "operation=write creates or atomically overwrites. operation=delete deletes ordinary files, "
+            "requires content=null, and cannot delete directories. Missing files count as deleted. "
+            "No '..' or symlinks. Read existing files before overwriting them. "
+            "Content is written exactly as supplied; empty content creates or empties a file."
         ),
         "parameters": WriteFileArgs.model_json_schema(),
     }, {
         "type": "function", "name": "edit_file", "strict": True,
         "description": (
-            "Edit existing UTF-8 text. skill_name=null selects workspace, otherwise the named user skill. Read it first. "
-            "SKILL.md metadata is validated before committing. Skill results include the file list. "
+            "Edit existing UTF-8 text inside a Linux sandbox using an absolute path. Read it first. "
+            "User projects are under /user/project and skills under /user/skills; no skill_name argument. "
+            "No '..' or symlinks. "
             "Each nonempty old_text must uniquely "
             "match the original file, and matched byte ranges must not overlap. Exact matching takes priority; "
             "only if absent, whole-line matching ignores leading/trailing spaces and tabs and accepts LF/CRLF. "

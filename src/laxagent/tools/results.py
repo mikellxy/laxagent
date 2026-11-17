@@ -1,6 +1,21 @@
 import json
 
 ERROR_GUIDANCE = {
+    "EDIT_FILE_INVALID_PATH": "edit_file 使用沙箱绝对路径，例如 /user/project/{project_id}/文件 或 /user/skills/{技能名}/SKILL.md；不允许 .. 或符号链接。",
+    "EDIT_FILE_INVALID_WORKSPACE": "edit_file 沙箱的挂载源目录无效，请检查服务端的用户项目和技能目录。",
+    "EDIT_FILE_UNAVAILABLE": "edit_file 的 Linux 可执行文件缺失或不可执行，请先构建文件工具；不会退回宿主编辑。",
+    "EDIT_FILE_TIMEOUT": "edit_file 已超时并清理沙箱进程；已完成的修改不会回滚，请先核实文件状态。",
+    "EDIT_FILE_INVALID_RESPONSE": "edit_file 执行失败或未返回完整有效的结果；请先核实文件状态，不要盲目重试。",
+    "WRITE_FILE_INVALID_PATH": "write_file 使用沙箱绝对路径，例如 /user/project/{project_id}/文件 或 /user/skills/{技能名}/SKILL.md；不允许 .. 或符号链接。",
+    "WRITE_FILE_INVALID_WORKSPACE": "write_file 沙箱的挂载源目录无效，请检查服务端的用户项目和技能目录。",
+    "WRITE_FILE_UNAVAILABLE": "write_file 的 Linux 可执行文件缺失或不可执行，请先构建文件工具；不会退回宿主写入。",
+    "WRITE_FILE_TIMEOUT": "write_file 已超时并清理沙箱进程；已完成的修改不会回滚，请先核实文件状态。",
+    "WRITE_FILE_INVALID_RESPONSE": "write_file 执行失败或未返回完整有效的结果；请先核实文件状态，不要盲目重试。",
+    "READ_FILE_INVALID_PATH": "read_file 使用沙箱绝对路径，例如 /user/project/{project_id}/文件 或 /user/skills/{技能名}/SKILL.md；不允许 .. 或符号链接。",
+    "READ_FILE_INVALID_WORKSPACE": "read_file 沙箱的挂载源目录无效，请检查服务端的用户项目和技能目录。",
+    "READ_FILE_UNAVAILABLE": "read_file 的 Linux 可执行文件缺失或不可执行，请先构建文件工具；不会退回宿主读取。",
+    "READ_FILE_TIMEOUT": "read_file 已超时并清理沙箱进程，请检查文件后重试。",
+    "READ_FILE_INVALID_RESPONSE": "read_file 执行失败或未返回完整有效的结果，请检查文件工具部署。",
     "APPENDIX_NOT_FOUND": "附件 ID 不存在，请核对用户附件列表。",
     "APPENDIX_STORAGE_FAILED": "附件记录暂时无法读取，请稍后重试。",
     "APPENDIX_READ_FAILED": "附件原件读取失败，请确认文件仍然可用。",
